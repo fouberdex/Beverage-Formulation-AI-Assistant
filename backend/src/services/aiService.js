@@ -387,3 +387,4 @@ export async function acceptAIVariant(variantId, userId) {
   });
 }
 
+

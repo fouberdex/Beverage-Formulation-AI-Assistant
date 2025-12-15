@@ -447,3 +447,4 @@ COMMENT ON TABLE formulation_ingredients IS 'Junction table supporting 5-40 ingr
 COMMENT ON TABLE ai_formulation_variants IS 'AI-generated formulation alternatives with confidence scores';
 COMMENT ON TABLE batch_cost_calculations IS 'Batch costing calculations for volumes from 1L to 10,000L';
 
+

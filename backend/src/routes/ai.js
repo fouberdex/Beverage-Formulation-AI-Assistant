@@ -77,3 +77,4 @@ const aiRoutes = async (fastify) => {
 
 export default aiRoutes;
 
+

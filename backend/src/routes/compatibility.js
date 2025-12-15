@@ -52,3 +52,4 @@ const compatibilityRoutes = async (fastify) => {
 
 export default compatibilityRoutes;
 
+
