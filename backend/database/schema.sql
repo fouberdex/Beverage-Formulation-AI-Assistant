@@ -448,3 +448,5 @@ COMMENT ON TABLE ai_formulation_variants IS 'AI-generated formulation alternativ
 COMMENT ON TABLE batch_cost_calculations IS 'Batch costing calculations for volumes from 1L to 10,000L';
 
 
+
+

@@ -124,3 +124,5 @@ const costRoutes = async (fastify) => {
 export default costRoutes;
 
 
+
+

@@ -85,3 +85,5 @@ const regulatoryRoutes = async (fastify) => {
 export default regulatoryRoutes;
 
 
+
+

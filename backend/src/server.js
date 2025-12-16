@@ -618,9 +618,13 @@ server.post(`${apiPrefix}/ai/formulations/:id/generate`, async (request, reply) 
         ? 0.9 + Math.random() * 0.2  // ±10% for optimization
         : 0.7 + Math.random() * 0.6; // ±30% for alternatives
       
+      // Look up ingredient name if not already present
+      const ingredient = getIngredientById(ing.ingredient_id);
+      const ingredientName = ing.ingredient_name || ingredient?.name || 'Unknown';
+      
       return {
         ingredient_id: ing.ingredient_id,
-        ingredient_name: ing.ingredient_name,
+        ingredient_name: ingredientName,
         percentage: Math.max(0.01, ing.percentage * variation),
       };
     });
