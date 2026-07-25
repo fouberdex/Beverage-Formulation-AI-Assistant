@@ -127,6 +127,10 @@ export const mockIngredients = [
   { id: INGREDIENT_IDS.HIBISCUS, code: 'EXT-003', name: 'Hibiscus Extract', name_en: 'Hibiscus Extract', name_ar: 'مستخلص الكركديه', name_fr: 'Extrait d\'Hibiscus', category: 'extract', subcategory: 'flower', price_per_kg: 480, base_price_per_kg: 480, calories_per_100g: 0, sugar_per_100g: 0, halal: true, halal_certified: true, kosher: true, vegan: true, regulatory_status: 'approved', is_active: true },
 ].map((ing) => ({
   ...ing,
+  sugar_g: ing.sugar_g ?? ing.sugar_per_100g ?? 0,
+  currency: ing.currency ?? 'DZD',
+  kosher_certified: ing.kosher_certified ?? ing.kosher ?? false,
+  organic: ing.organic ?? false,
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
 }));

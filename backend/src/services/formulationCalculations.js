@@ -11,7 +11,7 @@ export async function recalculateFormulationTotals(client, formulationId) {
     `SELECT 
       COALESCE(SUM(fi.percentage), 0) as total_percentage,
       COALESCE(SUM(
-        (fi.percentage / 100.0) * (i.base_price_per_kg / 10.0)
+        (fi.percentage / 100.0) * i.base_price_per_kg
       ), 0) as total_cost_per_liter,
       COALESCE(SUM(
         (fi.percentage / 100.0) * COALESCE(i.calories_per_100g, 0)
@@ -30,7 +30,7 @@ export async function recalculateFormulationTotals(client, formulationId) {
   // Update cost contributions
   await client.query(
     `UPDATE formulation_ingredients fi
-     SET cost_contribution = (fi.percentage / 100.0) * (i.base_price_per_kg / 10.0)
+     SET cost_contribution = (fi.percentage / 100.0) * i.base_price_per_kg
      FROM ingredients i
      WHERE fi.ingredient_id = i.id AND fi.formulation_id = $1`,
     [formulationId]
@@ -81,7 +81,7 @@ export async function calculateCost(formulationId, batchSizeLiters = 1) {
   const result = await query(
     `SELECT 
       COALESCE(SUM(
-        (fi.percentage / 100.0) * (i.base_price_per_kg / 10.0) * $2
+        (fi.percentage / 100.0) * i.base_price_per_kg * $2
       ), 0) as total_cost
     FROM formulation_ingredients fi
     JOIN ingredients i ON fi.ingredient_id = i.id
@@ -95,6 +95,10 @@ export async function calculateCost(formulationId, batchSizeLiters = 1) {
     total_cost: result.rows[0].total_cost,
   };
 }
+
+
+
+
 
 
 

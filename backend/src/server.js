@@ -1,6 +1,11 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import helmet from '@fastify/helmet';
+import rateLimit from '@fastify/rate-limit';
 import dotenv from 'dotenv';
+import { pathToFileURL } from 'url';
+import { z } from 'zod';
+import { getAIConfiguration, reviewFormulationCandidates } from './services/geminiService.js';
 
 // Import mock data
 import { 
@@ -11,7 +16,10 @@ import {
   getIngredientById,
   addFormulation,
   updateFormulation,
-  deleteFormulation
+  deleteFormulation,
+  aiVariants,
+  complianceRecords,
+  batchCostCalculations,
 } from './data/mockData.js';
 
 dotenv.config();
@@ -20,25 +28,128 @@ const server = Fastify({
   logger: true,
 });
 
-// CORS configuration
+await server.register(helmet);
+
+await server.register(rateLimit, {
+  max: Number.parseInt(process.env.RATE_LIMIT_MAX || '200', 10),
+  timeWindow: '1 minute',
+});
+
+const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean);
+
 await server.register(cors, {
-  origin: true,
+  origin: allowedOrigins,
   credentials: true,
+});
+
+server.addHook('onRequest', async (request, reply) => {
+  if (!process.env.API_KEY || request.url === '/health' || request.method === 'OPTIONS') return;
+  if (request.headers['x-api-key'] !== process.env.API_KEY) {
+    return reply.code(401).send({ error: 'Invalid or missing API key' });
+  }
+});
+
+server.setErrorHandler((error, request, reply) => {
+  if (error instanceof z.ZodError) {
+    return reply.code(400).send({
+      error: 'Invalid request',
+      details: error.issues.map(issue => ({ path: issue.path.join('.'), message: issue.message })),
+    });
+  }
+
+  request.log.error(error);
+  return reply.code(error.statusCode || 500).send({
+    error: error.statusCode && error.statusCode < 500 ? error.message : 'Internal server error',
+  });
 });
 
 // Health check endpoint
 server.get('/health', async () => {
-  return { status: 'ok', timestamp: new Date().toISOString(), mode: 'mock' };
+  return {
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    mode: 'mock',
+    ai: getAIConfiguration(),
+  };
 });
 
 const apiPrefix = '/api/v1';
+
+const paginationSchema = z.object({
+  limit: z.coerce.number().int().min(1).max(500).default(100),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+const formulationIngredientSchema = z.object({
+  ingredient_id: z.string().min(1),
+  percentage: z.coerce.number().finite().positive().max(100),
+});
+
+function processFormulationIngredients(input) {
+  const formIngredients = z.array(formulationIngredientSchema).min(1).max(40).parse(input);
+  const ids = formIngredients.map(item => item.ingredient_id);
+  if (new Set(ids).size !== ids.length) {
+    throw new z.ZodError([{ code: 'custom', path: ['ingredients'], message: 'Ingredient IDs must be unique' }]);
+  }
+
+  let totalPercentage = 0;
+  let totalCost = 0;
+  let totalCalories = 0;
+  let totalSugar = 0;
+
+  const processedIngredients = formIngredients.map((item, displayOrder) => {
+    const ingredient = getIngredientById(item.ingredient_id);
+    if (!ingredient || !ingredient.is_active) {
+      throw new z.ZodError([{
+        code: 'custom',
+        path: ['ingredients', displayOrder, 'ingredient_id'],
+        message: 'Ingredient does not exist or is inactive',
+      }]);
+    }
+
+    const fraction = item.percentage / 100;
+    const costContribution = fraction * ingredient.base_price_per_kg;
+    totalPercentage += item.percentage;
+    totalCost += costContribution;
+    totalCalories += fraction * (ingredient.calories_per_100g || 0);
+    totalSugar += fraction * (ingredient.sugar_g || 0);
+
+    return {
+      ...item,
+      ingredient_name: ingredient.name,
+      ingredient_code: ingredient.code,
+      cost_contribution: costContribution,
+      display_order: displayOrder,
+    };
+  });
+
+  if (Math.abs(totalPercentage - 100) > 0.1) {
+    throw new z.ZodError([{
+      code: 'custom',
+      path: ['ingredients'],
+      message: `Ingredient percentages must total 100% (received ${totalPercentage.toFixed(2)}%)`,
+    }]);
+  }
+
+  return {
+    ingredients: processedIngredients,
+    total_percentage: Number(totalPercentage.toFixed(4)),
+    total_cost_per_liter: totalCost,
+    total_calories_per_100ml: totalCalories,
+    total_sugar_per_100ml: totalSugar,
+  };
+}
 
 // ============================================================================
 // INGREDIENTS ROUTES
 // ============================================================================
 
 server.get(`${apiPrefix}/ingredients`, async (request) => {
-  const { category, search, limit = 100, offset = 0 } = request.query;
+  const { category, search } = request.query;
+  const { limit, offset } = paginationSchema.parse(request.query);
   
   let filtered = [...ingredients].filter(i => i.is_active);
   
@@ -54,23 +165,31 @@ server.get(`${apiPrefix}/ingredients`, async (request) => {
     );
   }
   
-  const paginated = filtered.slice(offset, offset + parseInt(limit));
+  const paginated = filtered.slice(offset, offset + limit);
   
   return {
     data: paginated,
     pagination: {
       total: filtered.length,
-      limit: parseInt(limit),
-      offset: parseInt(offset),
+      limit,
+      offset,
       has_more: offset + paginated.length < filtered.length,
     },
   };
 });
 
-server.get(`${apiPrefix}/ingredients/:id`, async (request) => {
+server.get(`${apiPrefix}/ingredients/:id`, async (request, reply) => {
   const ingredient = ingredients.find(i => i.id === request.params.id);
   if (!ingredient) {
-    return { error: 'Ingredient not found' };
+    return reply.code(404).send({ error: 'Ingredient not found' });
+  }
+  return { data: ingredient };
+});
+
+server.get(`${apiPrefix}/ingredients/code/:code`, async (request, reply) => {
+  const ingredient = ingredients.find(i => i.code.toLowerCase() === request.params.code.toLowerCase());
+  if (!ingredient) {
+    return reply.code(404).send({ error: 'Ingredient not found' });
   }
   return { data: ingredient };
 });
@@ -91,22 +210,27 @@ server.get(`${apiPrefix}/ingredients/meta/stats`, async () => {
 
 // Create ingredient
 server.post(`${apiPrefix}/ingredients`, async (request, reply) => {
-  const {
-    code,
-    name,
-    name_ar,
-    name_fr,
-    category,
-    base_price_per_kg = 0,
-    calories_per_100g = 0,
-    sugar_g = 0,
-    halal_certified = true,
-    vegan = true,
-  } = request.body;
+  const ingredientInput = z.object({
+    code: z.string().trim().min(1).max(50),
+    name: z.string().trim().min(1).max(255),
+    name_ar: z.string().trim().max(255).optional().default(''),
+    name_fr: z.string().trim().max(255).optional().default(''),
+    category: z.string().trim().min(1).max(100),
+    base_price_per_kg: z.coerce.number().finite().nonnegative().default(0),
+    calories_per_100g: z.coerce.number().finite().nonnegative().default(0),
+    sugar_g: z.coerce.number().finite().nonnegative().max(100).default(0),
+    halal_certified: z.boolean().default(true),
+    vegan: z.boolean().default(true),
+  }).parse(request.body);
 
-  if (!code || !name || !category) {
-    return reply.code(400).send({ error: 'Code, name, and category are required' });
+  if (ingredients.some(item => item.code.toLowerCase() === ingredientInput.code.toLowerCase())) {
+    return reply.code(409).send({ error: 'Ingredient code already exists' });
   }
+
+  const {
+    code, name, name_ar, name_fr, category, base_price_per_kg,
+    calories_per_100g, sugar_g, halal_certified, vegan,
+  } = ingredientInput;
 
   const newIngredient = {
     id: generateId(),
@@ -138,12 +262,52 @@ server.post(`${apiPrefix}/ingredients`, async (request, reply) => {
   return reply.code(201).send({ data: newIngredient });
 });
 
+server.put(`${apiPrefix}/ingredients/:id`, async (request, reply) => {
+  const ingredient = ingredients.find(item => item.id === request.params.id);
+  if (!ingredient) {
+    return reply.code(404).send({ error: 'Ingredient not found' });
+  }
+
+  const updates = z.object({
+    code: z.string().trim().min(1).max(50).optional(),
+    name: z.string().trim().min(1).max(255).optional(),
+    name_ar: z.string().trim().max(255).optional(),
+    name_fr: z.string().trim().max(255).optional(),
+    category: z.string().trim().min(1).max(100).optional(),
+    base_price_per_kg: z.coerce.number().finite().nonnegative().optional(),
+    calories_per_100g: z.coerce.number().finite().nonnegative().optional(),
+    sugar_g: z.coerce.number().finite().nonnegative().max(100).optional(),
+    halal_certified: z.boolean().optional(),
+    vegan: z.boolean().optional(),
+    is_active: z.boolean().optional(),
+  }).strict().parse(request.body);
+
+  if (updates.code && ingredients.some(item => item.id !== ingredient.id && item.code.toLowerCase() === updates.code.toLowerCase())) {
+    return reply.code(409).send({ error: 'Ingredient code already exists' });
+  }
+
+  Object.assign(ingredient, updates, { updated_at: new Date().toISOString() });
+  if (updates.category && !categories.includes(updates.category)) categories.push(updates.category);
+  return { data: ingredient };
+});
+
+server.delete(`${apiPrefix}/ingredients/:id`, async (request, reply) => {
+  const ingredient = ingredients.find(item => item.id === request.params.id);
+  if (!ingredient) {
+    return reply.code(404).send({ error: 'Ingredient not found' });
+  }
+  ingredient.is_active = false;
+  ingredient.updated_at = new Date().toISOString();
+  return { data: ingredient, message: 'Ingredient archived' };
+});
+
 // ============================================================================
 // FORMULATIONS ROUTES
 // ============================================================================
 
 server.get(`${apiPrefix}/formulations`, async (request) => {
-  const { search, status, limit = 50, offset = 0 } = request.query;
+  const { search, status } = request.query;
+  const { limit, offset } = paginationSchema.extend({ limit: z.coerce.number().int().min(1).max(500).default(50) }).parse(request.query);
   
   let filtered = [...formulations];
   
@@ -159,135 +323,155 @@ server.get(`${apiPrefix}/formulations`, async (request) => {
     );
   }
   
-  const paginated = filtered.slice(offset, offset + parseInt(limit));
+  const paginated = filtered.slice(offset, offset + limit);
   
   return {
     data: paginated,
     pagination: {
       total: filtered.length,
-      limit: parseInt(limit),
-      offset: parseInt(offset),
+      limit,
+      offset,
       has_more: offset + paginated.length < filtered.length,
     },
   };
 });
 
-server.get(`${apiPrefix}/formulations/:id`, async (request) => {
+server.get(`${apiPrefix}/formulations/:id`, async (request, reply) => {
   const formulation = formulations.find(f => f.id === request.params.id);
   if (!formulation) {
-    return { error: 'Formulation not found' };
+    return reply.code(404).send({ error: 'Formulation not found' });
   }
   return { data: formulation };
 });
 
 server.post(`${apiPrefix}/formulations`, async (request, reply) => {
-  const { code, name, description, beverage_type, ingredients: formIngredients = [] } = request.body;
-  
-  // Calculate totals
-  let totalPercentage = 0;
-  let totalCost = 0;
-  let totalCalories = 0;
-  let totalSugar = 0;
-  
-  const processedIngredients = formIngredients.map((fi, idx) => {
-    const ing = getIngredientById(fi.ingredient_id);
-    if (ing) {
-      totalPercentage += fi.percentage;
-      totalCost += (fi.percentage / 100) * (ing.base_price_per_kg / 10);
-      totalCalories += (fi.percentage / 100) * (ing.calories_per_100g || 0);
-      totalSugar += (fi.percentage / 100) * (ing.sugar_g || 0);
-    }
-    return {
-      ...fi,
-      ingredient_name: ing?.name || 'Unknown',
-      ingredient_code: ing?.code || 'Unknown',
-      cost_contribution: ing ? (fi.percentage / 100) * (ing.base_price_per_kg / 10) : 0,
-      display_order: idx,
-    };
-  });
+  const input = z.object({
+    code: z.string().trim().min(1).max(100).optional(),
+    name: z.string().trim().min(1).max(255),
+    description: z.string().trim().max(5000).optional().default(''),
+    beverage_type: z.string().trim().min(1).max(100).optional().default('soft_drink'),
+    ingredients: z.array(formulationIngredientSchema).min(1).max(40),
+  }).parse(request.body);
+
+  const code = input.code || `FORM-${Date.now()}`;
+  if (formulations.some(item => item.code.toLowerCase() === code.toLowerCase())) {
+    return reply.code(409).send({ error: 'Formulation code already exists' });
+  }
+
+  const totals = processFormulationIngredients(input.ingredients);
   
   const newFormulation = addFormulation({
-    code: code || `FORM-${Date.now()}`,
-    name,
-    description,
-    beverage_type: beverage_type || 'soft_drink',
+    code,
+    name: input.name,
+    description: input.description,
+    beverage_type: input.beverage_type,
     version: 1,
     is_latest_version: true,
     status: 'draft',
-    total_percentage: totalPercentage,
-    total_cost_per_liter: totalCost,
-    total_calories_per_100ml: totalCalories,
-    total_sugar_per_100ml: totalSugar,
-    ingredients: processedIngredients,
+    ...totals,
   });
   
   return reply.code(201).send({ data: newFormulation });
 });
 
-server.put(`${apiPrefix}/formulations/:id`, async (request) => {
+server.put(`${apiPrefix}/formulations/:id`, async (request, reply) => {
   const { id } = request.params;
-  const { name, description, status, ingredients: formIngredients } = request.body;
+  const input = z.object({
+    name: z.string().trim().min(1).max(255).optional(),
+    description: z.string().trim().max(5000).optional(),
+    status: z.enum(['draft', 'active', 'archived']).optional(),
+    beverage_type: z.string().trim().min(1).max(100).optional(),
+    ingredients: z.array(formulationIngredientSchema).min(1).max(40).optional(),
+  }).strict().parse(request.body);
   
   const existing = formulations.find(f => f.id === id);
   if (!existing) {
-    return { error: 'Formulation not found' };
+    return reply.code(404).send({ error: 'Formulation not found' });
   }
   
   const updates = {};
-  if (name) updates.name = name;
-  if (description) updates.description = description;
-  if (status) updates.status = status;
-  
-  if (formIngredients) {
-    let totalPercentage = 0;
-    let totalCost = 0;
-    let totalCalories = 0;
-    let totalSugar = 0;
-    
-    const processedIngredients = formIngredients.map((fi, idx) => {
-      const ing = getIngredientById(fi.ingredient_id);
-      if (ing) {
-        totalPercentage += fi.percentage;
-        totalCost += (fi.percentage / 100) * (ing.base_price_per_kg / 10);
-        totalCalories += (fi.percentage / 100) * (ing.calories_per_100g || 0);
-        totalSugar += (fi.percentage / 100) * (ing.sugar_g || 0);
-      }
-      return {
-        ...fi,
-        ingredient_name: ing?.name || 'Unknown',
-        ingredient_code: ing?.code || 'Unknown',
-        cost_contribution: ing ? (fi.percentage / 100) * (ing.base_price_per_kg / 10) : 0,
-        display_order: idx,
-      };
-    });
-    
-    updates.ingredients = processedIngredients;
-    updates.total_percentage = totalPercentage;
-    updates.total_cost_per_liter = totalCost;
-    updates.total_calories_per_100ml = totalCalories;
-    updates.total_sugar_per_100ml = totalSugar;
-  }
+  Object.assign(updates, input);
+  if (input.ingredients) Object.assign(updates, processFormulationIngredients(input.ingredients));
   
   const updated = updateFormulation(id, updates);
   return { data: updated };
 });
 
-server.delete(`${apiPrefix}/formulations/:id`, async (request) => {
+server.delete(`${apiPrefix}/formulations/:id`, async (request, reply) => {
   const deleted = deleteFormulation(request.params.id);
   if (!deleted) {
-    return { error: 'Formulation not found' };
+    return reply.code(404).send({ error: 'Formulation not found' });
   }
   return { data: deleted, message: 'Formulation archived' };
+});
+
+server.post(`${apiPrefix}/formulations/:id/versions`, async (request, reply) => {
+  const source = formulations.find(item => item.id === request.params.id);
+  if (!source) return reply.code(404).send({ error: 'Formulation not found' });
+
+  const input = z.object({
+    name: z.string().trim().min(1).max(255).optional(),
+    description: z.string().trim().max(5000).optional(),
+    ingredients: z.array(formulationIngredientSchema).min(1).max(40).optional(),
+  }).strict().parse(request.body || {});
+  const totals = input.ingredients ? processFormulationIngredients(input.ingredients) : {
+    ingredients: source.ingredients.map(item => ({ ...item })),
+    total_percentage: source.total_percentage,
+    total_cost_per_liter: source.total_cost_per_liter,
+    total_calories_per_100ml: source.total_calories_per_100ml,
+    total_sugar_per_100ml: source.total_sugar_per_100ml,
+  };
+
+  source.is_latest_version = false;
+  const version = addFormulation({
+    ...source,
+    ...input,
+    ...totals,
+    id: undefined,
+    code: `${source.code}-V${source.version + 1}`,
+    version: source.version + 1,
+    parent_formulation_id: source.parent_formulation_id || source.id,
+    is_latest_version: true,
+    status: 'draft',
+  });
+  return reply.code(201).send({ data: version });
+});
+
+server.get(`${apiPrefix}/formulations/:id/versions`, async (request, reply) => {
+  const source = formulations.find(item => item.id === request.params.id);
+  if (!source) return reply.code(404).send({ error: 'Formulation not found' });
+  const rootId = source.parent_formulation_id || source.id;
+  return { data: formulations.filter(item => item.id === rootId || item.parent_formulation_id === rootId) };
+});
+
+server.get(`${apiPrefix}/formulations/:id/nutrition`, async (request, reply) => {
+  const formulation = formulations.find(item => item.id === request.params.id);
+  if (!formulation) return reply.code(404).send({ error: 'Formulation not found' });
+  return { data: {
+    calories: formulation.total_calories_per_100ml,
+    sugar: formulation.total_sugar_per_100ml,
+  } };
+});
+
+server.get(`${apiPrefix}/formulations/:id/cost`, async (request, reply) => {
+  const formulation = formulations.find(item => item.id === request.params.id);
+  if (!formulation) return reply.code(404).send({ error: 'Formulation not found' });
+  const batchSize = z.coerce.number().finite().positive().max(1000000).default(1).parse(request.query.batch_size);
+  return { data: {
+    batch_size_liters: batchSize,
+    cost_per_liter: formulation.total_cost_per_liter,
+    total_cost: formulation.total_cost_per_liter * batchSize,
+  } };
 });
 
 // ============================================================================
 // COMPATIBILITY ROUTES
 // ============================================================================
 
-server.get(`${apiPrefix}/compatibility/formulations/:id`, async (request) => {
+server.get(`${apiPrefix}/compatibility/formulations/:id`, async (request, reply) => {
   const formulation = formulations.find(f => f.id === request.params.id);
   if (!formulation) {
-    return { error: 'Formulation not found' };
+    return reply.code(404).send({ error: 'Formulation not found' });
   }
   
   const startTime = Date.now();
@@ -319,7 +503,6 @@ server.get(`${apiPrefix}/compatibility/formulations/:id`, async (request) => {
   // ============================================
   const acidulants = ingredientDetails.filter(i => i.details.category === 'acidulant');
   const hasHighAcid = acidulants.some(i => i.details.ph_min && i.details.ph_min < 3);
-  const hasLowAcid = acidulants.some(i => i.details.ph_max && i.details.ph_max > 4);
   
   // Check for pH-sensitive ingredients with acids
   const phSensitiveCategories = ['colorant', 'vitamin', 'flavor'];
@@ -594,13 +777,69 @@ server.get(`${apiPrefix}/compatibility/formulations/:id`, async (request) => {
   };
 });
 
+function evaluateIngredientPair(first, second) {
+  const names = [first.name, second.name].map(name => name.toLowerCase());
+  const categoriesInPair = new Set([first.category, second.category]);
+  const benzeneRisk = names.some(name => name.includes('benzoate')) &&
+    names.some(name => name.includes('vitamin c') || name.includes('ascorbic'));
+  const precipitationRisk = names.some(name => name.includes('calcium')) &&
+    names.some(name => name.includes('citric'));
+  const acidColorRisk = categoriesInPair.has('acidulant') && categoriesInPair.has('colorant');
+  const risk = benzeneRisk || precipitationRisk || acidColorRisk;
+  const severity = benzeneRisk ? 'high' : risk ? 'medium' : 'none';
+  return {
+    ingredient_a_id: first.id,
+    ingredient_b_id: second.id,
+    compatibility_score: benzeneRisk ? 35 : risk ? 65 : 95,
+    chemical_risk: benzeneRisk || acidColorRisk,
+    physical_risk: precipitationRisk,
+    sensory_risk: false,
+    regulatory_risk: benzeneRisk,
+    risk_severity: severity,
+    risk_description: benzeneRisk
+      ? 'Sodium benzoate and vitamin C can form benzene under heat or light.'
+      : precipitationRisk
+      ? 'Calcium and citric acid may form a visible precipitate.'
+      : acidColorRisk
+      ? 'Acidity may reduce color stability.'
+      : 'No known compatibility issue in the mock rule set.',
+  };
+}
+
+server.get(`${apiPrefix}/compatibility/ingredients/:ingredientAId/:ingredientBId`, async (request, reply) => {
+  const first = getIngredientById(request.params.ingredientAId);
+  const second = getIngredientById(request.params.ingredientBId);
+  if (!first || !second) return reply.code(404).send({ error: 'Ingredient not found' });
+  if (first.id === second.id) return reply.code(400).send({ error: 'Choose two different ingredients' });
+  return { data: evaluateIngredientPair(first, second) };
+});
+
+server.post(`${apiPrefix}/compatibility/batch-compute`, async (request, reply) => {
+  const input = z.object({ ingredient_ids: z.array(z.string().min(1)).min(2).max(100).optional() }).parse(request.body || {});
+  const selected = input.ingredient_ids
+    ? input.ingredient_ids.map(getIngredientById)
+    : ingredients.filter(item => item.is_active);
+  if (selected.some(item => !item)) return reply.code(404).send({ error: 'One or more ingredients were not found' });
+
+  const results = [];
+  for (let firstIndex = 0; firstIndex < selected.length; firstIndex += 1) {
+    for (let secondIndex = firstIndex + 1; secondIndex < selected.length; secondIndex += 1) {
+      results.push(evaluateIngredientPair(selected[firstIndex], selected[secondIndex]));
+    }
+  }
+  return reply.code(201).send({ data: results, count: results.length });
+});
+
 // ============================================================================
 // AI ROUTES
 // ============================================================================
 
 server.post(`${apiPrefix}/ai/formulations/:id/generate`, async (request, reply) => {
   const { id } = request.params;
-  const { count = 5, generation_type = 'optimization' } = request.body;
+  const { count, generation_type } = z.object({
+    count: z.coerce.number().int().min(1).max(10).default(5),
+    generation_type: z.enum(['optimization', 'alternative', 'constraint']).default('optimization'),
+  }).parse(request.body || {});
   
   const source = formulations.find(f => f.id === id);
   if (!source) {
@@ -611,7 +850,7 @@ server.post(`${apiPrefix}/ai/formulations/:id/generate`, async (request, reply) 
   const variants = [];
   const sourceIngredients = source.ingredients || [];
   
-  for (let i = 0; i < Math.min(count, 10); i++) {
+  for (let i = 0; i < count; i++) {
     // Create modified ingredients for each variant
     const variantIngredients = sourceIngredients.map(ing => {
       const variation = generation_type === 'optimization' 
@@ -633,7 +872,7 @@ server.post(`${apiPrefix}/ai/formulations/:id/generate`, async (request, reply) 
     const total = variantIngredients.reduce((sum, i) => sum + i.percentage, 0);
     variantIngredients.forEach(i => i.percentage = (i.percentage / total) * 100);
     
-    variants.push({
+    const variant = {
       id: generateId(),
       source_formulation_id: id,
       source_formulation_name: source.name,
@@ -650,44 +889,45 @@ server.post(`${apiPrefix}/ai/formulations/:id/generate`, async (request, reply) 
       sugar_difference_percent: (Math.random() - 0.5) * 25,
       status: 'generated',
       created_at: new Date().toISOString(),
-    });
+    };
+    variants.push(variant);
+    aiVariants.push(variant);
   }
   
   return reply.code(201).send({ data: variants, count: variants.length });
 });
 
+server.get(`${apiPrefix}/ai/formulations/:id/variants`, async (request, reply) => {
+  if (!formulations.some(item => item.id === request.params.id)) {
+    return reply.code(404).send({ error: 'Source formulation not found' });
+  }
+  const { limit, offset } = paginationSchema.extend({ limit: z.coerce.number().int().min(1).max(100).default(50) }).parse(request.query);
+  const filtered = aiVariants.filter(item =>
+    item.source_formulation_id === request.params.id && (!request.query.status || item.status === request.query.status)
+  );
+  return {
+    data: filtered.slice(offset, offset + limit),
+    pagination: { total: filtered.length, limit, offset, has_more: offset + limit < filtered.length },
+  };
+});
+
 // Accept AI variant and create formulation
 server.post(`${apiPrefix}/ai/variants/:variantId/accept`, async (request, reply) => {
   const { variantId } = request.params;
-  const { variant_data } = request.body;
+  const { variant_data } = z.object({
+    variant_data: z.object({
+      source_name: z.string().trim().min(1).max(255).optional(),
+      beverage_type: z.string().trim().min(1).max(100).optional(),
+      explanation: z.string().trim().max(5000).optional(),
+      ingredients: z.array(formulationIngredientSchema).optional(),
+    }),
+  }).parse(request.body);
+
+  const storedVariant = aiVariants.find(item => item.id === variantId);
+  if (!storedVariant) return reply.code(404).send({ error: 'AI variant not found' });
+  if (storedVariant.status === 'accepted') return reply.code(409).send({ error: 'AI variant was already accepted' });
   
-  if (!variant_data) {
-    return reply.code(400).send({ error: 'variant_data is required' });
-  }
-  
-  // Calculate totals for the new formulation
-  let totalPercentage = 0;
-  let totalCost = 0;
-  let totalCalories = 0;
-  let totalSugar = 0;
-  
-  const processedIngredients = (variant_data.ingredients || []).map((fi, idx) => {
-    const ing = getIngredientById(fi.ingredient_id);
-    if (ing) {
-      totalPercentage += fi.percentage;
-      totalCost += (fi.percentage / 100) * (ing.base_price_per_kg / 10);
-      totalCalories += (fi.percentage / 100) * (ing.calories_per_100g || 0);
-      totalSugar += (fi.percentage / 100) * (ing.sugar_g || 0);
-    }
-    return {
-      ingredient_id: fi.ingredient_id,
-      ingredient_name: fi.ingredient_name || ing?.name || 'Unknown',
-      ingredient_code: ing?.code || 'Unknown',
-      percentage: fi.percentage,
-      cost_contribution: ing ? (fi.percentage / 100) * (ing.base_price_per_kg / 10) : 0,
-      display_order: idx,
-    };
-  });
+  const totals = processFormulationIngredients(storedVariant.variant_ingredients);
   
   const newFormulation = addFormulation({
     code: `AI-${Date.now()}`,
@@ -697,12 +937,11 @@ server.post(`${apiPrefix}/ai/variants/:variantId/accept`, async (request, reply)
     version: 1,
     is_latest_version: true,
     status: 'draft',
-    total_percentage: totalPercentage,
-    total_cost_per_liter: totalCost,
-    total_calories_per_100ml: totalCalories,
-    total_sugar_per_100ml: totalSugar,
-    ingredients: processedIngredients,
+    ...totals,
   });
+
+  storedVariant.status = 'accepted';
+  storedVariant.accepted_formulation_id = newFormulation.id;
   
   return reply.code(201).send({ 
     data: newFormulation,
@@ -715,7 +954,15 @@ server.post(`${apiPrefix}/ai/variants/:variantId/accept`, async (request, reply)
 // ============================================================================
 
 server.post(`${apiPrefix}/target-generation/generate`, async (request, reply) => {
-  const { target_calories, target_sugar, target_cost_per_liter, beverage_type, count = 3 } = request.body;
+  const { target_calories, target_sugar, target_cost_per_liter, beverage_type, count } = z.object({
+    target_calories: z.coerce.number().finite().nonnegative().optional(),
+    target_sugar: z.coerce.number().finite().nonnegative().optional(),
+    target_cost_per_liter: z.coerce.number().finite().nonnegative().optional(),
+    beverage_type: z.string().trim().min(1).max(100).optional(),
+    count: z.coerce.number().int().min(1).max(10).default(3),
+    min_ingredients: z.coerce.number().int().min(1).max(40).optional(),
+    max_ingredients: z.coerce.number().int().min(1).max(40).optional(),
+  }).parse(request.body || {});
   
   // Generate candidates with detailed scoring
   const candidates = [];
@@ -737,13 +984,24 @@ server.post(`${apiPrefix}/target-generation/generate`, async (request, reply) =>
     // Add sweetener based on target sugar
     const sweeteners = ingredients.filter(ing => ing.category === 'sweetener');
     if (sweeteners.length > 0) {
-      const sweetener = sweeteners[Math.floor(Math.random() * sweeteners.length)];
-      const sweetenerPct = target_sugar ? (target_sugar / (sweetener.sugar_g || 50)) * 100 * (0.8 + Math.random() * 0.4) : 8 + Math.random() * 4;
+      const zeroSugarSweeteners = sweeteners.filter(item => item.sugar_g === 0);
+      const sugarSweeteners = sweeteners.filter(item => item.sugar_g > 0);
+      const sweetenerPool = target_sugar === 0 && zeroSugarSweeteners.length > 0
+        ? zeroSugarSweeteners
+        : target_sugar > 0 && sugarSweeteners.length > 0
+        ? sugarSweeteners
+        : sweeteners;
+      const sweetener = sweetenerPool[Math.floor(Math.random() * sweetenerPool.length)];
+      const sweetenerPct = target_sugar === 0
+        ? Math.min(sweetener.max_percentage || 0.05, 0.05)
+        : target_sugar !== undefined
+        ? (target_sugar / Math.max(sweetener.sugar_g, 1)) * 100 * (0.95 + Math.random() * 0.1)
+        : 8 + Math.random() * 4;
       selectedIngredients.push({ 
         ingredient_id: sweetener.id, 
         ingredient_name: sweetener.name,
         category: sweetener.category,
-        percentage: Math.min(15, Math.max(2, sweetenerPct))
+        percentage: Math.min(15, Math.max(0.01, sweetenerPct))
       });
     }
     
@@ -811,21 +1069,21 @@ server.post(`${apiPrefix}/target-generation/generate`, async (request, reply) =>
       if (ing) {
         actualCalories += (item.percentage / 100) * (ing.calories_per_100g || 0);
         actualSugar += (item.percentage / 100) * (ing.sugar_g || 0);
-        actualCost += (item.percentage / 100) * ((ing.base_price_per_kg || 0) / 10);
+        actualCost += (item.percentage / 100) * (ing.base_price_per_kg || 0);
       }
     }
     
     // Calculate detailed scores
     const scores = {
       // Target matching scores
-      calorie_match: target_calories 
-        ? Math.max(0, 100 - Math.abs(actualCalories - target_calories) / target_calories * 100)
+      calorie_match: target_calories !== undefined
+        ? target_calories === 0 ? (actualCalories < 0.01 ? 100 : 0) : Math.max(0, 100 - Math.abs(actualCalories - target_calories) / target_calories * 100)
         : 100,
-      sugar_match: target_sugar 
-        ? Math.max(0, 100 - Math.abs(actualSugar - target_sugar) / target_sugar * 100)
+      sugar_match: target_sugar !== undefined
+        ? target_sugar === 0 ? (actualSugar < 0.01 ? 100 : 0) : Math.max(0, 100 - Math.abs(actualSugar - target_sugar) / target_sugar * 100)
         : 100,
-      cost_match: target_cost_per_liter 
-        ? Math.max(0, 100 - Math.abs(actualCost - target_cost_per_liter) / target_cost_per_liter * 100)
+      cost_match: target_cost_per_liter !== undefined
+        ? target_cost_per_liter === 0 ? (actualCost < 0.01 ? 100 : 0) : Math.max(0, 100 - Math.abs(actualCost - target_cost_per_liter) / target_cost_per_liter * 100)
         : 100,
       
       // Compatibility score
@@ -879,47 +1137,73 @@ server.post(`${apiPrefix}/target-generation/generate`, async (request, reply) =>
       beverage_type: beverage_type || 'soft_drink',
     });
   }
+
+  let ai = { ...getAIConfiguration(), used: false };
+  try {
+    const reviewResult = await reviewFormulationCandidates({
+      candidates,
+      constraints: { target_calories, target_sugar, target_cost_per_liter, beverage_type },
+    });
+    ai = {
+      provider: reviewResult.provider,
+      model: reviewResult.model,
+      configured: reviewResult.configured,
+      used: reviewResult.used,
+      reason: reviewResult.reason,
+    };
+
+    if (reviewResult.used) {
+      const reviewsById = new Map(reviewResult.reviews.map(review => [review.id, review]));
+      for (const candidate of candidates) {
+        const review = reviewsById.get(candidate.id);
+        candidate.scores.compatibility = review.compatibility;
+        candidate.scores.sensory = review.sensory;
+        candidate.scores.stability = review.stability;
+        candidate.ai_explanation = review.explanation;
+        candidate.ai_warnings = review.warnings;
+
+        const sensoryAverage = Object.values(review.sensory).reduce((sum, value) => sum + value, 0) / 4;
+        const targetMatchAverage = (
+          candidate.scores.calorie_match + candidate.scores.sugar_match + candidate.scores.cost_match
+        ) / 3;
+        candidate.overall_score = (
+          targetMatchAverage * 0.4 +
+          review.compatibility * 0.25 +
+          sensoryAverage * 0.25 +
+          ((review.stability.ph_stability + review.stability.color_stability) / 2) * 0.1
+        );
+      }
+    }
+  } catch (error) {
+    request.log.warn({ err: error }, 'Gemini review failed; returning validated local candidates');
+    ai = {
+      ...getAIConfiguration(),
+      used: false,
+      reason: error.name === 'AbortError' ? 'Gemini request timed out' : 'Gemini review was unavailable',
+    };
+  }
   
   // Sort by overall score
   candidates.sort((a, b) => b.overall_score - a.overall_score);
   
   return reply.code(201).send({
-    data: { candidates, formulations: [] },
+    data: { candidates, formulations: [], ai },
     message: `Generated ${candidates.length} candidates`,
   });
 });
 
 // Save target-generated candidate as formulation
 server.post(`${apiPrefix}/target-generation/save`, async (request, reply) => {
-  const { candidate, name } = request.body;
+  const { candidate, name } = z.object({
+    candidate: z.object({
+      ingredients: z.array(formulationIngredientSchema).min(1).max(40),
+      overall_score: z.coerce.number().finite().min(0).max(100).optional(),
+      beverage_type: z.string().trim().min(1).max(100).optional(),
+    }).passthrough(),
+    name: z.string().trim().min(1).max(255).optional(),
+  }).parse(request.body);
   
-  if (!candidate || !candidate.ingredients) {
-    return reply.code(400).send({ error: 'Candidate data is required' });
-  }
-  
-  // Calculate totals
-  let totalPercentage = 0;
-  let totalCost = 0;
-  let totalCalories = 0;
-  let totalSugar = 0;
-  
-  const processedIngredients = candidate.ingredients.map((fi, idx) => {
-    const ing = getIngredientById(fi.ingredient_id);
-    if (ing) {
-      totalPercentage += fi.percentage;
-      totalCost += (fi.percentage / 100) * (ing.base_price_per_kg / 10);
-      totalCalories += (fi.percentage / 100) * (ing.calories_per_100g || 0);
-      totalSugar += (fi.percentage / 100) * (ing.sugar_g || 0);
-    }
-    return {
-      ingredient_id: fi.ingredient_id,
-      ingredient_name: fi.ingredient_name || ing?.name || 'Unknown',
-      ingredient_code: ing?.code || 'Unknown',
-      percentage: fi.percentage,
-      cost_contribution: ing ? (fi.percentage / 100) * (ing.base_price_per_kg / 10) : 0,
-      display_order: idx,
-    };
-  });
+  const totals = processFormulationIngredients(candidate.ingredients);
   
   const newFormulation = addFormulation({
     code: `TGT-${Date.now()}`,
@@ -929,11 +1213,7 @@ server.post(`${apiPrefix}/target-generation/save`, async (request, reply) => {
     version: 1,
     is_latest_version: true,
     status: 'draft',
-    total_percentage: totalPercentage,
-    total_cost_per_liter: totalCost,
-    total_calories_per_100ml: totalCalories,
-    total_sugar_per_100ml: totalSugar,
-    ingredients: processedIngredients,
+    ...totals,
   });
   
   return reply.code(201).send({ 
@@ -972,8 +1252,8 @@ server.post(`${apiPrefix}/regulatory/formulations/:id/check`, async (request, re
     }
   }
   
-  return reply.code(201).send({
-    data: {
+  const compliance = {
+      id: generateId(),
       formulation_id: formulation.id,
       is_halal_compliant: isHalal,
       is_kosher_compliant: true,
@@ -981,8 +1261,21 @@ server.post(`${apiPrefix}/regulatory/formulations/:id/check`, async (request, re
       algerian_regulatory_compliant: violations.length === 0,
       violations,
       compliance_notes: violations.length === 0 ? 'All checks passed' : 'Issues found',
-    },
-  });
+      checked_at: new Date().toISOString(),
+    };
+  const previousIndex = complianceRecords.findIndex(item => item.formulation_id === formulation.id);
+  if (previousIndex >= 0) complianceRecords[previousIndex] = compliance;
+  else complianceRecords.push(compliance);
+  return reply.code(201).send({ data: compliance });
+});
+
+server.get(`${apiPrefix}/regulatory/formulations/:id/compliance`, async (request, reply) => {
+  if (!formulations.some(item => item.id === request.params.id)) {
+    return reply.code(404).send({ error: 'Formulation not found' });
+  }
+  const compliance = complianceRecords.find(item => item.formulation_id === request.params.id);
+  if (!compliance) return reply.code(404).send({ error: 'Compliance has not been checked' });
+  return { data: compliance };
 });
 
 server.post(`${apiPrefix}/regulatory/formulations/:id/labels`, async (request, reply) => {
@@ -996,13 +1289,24 @@ server.post(`${apiPrefix}/regulatory/formulations/:id/labels`, async (request, r
     return { name: ing?.name || 'Unknown', percentage: fi.percentage };
   });
   
-  return reply.code(201).send({
-    data: {
+  const labels = {
       ar: { name: formulation.name, ingredients: ings },
       fr: { name: formulation.name, ingredients: ings },
       en: { name: formulation.name, ingredients: ings },
-    },
-  });
+    };
+  formulation.labels = labels;
+  return reply.code(201).send({ data: labels });
+});
+
+server.get(`${apiPrefix}/regulatory/formulations/:id/labels`, async (request, reply) => {
+  const formulation = formulations.find(item => item.id === request.params.id);
+  if (!formulation) return reply.code(404).send({ error: 'Formulation not found' });
+  if (!formulation.labels) return reply.code(404).send({ error: 'Labels have not been generated' });
+  const language = request.query.language;
+  if (language && !['ar', 'fr', 'en'].includes(language)) {
+    return reply.code(400).send({ error: 'Language must be ar, fr, or en' });
+  }
+  return { data: language ? formulation.labels[language] : formulation.labels };
 });
 
 // ============================================================================
@@ -1011,7 +1315,11 @@ server.post(`${apiPrefix}/regulatory/formulations/:id/labels`, async (request, r
 
 server.post(`${apiPrefix}/cost/formulations/:id/batch-cost`, async (request, reply) => {
   const { id } = request.params;
-  const { batch_size_liters, overhead_percent = 15, margin_percent = 30 } = request.body;
+  const { batch_size_liters, overhead_percent, margin_percent } = z.object({
+    batch_size_liters: z.coerce.number().finite().positive().max(1000000),
+    overhead_percent: z.coerce.number().finite().min(0).max(1000).default(15),
+    margin_percent: z.coerce.number().finite().min(0).max(1000).default(30),
+  }).parse(request.body);
   
   const formulation = formulations.find(f => f.id === id);
   if (!formulation) {
@@ -1024,8 +1332,9 @@ server.post(`${apiPrefix}/cost/formulations/:id/batch-cost`, async (request, rep
   const marginAmount = totalCost * (margin_percent / 100);
   const finalPrice = totalCost + marginAmount;
   
-  return reply.code(201).send({
-    data: {
+  const calculation = {
+      id: generateId(),
+      formulation_id: id,
       batch_size_liters,
       breakdown: {
         ingredient_cost: ingredientCost,
@@ -1033,28 +1342,44 @@ server.post(`${apiPrefix}/cost/formulations/:id/batch-cost`, async (request, rep
         total_cost: totalCost,
         margin: marginAmount,
         final_price: finalPrice,
-        estimated_revenue: finalPrice * 1.2,
-        estimated_profit: finalPrice * 0.2,
-        roi_percent: 20,
+        estimated_revenue: finalPrice,
+        estimated_profit: marginAmount,
+        roi_percent: totalCost === 0 ? 0 : (marginAmount / totalCost) * 100,
       },
       per_liter: {
         ingredient_cost: ingredientCost / batch_size_liters,
         total_cost: totalCost / batch_size_liters,
         final_price: finalPrice / batch_size_liters,
       },
-    },
-  });
+      calculated_at: new Date().toISOString(),
+    };
+  batchCostCalculations.push(calculation);
+  return reply.code(201).send({ data: calculation });
 });
 
-server.get(`${apiPrefix}/cost/formulations/:id/compare-batch-sizes`, async (request) => {
+server.get(`${apiPrefix}/cost/formulations/:id/batch-costs`, async (request, reply) => {
+  if (!formulations.some(item => item.id === request.params.id)) {
+    return reply.code(404).send({ error: 'Formulation not found' });
+  }
+  const { limit, offset } = paginationSchema.extend({ limit: z.coerce.number().int().min(1).max(100).default(50) }).parse(request.query);
+  const filtered = batchCostCalculations.filter(item => item.formulation_id === request.params.id);
+  return {
+    data: filtered.slice(offset, offset + limit),
+    pagination: { total: filtered.length, limit, offset, has_more: offset + limit < filtered.length },
+  };
+});
+
+server.get(`${apiPrefix}/cost/formulations/:id/compare-batch-sizes`, async (request, reply) => {
   const { id } = request.params;
   const formulation = formulations.find(f => f.id === id);
   if (!formulation) {
-    return { error: 'Formulation not found' };
+    return reply.code(404).send({ error: 'Formulation not found' });
   }
   
-  const sizes = [1, 10, 100, 1000, 10000];
-  const baseCost = formulation.total_cost_per_liter || 10;
+  const sizes = request.query.sizes
+    ? request.query.sizes.split(',').map(value => z.coerce.number().finite().positive().max(1000000).parse(value))
+    : [1, 10, 100, 1000, 10000];
+  const baseCost = formulation.total_cost_per_liter || 0;
   
   return {
     data: sizes.map(size => ({
@@ -1067,15 +1392,63 @@ server.get(`${apiPrefix}/cost/formulations/:id/compare-batch-sizes`, async (requ
   };
 });
 
-// Start server
-const PORT = parseInt(process.env.PORT || '3001');
-const HOST = '0.0.0.0';
+server.post(`${apiPrefix}/cost/formulations/:id/roi`, async (request, reply) => {
+  const formulation = formulations.find(item => item.id === request.params.id);
+  if (!formulation) return reply.code(404).send({ error: 'Formulation not found' });
+  const input = z.object({
+    batch_size_liters: z.coerce.number().finite().positive().max(1000000),
+    selling_price_per_liter: z.coerce.number().finite().nonnegative(),
+  }).parse(request.body);
+  const totalCost = formulation.total_cost_per_liter * input.batch_size_liters;
+  const estimatedRevenue = input.selling_price_per_liter * input.batch_size_liters;
+  const estimatedProfit = estimatedRevenue - totalCost;
+  return { data: {
+    batch_size_liters: input.batch_size_liters,
+    cost_per_liter: formulation.total_cost_per_liter,
+    selling_price_per_liter: input.selling_price_per_liter,
+    total_cost: totalCost,
+    total_revenue: estimatedRevenue,
+    profit: estimatedProfit,
+    estimated_revenue: estimatedRevenue,
+    estimated_profit: estimatedProfit,
+    roi_percent: totalCost === 0 ? 0 : (estimatedProfit / totalCost) * 100,
+    break_even_price: formulation.total_cost_per_liter,
+  } };
+});
 
-try {
-  await server.listen({ port: PORT, host: HOST });
-  console.log(`🚀 BeverageAI DZ Backend running on http://localhost:${PORT}`);
-  console.log(`📦 Mock mode: ${ingredients.length} ingredients loaded`);
-} catch (err) {
-  server.log.error(err);
-  process.exit(1);
+const pricingHistory = [];
+
+server.post(`${apiPrefix}/cost/ingredients/:ingredientId/pricing`, async (request, reply) => {
+  if (!getIngredientById(request.params.ingredientId)) return reply.code(404).send({ error: 'Ingredient not found' });
+  const input = z.object({
+    price_per_kg: z.coerce.number().finite().nonnegative(),
+    currency: z.string().trim().length(3).default('DZD'),
+    effective_date: z.coerce.date().default(() => new Date()),
+  }).parse(request.body);
+  const record = { id: generateId(), ingredient_id: request.params.ingredientId, ...input, effective_date: input.effective_date.toISOString() };
+  pricingHistory.push(record);
+  return reply.code(201).send({ data: record });
+});
+
+server.get(`${apiPrefix}/cost/ingredients/:ingredientId/pricing`, async (request, reply) => {
+  if (!getIngredientById(request.params.ingredientId)) return reply.code(404).send({ error: 'Ingredient not found' });
+  const { limit, offset } = paginationSchema.parse(request.query);
+  const filtered = pricingHistory.filter(item => item.ingredient_id === request.params.ingredientId);
+  return { data: filtered.slice(offset, offset + limit), pagination: { total: filtered.length, limit, offset, has_more: offset + limit < filtered.length } };
+});
+
+export default server;
+
+const isEntrypoint = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isEntrypoint) {
+  const port = Number.parseInt(process.env.PORT || '3001', 10);
+  const host = process.env.HOST || '127.0.0.1';
+  try {
+    await server.listen({ port, host });
+    console.log(`BeverageAI DZ Backend running on http://localhost:${port}`);
+    console.log(`Mock mode: ${ingredients.length} ingredients loaded`);
+  } catch (error) {
+    server.log.error(error);
+    process.exit(1);
+  }
 }

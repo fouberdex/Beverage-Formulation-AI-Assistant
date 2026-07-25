@@ -158,7 +158,7 @@ function optimizePercentages(ingredients, initialPercentages, targets) {
 
       // Adjust based on cost error
       if (targets.target_cost_per_liter && ing.base_price_per_kg) {
-        adjustment -= costError * (ing.base_price_per_kg / 10) * learningRate;
+        adjustment -= costError * ing.base_price_per_kg * learningRate;
       }
 
       percentages[i] = Math.max(0.01, Math.min(100, percentages[i] + adjustment));
@@ -266,4 +266,3 @@ export async function createFormulationsFromCandidates(candidates, metadata = {}
 
   return formulations;
 }
-

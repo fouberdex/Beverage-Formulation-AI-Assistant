@@ -29,7 +29,7 @@ function getFormulationById(formulationId) {
     ...formulation,
     ingredients: enrichedIngredients,
     total_cost_per_liter: enrichedIngredients.reduce(
-      (sum, ing) => sum + (ing.percentage / 100) * (ing.base_price_per_kg / 10),
+      (sum, ing) => sum + (ing.percentage / 100) * ing.base_price_per_kg,
       0
     ),
   };

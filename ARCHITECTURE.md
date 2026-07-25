@@ -1,6 +1,8 @@
 # BeverageAI DZ - Architecture Overview
 
-## System Architecture
+> This document describes the target PostgreSQL architecture. The executable development server currently uses in-memory mock storage; see `README.md` for the implemented runtime and setup instructions.
+
+## Target System Architecture
 
 ### Technology Stack
 
@@ -327,6 +329,10 @@ Error format:
 7. Documentation completion
 
 See `SCALING.md` for detailed scaling roadmap.
+
+
+
+
 
 
 

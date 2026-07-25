@@ -28,7 +28,7 @@ function getFormulationById(formulationId) {
       vegan: ingredient?.vegan !== false,
       max_percentage: ingredient?.max_percentage || 100,
       regulatory_status: ingredient?.regulatory_status || 'approved',
-      sugar_g: ingredient?.sugar_per_100g || 0,
+      sugar_g: ingredient?.sugar_g || 0,
     };
   });
 
@@ -214,7 +214,7 @@ export async function generateLabels(formulationId) {
     const ingredient = mockIngredients.find(i => i.id === ing.ingredient_id);
     if (ingredient) {
       totalCalories += (ing.percentage / 100) * (ingredient.calories_per_100g || 0);
-      totalSugar += (ing.percentage / 100) * (ingredient.sugar_per_100g || 0);
+      totalSugar += (ing.percentage / 100) * (ingredient.sugar_g || 0);
     }
   }
 

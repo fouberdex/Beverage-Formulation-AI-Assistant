@@ -1,10 +1,8 @@
-import { useState, useEffect } from 'react';
-import { targetGenerationAPI, ingredientsAPI } from '../services/api';
-import { Ingredient } from '../types';
+import { useState } from 'react';
+import { targetGenerationAPI } from '../services/api';
 import { Target, Loader, Info, CheckCircle, ChevronDown, ChevronUp } from 'lucide-react';
 
 export default function TargetGenerationPage() {
-  const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [constraints, setConstraints] = useState({
     target_calories: '',
     target_sugar: '',
@@ -20,24 +18,6 @@ export default function TargetGenerationPage() {
   const [savedIds, setSavedIds] = useState<string[]>([]);
   const [expandedScores, setExpandedScores] = useState<string[]>([]);
   const [successMessage, setSuccessMessage] = useState('');
-
-  useEffect(() => {
-    loadIngredients();
-  }, []);
-
-  async function loadIngredients() {
-    try {
-      const res = await ingredientsAPI.getAll({ limit: 500 });
-      setIngredients(res.data.data);
-    } catch (error) {
-      console.error('Error loading ingredients:', error);
-    }
-  }
-
-  function getIngredientName(id: string): string {
-    const ing = ingredients.find(i => i.id === id);
-    return ing?.name || 'Unknown Ingredient';
-  }
 
   function toggleScoreExpand(id: string) {
     setExpandedScores(prev => 
@@ -221,6 +201,25 @@ export default function TargetGenerationPage() {
 
       {results && results.candidates && (
         <div className="mt-6 mx-4">
+          <div className={`mb-4 rounded-lg border p-4 ${
+            results.ai?.used
+              ? 'bg-indigo-50 border-indigo-200 text-indigo-800'
+              : 'bg-gray-50 border-gray-200 text-gray-700'
+          }`}>
+            <p className="font-medium">
+              {results.ai?.used
+                ? `AI review applied: ${results.ai.provider} / ${results.ai.model}`
+                : 'Validated local generation used (no external AI review)'}
+            </p>
+            {!results.ai?.used && results.ai?.reason && (
+              <p className="mt-1 text-sm">{results.ai.reason}</p>
+            )}
+            {results.ai?.used && (
+              <p className="mt-1 text-sm">
+                Ingredient percentages were generated and validated locally; AI only reviewed scores and explanations.
+              </p>
+            )}
+          </div>
           <h2 className="text-xl font-semibold text-gray-900 mb-4">
             Generated Candidates ({results.candidates.length})
           </h2>
@@ -282,6 +281,20 @@ export default function TargetGenerationPage() {
                             <p className="text-xs text-green-500">DZD/L</p>
                           </div>
                         </div>
+                      </div>
+                    )}
+
+                    {candidate.ai_explanation && (
+                      <div className="mt-4 rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-900">
+                        <p className="font-medium mb-1">AI review</p>
+                        <p>{candidate.ai_explanation}</p>
+                        {candidate.ai_warnings?.length > 0 && (
+                          <ul className="mt-2 list-disc pl-5 text-indigo-800">
+                            {candidate.ai_warnings.map((warning: string, warningIndex: number) => (
+                              <li key={warningIndex}>{warning}</li>
+                            ))}
+                          </ul>
+                        )}
                       </div>
                     )}
                   </div>
