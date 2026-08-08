@@ -4,7 +4,7 @@ Beverage formulation MVP with ingredient management, formulation calculations, c
 
 ## Current status
 
-The default server uses in-memory mock storage so the complete UI can run without external services. Data created through the API is reset when the backend restarts. PostgreSQL schema, migration, route, and service modules are included as the foundation for a future persistent mode, but they are not yet connected to the default server.
+The default server uses durable local JSON storage so the complete UI can run without external services. Changes are written atomically to `backend/data/app-data.json` and survive backend restarts. Set `PERSIST_DATA=false` for an ephemeral run. PostgreSQL schema, migration, route, and service modules remain available as the foundation for a future multi-user database mode, but are not connected to the default server.
 
 This distinction is intentional: the current application is a functional local MVP, not yet a production or multi-tenant deployment.
 
@@ -44,18 +44,19 @@ Important backend settings:
 - `HOST` defaults to `127.0.0.1`.
 - `CORS_ORIGINS` is a comma-separated allowlist and defaults to `http://localhost:5173`.
 - `RATE_LIMIT_MAX` defaults to 200 requests per minute.
+- `PERSIST_DATA` defaults to `true`; `DATA_FILE` can override the local JSON data path.
 - Setting `API_KEY` requires clients to send the same value in `x-api-key`. Set `VITE_API_KEY` for the frontend when using this option.
 
 ### Free AI review
 
-Target-based predictive formulation supports the Google Gemini API. The default model is `gemini-2.5-flash-lite`, which Google currently offers on its limited free tier.
+Target-based predictive formulation and the AI Recommendation Engine support the Google Gemini API. The default model is `gemini-2.5-flash-lite`; model availability, free-tier limits, and data-use terms are controlled by Google and can change.
 
 1. Create a Gemini API key in [Google AI Studio](https://aistudio.google.com/app/apikey).
 2. Copy `backend/.env.example` to `backend/.env`.
 3. Set `GEMINI_API_KEY` in `backend/.env`.
 4. Restart the backend.
 
-When configured, `POST /api/v1/target-generation/generate` sends validated candidate summaries to Gemini for conservative compatibility, sensory, stability, warning, and explanation review. Ingredient selection, percentages, nutrition, cost, and request validation remain local. The response and Target Generation page state whether Gemini was actually used.
+When configured, target generation and recommendation endpoints send validated candidate summaries to Gemini for conservative review. Ingredient percentages, nutrition, cost, request validation, and configured maximum limits remain server-controlled. Every response states whether Gemini was actually used.
 
 If the key is missing, invalid, rate-limited, or the request times out, generation continues with the local fallback. Free-tier prompts may be used by Google to improve its products; do not send confidential formulation data without reviewing the provider's current data-use and pricing terms.
 
@@ -85,7 +86,7 @@ Invalid requests return HTTP 400 with structured validation details. Missing res
 
 ## PostgreSQL development
 
-PostgreSQL is not required for the current mock server. To inspect or develop the future persistent implementation:
+PostgreSQL is not required for the current local file-backed server. To inspect or develop the future database implementation:
 
 ```bash
 createdb beverageai_dz
@@ -93,7 +94,7 @@ cp backend/.env.example backend/.env
 npm run migrate --workspace=backend
 ```
 
-Running this migration creates the schema but does not switch the active server away from mock storage.
+Running this migration creates the schema but does not switch the active server away from local JSON storage.
 
 ## Cost model
 
@@ -104,6 +105,19 @@ percentage / 100 × price per kg
 ```
 
 Real production costing should incorporate measured density, process loss, packaging, labor, freight, and supplier price history.
+
+## Ingredient catalog methodology
+
+The bundled catalog contains more than 300 beverage-use ingredients selected from beverage-relevant functional classes and ingredient inventories maintained by Codex GSFA, the US FDA, and the European Commission. It excludes intoxicating ingredients and known animal-derived additives such as gelatin, carmine, and shellac. Catalog halal status means the named plant, mineral, microbial, or synthetic source is halal-compatible; procurement must still verify the supplier certificate, processing aids, cross-contamination controls, and exact source.
+
+Bundled DZD/kg values are dated planning estimates, not quotations. They use category benchmarks and an official Bank of Algeria USD/DZD reference of 133.3152, then vary by ingredient class. Replace them through the ingredient editor with current supplier quotes; price changes are recorded and formulations are recalculated automatically.
+
+Research references:
+
+- Codex GSFA: https://www.fao.org/gsfaonline/
+- FDA Substances Added to Food: https://www.fda.gov/food/food-additives-petitions/substances-added-food-formerly-eafus
+- European Commission food-additive information: https://food.ec.europa.eu/food-safety/food-improvement-agents/additives_en
+- Bank of Algeria daily exchange rates: https://www.bank-of-algeria.dz/taux-de-change-journalier/
 
 ## Before production
 

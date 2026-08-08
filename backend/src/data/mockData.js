@@ -2,6 +2,7 @@
  * Mock data for BeverageAI DZ
  * Used when database is not available
  */
+import { expandedIngredients } from './expandedIngredientCatalog.js';
 
 // Generate UUID-like IDs
 function generateId() {
@@ -57,7 +58,7 @@ const INGREDIENT_IDS = {
 };
 
 // Sample ingredients (1,200+ for production, 40 for demo)
-export const mockIngredients = [
+const coreIngredients = [
   // Water & Base
   { id: INGREDIENT_IDS.WATER, code: 'WATER-001', name: 'Purified Water', name_en: 'Purified Water', name_ar: 'ماء نقي', name_fr: 'Eau Purifiée', category: 'base', subcategory: 'water', price_per_kg: 5, base_price_per_kg: 5, calories_per_100g: 0, sugar_per_100g: 0, halal: true, halal_certified: true, kosher: true, vegan: true, regulatory_status: 'approved', is_active: true },
   { id: INGREDIENT_IDS.SPRING_WATER, code: 'WATER-002', name: 'Spring Water', name_en: 'Spring Water', name_ar: 'ماء الينابيع', name_fr: 'Eau de Source', category: 'base', subcategory: 'water', price_per_kg: 15, base_price_per_kg: 15, calories_per_100g: 0, sugar_per_100g: 0, halal: true, halal_certified: true, kosher: true, vegan: true, regulatory_status: 'approved', is_active: true },
@@ -127,13 +128,42 @@ export const mockIngredients = [
   { id: INGREDIENT_IDS.HIBISCUS, code: 'EXT-003', name: 'Hibiscus Extract', name_en: 'Hibiscus Extract', name_ar: 'مستخلص الكركديه', name_fr: 'Extrait d\'Hibiscus', category: 'extract', subcategory: 'flower', price_per_kg: 480, base_price_per_kg: 480, calories_per_100g: 0, sugar_per_100g: 0, halal: true, halal_certified: true, kosher: true, vegan: true, regulatory_status: 'approved', is_active: true },
 ].map((ing) => ({
   ...ing,
+  name_en: ing.name_en ?? ing.name,
+  name_ar: ing.name_ar ?? ing.name,
+  name_fr: ing.name_fr ?? ing.name,
+  ph_min: ing.ph_min ?? 3,
+  ph_max: ing.ph_max ?? 8,
+  solubility_g_per_100ml: ing.solubility_g_per_100ml ?? (ing.category === 'base' || ing.category === 'juice' ? 100 : 10),
+  density_g_per_ml: ing.density_g_per_ml ?? (ing.category === 'base' ? 1 : 1.05),
+  taste_profile: ing.taste_profile ?? {},
+  color: ing.color ?? 'varies by supplier grade',
   sugar_g: ing.sugar_g ?? ing.sugar_per_100g ?? 0,
   currency: ing.currency ?? 'DZD',
+  price_basis: ing.price_basis ?? 'Seed planning estimate in DZD; replace with a current supplier quotation.',
+  price_as_of: ing.price_as_of ?? '2026-07-29',
   kosher_certified: ing.kosher_certified ?? ing.kosher ?? false,
   organic: ing.organic ?? false,
+  halal_eligibility: ing.halal_eligibility ?? 'Catalog marked halal-compatible; verify supplier certificate and processing aids.',
+  allergen_statement: ing.allergen_statement ?? 'verify supplier specification',
+  regulatory_note: ing.regulatory_note ?? 'Verify current permission and use level for the beverage category and jurisdiction.',
+  max_percentage: ing.max_percentage ?? ({
+    base: 100, sweetener: 20, acidulant: 2, flavor: 2, preservative: 0.1,
+    colorant: 0.1, vitamin: 0.5, mineral: 1, stimulant: 5, carbonation: 5,
+    juice: 60, stabilizer: 1, emulsifier: 1, extract: 5,
+  }[ing.category] ?? 5),
+  protein_g: ing.protein_g ?? 0,
+  carbs_g: ing.carbs_g ?? (ing.sugar_g ?? ing.sugar_per_100g ?? 0),
+  fat_g: ing.fat_g ?? 0,
+  nutrition_basis: ing.nutrition_basis ?? 'Seed planning estimate; replace with supplier specification or laboratory result.',
+  source_scope: ing.source_scope ?? 'Beverage R&D seed catalog; not a legal authorization.',
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
 }));
+
+export const mockIngredients = [...coreIngredients, ...expandedIngredients]
+  .filter((ingredient, index, catalog) =>
+    catalog.findIndex(candidate => candidate.name.toLowerCase() === ingredient.name.toLowerCase()) === index
+  );
 
 // Sample formulations with fixed ingredient IDs
 export const mockFormulations = [
@@ -279,6 +309,9 @@ export const mockComplianceRecords = [];
 
 // Sample batch cost calculations
 export const batchCostCalculations = [];
+
+// Ingredient supplier-price records
+export const pricingHistory = [];
 
 // Categories
 export const categories = [...new Set(mockIngredients.map(i => i.category))];

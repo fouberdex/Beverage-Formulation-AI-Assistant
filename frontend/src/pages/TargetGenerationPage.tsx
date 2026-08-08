@@ -111,6 +111,7 @@ export default function TargetGenerationPage() {
               <li><strong>Sensory (25%)</strong>: Taste balance, sweetness, acidity, flavor intensity</li>
               <li><strong>Stability (10%)</strong>: pH stability, color stability, shelf life prediction</li>
             </ul>
+            <p className="mt-2">Local scores are deterministic screening heuristics. They are not laboratory measurements.</p>
           </div>
         </div>
       </div>
@@ -178,6 +179,42 @@ export default function TargetGenerationPage() {
               <option value="tea">Iced Tea</option>
             </select>
           </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Minimum Ingredients</label>
+            <input
+              type="number"
+              min="1"
+              max="40"
+              value={constraints.min_ingredients}
+              onChange={(e) => setConstraints({ ...constraints, min_ingredients: Number(e.target.value) })}
+              className="w-full rounded-md border-gray-300 shadow-sm border p-2"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Maximum Ingredients</label>
+            <input
+              type="number"
+              min="1"
+              max="40"
+              value={constraints.max_ingredients}
+              onChange={(e) => setConstraints({ ...constraints, max_ingredients: Number(e.target.value) })}
+              className="w-full rounded-md border-gray-300 shadow-sm border p-2"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Candidates</label>
+            <input
+              type="number"
+              min="1"
+              max="10"
+              value={constraints.count}
+              onChange={(e) => setConstraints({ ...constraints, count: Number(e.target.value) })}
+              className="w-full rounded-md border-gray-300 shadow-sm border p-2"
+            />
+          </div>
         </div>
 
         <button
@@ -193,7 +230,7 @@ export default function TargetGenerationPage() {
           ) : (
             <>
               <Target className="h-5 w-5 mr-2" />
-              Generate Top 3 Candidates
+              Generate Candidates
             </>
           )}
         </button>
@@ -297,6 +334,17 @@ export default function TargetGenerationPage() {
                         )}
                       </div>
                     )}
+
+                    {candidate.local_warnings?.length > 0 && (
+                      <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                        <p className="font-medium mb-1">Local screening warnings</p>
+                        <ul className="list-disc pl-5">
+                          {candidate.local_warnings.map((warning: string, warningIndex: number) => (
+                            <li key={warningIndex}>{warning}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
 
                   {/* Detailed Scores */}
@@ -390,21 +438,23 @@ export default function TargetGenerationPage() {
                         <div className="bg-gray-50 p-3 rounded">
                           <div className="flex justify-between items-center mb-2">
                             <span className="font-medium text-gray-700">Regulatory Compliance</span>
-                            <span className="text-green-600 font-semibold">✓ Compliant</span>
+                            <span className={`font-semibold ${candidate.scores.regulatory.max_limits_ok ? 'text-green-600' : 'text-red-600'}`}>
+                              {candidate.scores.regulatory.max_limits_ok ? 'Passed local screen' : 'Review required'}
+                            </span>
                           </div>
                           {expandedScores.includes(candidate.id) && (
                             <div className="space-y-1 text-sm">
                               <div className="flex justify-between">
                                 <span className="text-gray-600">Halal Certified</span>
-                                <span className="text-green-600">✓</span>
+                                <span>{candidate.scores.regulatory.halal_compliant ? '✓' : '✕'}</span>
                               </div>
                               <div className="flex justify-between">
                                 <span className="text-gray-600">Max Limits OK</span>
-                                <span className="text-green-600">✓</span>
+                                <span>{candidate.scores.regulatory.max_limits_ok ? '✓' : '✕'}</span>
                               </div>
                               <div className="flex justify-between">
                                 <span className="text-gray-600">Preservative OK</span>
-                                <span className="text-green-600">✓</span>
+                                <span>{candidate.scores.regulatory.preservative_ok ? '✓' : '✕'}</span>
                               </div>
                             </div>
                           )}

@@ -27,6 +27,8 @@ Thumbs.db
 # Database
 *.sql.backup
 *.dump
+backend/data/app-data.json
+backend/data/app-data.json.tmp
 
 # Testing
 coverage/

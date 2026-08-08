@@ -69,7 +69,7 @@ export default function RegulatoryPage() {
       <div className="px-4 py-5 sm:px-6">
         <h1 className="text-2xl font-bold text-gray-900">Regulatory & Labeling</h1>
         <p className="mt-1 text-sm text-gray-500">
-          Algerian compliance, Halal validation, and label generation (AR/FR/EN)
+          Local certification-data screening and draft label generation (AR/FR/EN)
         </p>
       </div>
 
@@ -78,13 +78,14 @@ export default function RegulatoryPage() {
         <div className="flex items-start">
           <Info className="h-5 w-5 text-green-600 mr-3 mt-0.5 flex-shrink-0" />
           <div className="text-sm text-green-800">
-            <p className="font-medium mb-1">Compliance Checks Include:</p>
+            <p className="font-medium mb-1">Local screening includes:</p>
             <ul className="list-disc list-inside space-y-1">
               <li><strong>Halal</strong>: All ingredients must be Halal certified</li>
               <li><strong>Kosher</strong>: Kosher certification status</li>
               <li><strong>Vegan</strong>: No animal-derived ingredients</li>
-              <li><strong>Algerian Regulations</strong>: Max percentages, restricted ingredients</li>
+              <li><strong>Configured Limits</strong>: Maximum percentages and locally marked restricted ingredients</li>
             </ul>
+            <p className="mt-2">This screen does not replace review against current Algerian law or certification documents.</p>
           </div>
         </div>
       </div>
@@ -221,7 +222,7 @@ export default function RegulatoryPage() {
                     value={compliance.is_vegan_compliant}
                   />
                   <ComplianceItem
-                    label="Algerian Regulatory"
+                    label="Local regulatory screen"
                     value={compliance.algerian_regulatory_compliant}
                   />
                 </div>
@@ -248,7 +249,7 @@ export default function RegulatoryPage() {
                     <div className="flex items-center">
                       <CheckCircle className="h-6 w-6 text-green-600 mr-3" />
                       <div>
-                        <h4 className="font-semibold text-green-900">All Compliance Checks Passed!</h4>
+                        <h4 className="font-semibold text-green-900">Local screening checks passed</h4>
                         <p className="text-sm text-green-700">{compliance.compliance_notes}</p>
                       </div>
                     </div>
@@ -261,7 +262,7 @@ export default function RegulatoryPage() {
             {activeTab === 'labels' && labels && (
               <div className="space-y-4">
                 <h3 className="text-lg font-semibold text-gray-900">Generated Labels</h3>
-                <p className="text-sm text-gray-500">Labels generated in Arabic, French, and English for regulatory compliance.</p>
+                <p className="text-sm text-gray-500">Draft ingredient panels in Arabic, French, and English. Legal review is required before use.</p>
                 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                   {labels.ar && (
@@ -342,6 +343,7 @@ function LabelCard({ title, language, data }: { title: string; language: string;
               </span>
             </div>
           )}
+          {data.notice && <p className="mt-3 border-t pt-3 text-xs text-amber-700">{data.notice}</p>}
         </div>
       </div>
     </div>

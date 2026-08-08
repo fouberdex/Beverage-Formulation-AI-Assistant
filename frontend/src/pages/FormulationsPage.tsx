@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { formulationsAPI, ingredientsAPI } from '../services/api';
 import { Formulation, Ingredient } from '../types';
-import { Plus, Search, X, Trash2 } from 'lucide-react';
+import { Plus, Search, X, Trash2, Archive, GitBranch } from 'lucide-react';
 
 interface FormulationIngredientInput {
   ingredient_id: string;
@@ -15,6 +15,7 @@ export default function FormulationsPage() {
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [selectedFormulation, setSelectedFormulation] = useState<Formulation | null>(null);
+  const [versions, setVersions] = useState<Formulation[]>([]);
 
   // Form state
   const [formName, setFormName] = useState('');
@@ -61,7 +62,7 @@ export default function FormulationsPage() {
     setShowModal(true);
   }
 
-  function openViewModal(formulation: Formulation) {
+  async function openViewModal(formulation: Formulation) {
     setSelectedFormulation(formulation);
     setFormName(formulation.name);
     setFormDescription(formulation.description || '');
@@ -73,6 +74,12 @@ export default function FormulationsPage() {
       })) || []
     );
     setShowModal(true);
+    try {
+      const response = await formulationsAPI.getVersions(formulation.id);
+      setVersions(response.data.data);
+    } catch {
+      setVersions([]);
+    }
   }
 
   function addIngredientRow() {
@@ -110,6 +117,7 @@ export default function FormulationsPage() {
         await formulationsAPI.update(selectedFormulation.id, {
           name: formName,
           description: formDescription,
+          beverage_type: formBeverageType,
           ingredients: validIngredients,
         });
       } else {
@@ -127,6 +135,34 @@ export default function FormulationsPage() {
     } catch (error) {
       console.error('Error saving formulation:', error);
       alert('Error saving formulation');
+    }
+  }
+
+  async function archiveSelected() {
+    if (!selectedFormulation || !window.confirm(`Archive ${selectedFormulation.name}?`)) return;
+    try {
+      await formulationsAPI.delete(selectedFormulation.id);
+      setShowModal(false);
+      await loadFormulations();
+    } catch (error: any) {
+      alert(error.response?.data?.error || 'Error archiving formulation');
+    }
+  }
+
+  async function createNewVersion() {
+    if (!selectedFormulation) return;
+    const validIngredients = formIngredients.filter(item => item.ingredient_id && item.percentage > 0);
+    try {
+      await formulationsAPI.createVersion(selectedFormulation.id, {
+        name: formName,
+        description: formDescription,
+        beverage_type: formBeverageType,
+        ingredients: validIngredients,
+      });
+      setShowModal(false);
+      await loadFormulations();
+    } catch (error: any) {
+      alert(error.response?.data?.error || 'Error creating formulation version');
     }
   }
 
@@ -242,6 +278,12 @@ export default function FormulationsPage() {
                     </div>
                   </div>
 
+                  {selectedFormulation && versions.length > 1 && (
+                    <div className="rounded-md bg-gray-50 p-3 text-sm text-gray-700">
+                      Version history: {versions.map(version => `v${version.version} (${version.status})`).join(' • ')}
+                    </div>
+                  )}
+
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Description
@@ -337,7 +379,19 @@ export default function FormulationsPage() {
                 </div>
 
                 {/* Actions */}
-                <div className="mt-6 flex justify-end gap-3">
+                <div className="mt-6 flex flex-wrap justify-end gap-3">
+                  {selectedFormulation && (
+                    <>
+                      <button type="button" onClick={archiveSelected}
+                        className="mr-auto inline-flex items-center px-4 py-2 border border-amber-300 rounded-md text-amber-800 hover:bg-amber-50">
+                        <Archive className="h-4 w-4 mr-2" /> Archive
+                      </button>
+                      <button type="button" onClick={createNewVersion}
+                        className="inline-flex items-center px-4 py-2 border border-sky-300 rounded-md text-sky-700 hover:bg-sky-50">
+                        <GitBranch className="h-4 w-4 mr-2" /> Save as New Version
+                      </button>
+                    </>
+                  )}
                   <button
                     type="button"
                     onClick={() => setShowModal(false)}

@@ -16,6 +16,7 @@ export default function AIPage() {
   const [selectedFormulationId, setSelectedFormulationId] = useState('');
   const [count, setCount] = useState(5);
   const [generationType, setGenerationType] = useState('optimization');
+  const [targets, setTargets] = useState({ calories: '', sugar: '', cost: '' });
   const [loading, setLoading] = useState(false);
   const [loadingFormulations, setLoadingFormulations] = useState(true);
   const [variants, setVariants] = useState<any[]>([]);
@@ -56,11 +57,28 @@ export default function AIPage() {
       const res = await aiAPI.generateVariants(selectedFormulationId, {
         count: Math.min(count, 10),
         generation_type: generationType,
+        target_calories: targets.calories === '' ? undefined : Number(targets.calories),
+        target_sugar: targets.sugar === '' ? undefined : Number(targets.sugar),
+        target_cost_per_liter: targets.cost === '' ? undefined : Number(targets.cost),
       });
       setVariants(res.data.data);
       setAiStatus(res.data.ai || null);
     } catch (error: any) {
       alert(error.response?.data?.error || 'Error generating variants');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadPreviousVariants() {
+    if (!selectedFormulationId) return;
+    setLoading(true);
+    setAiStatus(null);
+    try {
+      const response = await aiAPI.getVariants(selectedFormulationId, { limit: 50 });
+      setVariants(response.data.data);
+    } catch (error: any) {
+      alert(error.response?.data?.error || 'Error loading saved variants');
     } finally {
       setLoading(false);
     }
@@ -128,7 +146,7 @@ export default function AIPage() {
             <p className="font-medium mb-1">How it works:</p>
             <ul className="list-disc list-inside space-y-1">
               <li><strong>Optimization</strong>: Reduces cost while maintaining quality (±10% ingredient changes)</li>
-              <li><strong>Alternative</strong>: Creates variants with different proportions (±30% changes)</li>
+              <li><strong>Alternative</strong>: Tries same-category ingredient substitutions and different proportions</li>
               <li><strong>Constraint-Based</strong>: Generates based on specific targets</li>
               <li><strong>Safety</strong>: Percentages, ingredient limits, compatibility, cost, and nutrition are checked locally</li>
               <li><strong>AI Review</strong>: Gemini ranks candidates and explains tradeoffs; it does not replace lab or legal validation</li>
@@ -223,11 +241,34 @@ export default function AIPage() {
                   className="w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2"
                 >
                   <option value="optimization">Optimization (Cost Reduction)</option>
-                  <option value="alternative">Alternative (Different Ratios)</option>
+                  <option value="alternative">Alternative (Substitutions + Ratios)</option>
                   <option value="constraint_based">Constraint-Based (Target Goals)</option>
                 </select>
               </div>
             </div>
+
+            {generationType === 'constraint_based' && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 rounded-lg bg-sky-50 p-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Target Calories/100ml</label>
+                  <input type="number" min="0" step="0.1" value={targets.calories}
+                    onChange={(e) => setTargets({ ...targets, calories: e.target.value })}
+                    className="w-full rounded-md border p-2" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Target Sugar g/100ml</label>
+                  <input type="number" min="0" step="0.1" value={targets.sugar}
+                    onChange={(e) => setTargets({ ...targets, sugar: e.target.value })}
+                    className="w-full rounded-md border p-2" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Target Cost DZD/L</label>
+                  <input type="number" min="0" step="0.01" value={targets.cost}
+                    onChange={(e) => setTargets({ ...targets, cost: e.target.value })}
+                    className="w-full rounded-md border p-2" />
+                </div>
+              </div>
+            )}
 
             <button
               onClick={generateVariants}
@@ -245,6 +286,13 @@ export default function AIPage() {
                   Generate AI Variants
                 </>
               )}
+            </button>
+            <button
+              onClick={loadPreviousVariants}
+              disabled={loading || !selectedFormulationId}
+              className="w-full px-4 py-2 border border-sky-300 text-sky-700 rounded-md hover:bg-sky-50 disabled:opacity-50"
+            >
+              Load Previous Variants
             </button>
           </div>
         )}

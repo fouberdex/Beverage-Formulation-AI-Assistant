@@ -404,10 +404,9 @@ export default function CostPage() {
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                       {comparisons.map((comp, idx) => (
-                        <tr key={idx} className={idx === 3 ? 'bg-sky-50' : ''}>
+                        <tr key={idx}>
                           <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
                             {comp.batch_size_liters?.toLocaleString()} L
-                            {idx === 3 && <span className="ml-2 text-xs text-sky-600">(Recommended)</span>}
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                             {comp.cost_per_liter?.toFixed(2)} DZD
@@ -429,7 +428,7 @@ export default function CostPage() {
                   </table>
                 </div>
                 <p className="text-xs text-gray-500 mt-2">
-                  * Larger batches typically have lower per-unit costs due to economies of scale
+                  * Per-liter ingredient cost stays constant until quantity-tier supplier pricing is configured. Packaging, labor, freight, tax, and process loss are not included.
                 </p>
               </div>
             )}

@@ -1,15 +1,20 @@
-import { useEffect, useState } from 'react';
-import { ingredientsAPI } from '../services/api';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { costAPI, ingredientsAPI } from '../services/api';
 import { Ingredient } from '../types';
-import { Plus, Search, Filter, X } from 'lucide-react';
+import { Plus, Search, Filter, X, Pencil, Archive } from 'lucide-react';
 
 export default function IngredientsPage() {
+  const pageSize = 50;
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
   const [categories, setCategories] = useState<string[]>([]);
   const [showModal, setShowModal] = useState(false);
+  const [selectedIngredient, setSelectedIngredient] = useState<Ingredient | null>(null);
+  const [priceHistory, setPriceHistory] = useState<any[]>([]);
+  const [page, setPage] = useState(1);
+  const editorRef = useRef<HTMLDivElement>(null);
 
   // Form state for new ingredient
   const [formData, setFormData] = useState({
@@ -22,13 +27,32 @@ export default function IngredientsPage() {
     calories_per_100g: 0,
     sugar_g: 0,
     halal_certified: true,
+    kosher_certified: true,
     vegan: true,
+    organic: false,
+    regulatory_status: 'pending',
+    max_percentage: '' as number | '',
   });
 
   useEffect(() => {
     loadCategories();
     loadIngredients();
   }, [category, search]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [category, search]);
+
+  useEffect(() => {
+    if (!showModal) return;
+    editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [showModal, selectedIngredient]);
+
+  const totalPages = Math.max(1, Math.ceil(ingredients.length / pageSize));
+  const visibleIngredients = useMemo(
+    () => ingredients.slice((page - 1) * pageSize, page * pageSize),
+    [ingredients, page]
+  );
 
   async function loadCategories() {
     try {
@@ -45,7 +69,7 @@ export default function IngredientsPage() {
       const res = await ingredientsAPI.getAll({
         search,
         category: category || undefined,
-        limit: 100,
+        limit: 500,
       });
       setIngredients(res.data.data);
     } catch (error) {
@@ -56,6 +80,8 @@ export default function IngredientsPage() {
   }
 
   function openAddModal() {
+    setSelectedIngredient(null);
+    setPriceHistory([]);
     setFormData({
       code: `ING-${Date.now()}`,
       name: '',
@@ -66,20 +92,63 @@ export default function IngredientsPage() {
       calories_per_100g: 0,
       sugar_g: 0,
       halal_certified: true,
+      kosher_certified: true,
       vegan: true,
+      organic: false,
+      regulatory_status: 'pending',
+      max_percentage: '',
     });
     setShowModal(true);
+  }
+
+  async function openEditModal(ingredient: Ingredient) {
+    setSelectedIngredient(ingredient);
+    setFormData({
+      code: ingredient.code,
+      name: ingredient.name,
+      name_ar: ingredient.name_ar || '',
+      name_fr: ingredient.name_fr || '',
+      category: ingredient.category,
+      base_price_per_kg: ingredient.base_price_per_kg,
+      calories_per_100g: ingredient.calories_per_100g || 0,
+      sugar_g: ingredient.sugar_g || 0,
+      halal_certified: ingredient.halal_certified,
+      kosher_certified: ingredient.kosher_certified,
+      vegan: ingredient.vegan,
+      organic: ingredient.organic,
+      regulatory_status: ingredient.regulatory_status,
+      max_percentage: ingredient.max_percentage ?? '',
+    });
+    setShowModal(true);
+    try {
+      const response = await costAPI.getPricingHistory(ingredient.id, { limit: 20 });
+      setPriceHistory(response.data.data);
+    } catch {
+      setPriceHistory([]);
+    }
+  }
+
+  async function archiveIngredient(ingredient: Ingredient) {
+    if (!window.confirm(`Archive ${ingredient.name}? This is allowed only when no active formulation uses it.`)) return;
+    try {
+      await ingredientsAPI.delete(ingredient.id);
+      await loadIngredients();
+    } catch (error: any) {
+      alert(error.response?.data?.error || 'Error archiving ingredient');
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     try {
-      await ingredientsAPI.create(formData);
+      const payload = { ...formData, max_percentage: formData.max_percentage === '' ? undefined : formData.max_percentage };
+      if (selectedIngredient) await ingredientsAPI.update(selectedIngredient.id, payload);
+      else await ingredientsAPI.create(payload);
       setShowModal(false);
       loadIngredients();
     } catch (error) {
       console.error('Error creating ingredient:', error);
-      alert('Error creating ingredient');
+      alert((error as any).response?.data?.error || 'Error saving ingredient');
     }
   }
 
@@ -89,7 +158,7 @@ export default function IngredientsPage() {
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Ingredients</h1>
           <p className="mt-1 text-sm text-gray-500">
-            {ingredients.length} ingredients loaded
+            {ingredients.length} beverage ingredients loaded · DZD/kg values are planning estimates until replaced with supplier quotes
           </p>
         </div>
         <button
@@ -100,6 +169,37 @@ export default function IngredientsPage() {
           Add Ingredient
         </button>
       </div>
+
+      {/* The editor is deliberately inline instead of an overlay. This keeps it
+          usable in browsers where stacking contexts or modal backdrops fail. */}
+      {showModal && (
+        <div ref={editorRef} className="mb-6 scroll-mt-20 rounded-lg border border-sky-200 bg-white shadow-xl">
+          <div className="p-6">
+            <div className="mb-6 flex items-center justify-between">
+              <h2 id="ingredient-editor-title" className="text-2xl font-bold text-gray-900">
+                {selectedIngredient ? 'Edit Ingredient' : 'Add New Ingredient'}
+              </h2>
+              <button
+                type="button"
+                onClick={() => setShowModal(false)}
+                className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                aria-label="Close ingredient editor"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            <IngredientForm
+              formData={formData}
+              setFormData={setFormData}
+              selectedIngredient={selectedIngredient}
+              priceHistory={priceHistory}
+              onSubmit={handleSubmit}
+              onCancel={() => setShowModal(false)}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="bg-white shadow rounded-lg p-4 mb-6">
@@ -139,6 +239,7 @@ export default function IngredientsPage() {
         ) : ingredients.length === 0 ? (
           <div className="p-8 text-center text-gray-500">No ingredients found</div>
         ) : (
+          <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
@@ -160,10 +261,11 @@ export default function IngredientsPage() {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Halal
                 </th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {ingredients.map((ingredient) => (
+              {visibleIngredients.map((ingredient) => (
                 <tr key={ingredient.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                     {ingredient.code}
@@ -193,29 +295,86 @@ export default function IngredientsPage() {
                       {ingredient.halal_certified ? 'Yes' : 'No'}
                     </span>
                   </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-right">
+                    <button onClick={() => openEditModal(ingredient)} className="p-2 text-sky-600 hover:bg-sky-50 rounded" title="Edit">
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                    <button onClick={() => archiveIngredient(ingredient)} className="p-2 text-amber-700 hover:bg-amber-50 rounded" title="Archive">
+                      <Archive className="h-4 w-4" />
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
+        )}
+        {!loading && ingredients.length > 0 && (
+          <div className="flex flex-col gap-3 border-t border-gray-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-gray-600">
+              Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, ingredients.length)} of {ingredients.length}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPage((current) => Math.max(1, current - 1))}
+                disabled={page === 1}
+                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Previous
+              </button>
+              <span className="text-sm text-gray-600">Page {page} of {totalPages}</span>
+              <button
+                type="button"
+                onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                disabled={page === totalPages}
+                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Next
+              </button>
+            </div>
+          </div>
         )}
       </div>
 
-      {/* Add Ingredient Modal */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6">
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-2xl font-bold text-gray-900">Add New Ingredient</h2>
-                <button
-                  onClick={() => setShowModal(false)}
-                  className="text-gray-400 hover:text-gray-600"
-                >
-                  <X className="h-6 w-6" />
-                </button>
-              </div>
+    </div>
+  );
+}
 
-              <form onSubmit={handleSubmit}>
+type IngredientFormProps = {
+  formData: {
+    code: string;
+    name: string;
+    name_ar: string;
+    name_fr: string;
+    category: string;
+    base_price_per_kg: number;
+    calories_per_100g: number;
+    sugar_g: number;
+    halal_certified: boolean;
+    kosher_certified: boolean;
+    vegan: boolean;
+    organic: boolean;
+    regulatory_status: string;
+    max_percentage: number | '';
+  };
+  setFormData: React.Dispatch<React.SetStateAction<IngredientFormProps['formData']>>;
+  selectedIngredient: Ingredient | null;
+  priceHistory: any[];
+  onSubmit: (event: React.FormEvent) => void;
+  onCancel: () => void;
+};
+
+function IngredientForm({
+  formData,
+  setFormData,
+  selectedIngredient,
+  priceHistory,
+  onSubmit,
+  onCancel,
+}: IngredientFormProps) {
+  return (
+              <form onSubmit={onSubmit}>
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div>
@@ -335,6 +494,27 @@ export default function IngredientsPage() {
                     </div>
                   </div>
 
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Maximum Percentage</label>
+                      <input type="number" min="0.0001" max="100" step="0.0001"
+                        value={formData.max_percentage}
+                        onChange={(e) => setFormData({ ...formData, max_percentage: e.target.value === '' ? '' : Number(e.target.value) })}
+                        className="w-full rounded-md border p-2" placeholder="No configured limit" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Regulatory Status</label>
+                      <select value={formData.regulatory_status}
+                        onChange={(e) => setFormData({ ...formData, regulatory_status: e.target.value })}
+                        className="w-full rounded-md border p-2">
+                        <option value="pending">Pending review</option>
+                        <option value="approved">Approved in local data</option>
+                        <option value="restricted">Restricted</option>
+                        <option value="prohibited">Prohibited</option>
+                      </select>
+                    </div>
+                  </div>
+
                   <div className="flex gap-6">
                     <label className="flex items-center">
                       <input
@@ -346,6 +526,18 @@ export default function IngredientsPage() {
                       <span className="text-sm text-gray-700">Halal Certified</span>
                     </label>
                     <label className="flex items-center">
+                      <input type="checkbox" checked={formData.kosher_certified}
+                        onChange={(e) => setFormData({ ...formData, kosher_certified: e.target.checked })}
+                        className="rounded border-gray-300 text-sky-600 mr-2" />
+                      <span className="text-sm text-gray-700">Kosher Certified</span>
+                    </label>
+                    <label className="flex items-center">
+                      <input type="checkbox" checked={formData.organic}
+                        onChange={(e) => setFormData({ ...formData, organic: e.target.checked })}
+                        className="rounded border-gray-300 text-sky-600 mr-2" />
+                      <span className="text-sm text-gray-700">Organic</span>
+                    </label>
+                    <label className="flex items-center">
                       <input
                         type="checkbox"
                         checked={formData.vegan}
@@ -355,12 +547,27 @@ export default function IngredientsPage() {
                       <span className="text-sm text-gray-700">Vegan</span>
                     </label>
                   </div>
+
+                  {selectedIngredient && (
+                    <div className="rounded-md bg-gray-50 p-3">
+                      <p className="text-sm font-medium text-gray-700">Recent price history</p>
+                      {priceHistory.length === 0 ? (
+                        <p className="mt-1 text-xs text-gray-500">No previous price changes recorded.</p>
+                      ) : (
+                        <ul className="mt-2 space-y-1 text-xs text-gray-600">
+                          {priceHistory.slice().reverse().map(record => (
+                            <li key={record.id}>{Number(record.price_per_kg).toFixed(2)} {record.currency}/kg — {new Date(record.effective_date).toLocaleDateString()}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="mt-6 flex justify-end gap-3">
                   <button
                     type="button"
-                    onClick={() => setShowModal(false)}
+                    onClick={onCancel}
                     className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
                   >
                     Cancel
@@ -369,14 +576,9 @@ export default function IngredientsPage() {
                     type="submit"
                     className="px-4 py-2 bg-sky-600 text-white rounded-md hover:bg-sky-700"
                   >
-                    Add Ingredient
+                    {selectedIngredient ? 'Save Changes' : 'Add Ingredient'}
                   </button>
                 </div>
               </form>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
   );
 }

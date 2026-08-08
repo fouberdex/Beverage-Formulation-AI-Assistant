@@ -25,9 +25,12 @@ import {
   aiVariants,
   complianceRecords,
   batchCostCalculations,
+  pricingHistory,
 } from './data/mockData.js';
+import { getStorageConfiguration, initializePersistentStore, persistStore } from './data/persistentStore.js';
 
 dotenv.config();
+await initializePersistentStore();
 
 const server = Fastify({
   logger: true,
@@ -48,6 +51,13 @@ const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173')
 await server.register(cors, {
   origin: allowedOrigins,
   credentials: true,
+});
+
+server.addHook('onSend', async (request, reply, payload) => {
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method) && reply.statusCode < 400) {
+    await persistStore();
+  }
+  return payload;
 });
 
 server.addHook('onRequest', async (request, reply) => {
@@ -76,7 +86,7 @@ server.get('/health', async () => {
   return {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    mode: 'mock',
+    ...getStorageConfiguration(),
     ai: getAIConfiguration(),
   };
 });
@@ -115,6 +125,14 @@ function processFormulationIngredients(input) {
       }]);
     }
 
+    if (ingredient.regulatory_status === 'prohibited') {
+      throw new z.ZodError([{
+        code: 'custom',
+        path: ['ingredients', displayOrder, 'ingredient_id'],
+        message: `${ingredient.name} is marked as prohibited`,
+      }]);
+    }
+
     if (ingredient.max_percentage && item.percentage > ingredient.max_percentage + 0.0001) {
       throw new z.ZodError([{
         code: 'custom',
@@ -139,7 +157,7 @@ function processFormulationIngredients(input) {
     };
   });
 
-  if (Math.abs(totalPercentage - 100) > 0.1) {
+  if (Math.abs(totalPercentage - 100) > 0.1001) {
     throw new z.ZodError([{
       code: 'custom',
       path: ['ingredients'],
@@ -233,7 +251,11 @@ server.post(`${apiPrefix}/ingredients`, async (request, reply) => {
     calories_per_100g: z.coerce.number().finite().nonnegative().default(0),
     sugar_g: z.coerce.number().finite().nonnegative().max(100).default(0),
     halal_certified: z.boolean().default(true),
+    kosher_certified: z.boolean().default(true),
     vegan: z.boolean().default(true),
+    organic: z.boolean().default(false),
+    regulatory_status: z.enum(['approved', 'restricted', 'prohibited', 'pending']).default('pending'),
+    max_percentage: z.coerce.number().finite().positive().max(100).optional(),
   }).parse(request.body);
 
   if (ingredients.some(item => item.code.toLowerCase() === ingredientInput.code.toLowerCase())) {
@@ -242,7 +264,8 @@ server.post(`${apiPrefix}/ingredients`, async (request, reply) => {
 
   const {
     code, name, name_ar, name_fr, category, base_price_per_kg,
-    calories_per_100g, sugar_g, halal_certified, vegan,
+    calories_per_100g, sugar_g, halal_certified, kosher_certified, vegan, organic,
+    regulatory_status, max_percentage,
   } = ingredientInput;
 
   const newIngredient = {
@@ -256,10 +279,11 @@ server.post(`${apiPrefix}/ingredients`, async (request, reply) => {
     calories_per_100g,
     sugar_g,
     halal_certified,
-    kosher_certified: true,
+    kosher_certified,
     vegan,
-    organic: false,
-    regulatory_status: 'approved',
+    organic,
+    regulatory_status,
+    max_percentage,
     is_active: true,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -291,7 +315,11 @@ server.put(`${apiPrefix}/ingredients/:id`, async (request, reply) => {
     calories_per_100g: z.coerce.number().finite().nonnegative().optional(),
     sugar_g: z.coerce.number().finite().nonnegative().max(100).optional(),
     halal_certified: z.boolean().optional(),
+    kosher_certified: z.boolean().optional(),
     vegan: z.boolean().optional(),
+    organic: z.boolean().optional(),
+    regulatory_status: z.enum(['approved', 'restricted', 'prohibited', 'pending']).optional(),
+    max_percentage: z.coerce.number().finite().positive().max(100).nullable().optional(),
     is_active: z.boolean().optional(),
   }).strict().parse(request.body);
 
@@ -299,15 +327,41 @@ server.put(`${apiPrefix}/ingredients/:id`, async (request, reply) => {
     return reply.code(409).send({ error: 'Ingredient code already exists' });
   }
 
+  const previousPrice = ingredient.base_price_per_kg;
   Object.assign(ingredient, updates, { updated_at: new Date().toISOString() });
   if (updates.category && !categories.includes(updates.category)) categories.push(updates.category);
-  return { data: ingredient };
+  let recalculatedFormulations = 0;
+  if (updates.base_price_per_kg !== undefined && updates.base_price_per_kg !== previousPrice) {
+    ingredient.price_per_kg = updates.base_price_per_kg;
+    pricingHistory.push({
+      id: generateId(),
+      ingredient_id: ingredient.id,
+      price_per_kg: updates.base_price_per_kg,
+      currency: ingredient.currency || 'DZD',
+      effective_date: new Date().toISOString(),
+      source: 'ingredient edit',
+    });
+    for (const formulation of formulations.filter(item =>
+      item.status !== 'archived' && (item.ingredients || []).some(fi => fi.ingredient_id === ingredient.id)
+    )) {
+      Object.assign(formulation, processFormulationIngredients(formulation.ingredients), { updated_at: new Date().toISOString() });
+      recalculatedFormulations += 1;
+    }
+  }
+  return { data: ingredient, recalculated_formulations: recalculatedFormulations };
 });
 
 server.delete(`${apiPrefix}/ingredients/:id`, async (request, reply) => {
   const ingredient = ingredients.find(item => item.id === request.params.id);
   if (!ingredient) {
     return reply.code(404).send({ error: 'Ingredient not found' });
+  }
+  const usedBy = formulations.filter(item => item.status !== 'archived' &&
+    (item.ingredients || []).some(fi => fi.ingredient_id === ingredient.id));
+  if (usedBy.length > 0) {
+    return reply.code(409).send({
+      error: `Ingredient is used by ${usedBy.length} non-archived formulation(s) and cannot be archived`,
+    });
   }
   ingredient.is_active = false;
   ingredient.updated_at = new Date().toISOString();
@@ -322,9 +376,9 @@ server.get(`${apiPrefix}/formulations`, async (request) => {
   const { search, status } = request.query;
   const { limit, offset } = paginationSchema.extend({ limit: z.coerce.number().int().min(1).max(500).default(50) }).parse(request.query);
   
-  let filtered = [...formulations];
+  let filtered = status === 'all' ? [...formulations] : formulations.filter(item => item.status !== 'archived');
   
-  if (status) {
+  if (status && status !== 'all') {
     filtered = filtered.filter(f => f.status === status);
   }
   
@@ -425,6 +479,7 @@ server.post(`${apiPrefix}/formulations/:id/versions`, async (request, reply) => 
   const input = z.object({
     name: z.string().trim().min(1).max(255).optional(),
     description: z.string().trim().max(5000).optional(),
+    beverage_type: z.string().trim().min(1).max(100).optional(),
     ingredients: z.array(formulationIngredientSchema).min(1).max(40).optional(),
   }).strict().parse(request.body || {});
   const totals = input.ingredients ? processFormulationIngredients(input.ingredients) : {
@@ -863,8 +918,8 @@ function assessVariantIngredients(variantIngredients) {
 
   const riskyPairs = pairResults.filter(result => result.risk_severity !== 'none');
   const warnings = [...new Set(riskyPairs.map(result => result.risk_description))];
-  const restrictedIngredients = ingredientDetails.filter(item => item.regulatory_status === 'restricted');
-  warnings.push(...restrictedIngredients.map(item => `${item.name} has restricted regulatory status.`));
+  const nonApprovedIngredients = ingredientDetails.filter(item => item.regulatory_status !== 'approved');
+  warnings.push(...nonApprovedIngredients.map(item => `${item.name} has ${item.regulatory_status} regulatory status.`));
 
   return {
     compatibility_score: pairResults.length
@@ -872,7 +927,7 @@ function assessVariantIngredients(variantIngredients) {
       : 100,
     warnings: [...new Set(warnings)],
     regulatory: {
-      passes_local_checks: restrictedIngredients.length === 0,
+      passes_local_checks: nonApprovedIngredients.length === 0,
       is_halal_compliant: ingredientDetails.every(item => item.halal_certified),
       is_kosher_compliant: ingredientDetails.every(item => item.kosher_certified),
       is_vegan_compliant: ingredientDetails.every(item => item.vegan),
@@ -881,17 +936,35 @@ function assessVariantIngredients(variantIngredients) {
   };
 }
 
-function generateVariantIngredients(sourceIngredients, generationType) {
-  const details = sourceIngredients.map(item => ({
-    source: item,
-    ingredient: getIngredientById(item.ingredient_id),
-  }));
+function generateVariantIngredients(sourceIngredients, generationType, constraints = {}) {
+  const sourceIds = new Set(sourceIngredients.map(item => item.ingredient_id));
+  const replacementIds = new Set();
+  const details = sourceIngredients.map(item => {
+    const sourceIngredient = getIngredientById(item.ingredient_id);
+    let ingredient = sourceIngredient;
+    if (generationType === 'alternative' && sourceIngredient?.category !== 'base') {
+      const alternatives = ingredients.filter(candidate =>
+        candidate.is_active &&
+        candidate.category === sourceIngredient.category &&
+        !sourceIds.has(candidate.id) &&
+        !replacementIds.has(candidate.id) &&
+        candidate.regulatory_status !== 'prohibited'
+      );
+      if (alternatives.length > 0) {
+        ingredient = alternatives[Math.floor(Math.random() * alternatives.length)];
+        replacementIds.add(ingredient.id);
+      }
+    }
+    return { source: item, ingredient };
+  });
   const balanceIndex = details.findIndex(item => item.ingredient?.category === 'base');
   const effectiveBalanceIndex = balanceIndex >= 0 ? balanceIndex : 0;
+  const sugarBearingCount = Math.max(1, details.filter(item => item.ingredient?.sugar_g > 0).length);
+  const calorieBearingCount = Math.max(1, details.filter(item => item.ingredient?.calories_per_100g > 0).length);
 
   const generated = details.map(({ source, ingredient }, index) => {
     if (index === effectiveBalanceIndex) {
-      return { ingredient_id: source.ingredient_id, ingredient_name: ingredient.name, percentage: 0 };
+      return { ingredient_id: ingredient.id, ingredient_name: ingredient.name, percentage: 0 };
     }
 
     let factor;
@@ -904,11 +977,21 @@ function generateVariantIngredients(sourceIngredients, generationType) {
       factor = 0.8 + Math.random() * 0.4;
     }
 
-    const changedPercentage = Math.max(0.0001, source.percentage * factor);
+    let changedPercentage = Math.max(0.0001, source.percentage * factor);
+    if (generationType === 'constraint_based') {
+      if (constraints.target_sugar !== undefined && ingredient.sugar_g > 0) {
+        changedPercentage = Math.max(0.0001, (constraints.target_sugar / sugarBearingCount / ingredient.sugar_g) * 100);
+      } else if (constraints.target_calories !== undefined && ingredient.calories_per_100g > 0) {
+        changedPercentage = Math.max(0.0001, (constraints.target_calories / calorieBearingCount / ingredient.calories_per_100g) * 100);
+      } else if (constraints.target_cost_per_liter !== undefined && constraints.source_cost_per_liter > 0) {
+        const costRatio = Math.max(0.5, Math.min(1.5, constraints.target_cost_per_liter / constraints.source_cost_per_liter));
+        changedPercentage = source.percentage * costRatio;
+      }
+    }
     const percentage = ingredient.max_percentage
       ? Math.min(changedPercentage, ingredient.max_percentage)
       : changedPercentage;
-    return { ingredient_id: source.ingredient_id, ingredient_name: ingredient.name, percentage };
+    return { ingredient_id: ingredient.id, ingredient_name: ingredient.name, percentage };
   });
 
   const nonBalanceTotal = generated.reduce(
@@ -924,11 +1007,14 @@ function generateVariantIngredients(sourceIngredients, generationType) {
 
 server.post(`${apiPrefix}/ai/formulations/:id/generate`, async (request, reply) => {
   const { id } = request.params;
-  const { count, generation_type } = z.object({
+  const { count, generation_type, target_calories, target_sugar, target_cost_per_liter } = z.object({
     count: z.coerce.number().int().min(1).max(10).default(5),
     generation_type: z.enum(['optimization', 'alternative', 'constraint', 'constraint_based'])
       .transform(value => value === 'constraint' ? 'constraint_based' : value)
       .default('optimization'),
+    target_calories: z.coerce.number().finite().nonnegative().optional(),
+    target_sugar: z.coerce.number().finite().nonnegative().optional(),
+    target_cost_per_liter: z.coerce.number().finite().nonnegative().optional(),
   }).parse(request.body || {});
   
   const source = formulations.find(f => f.id === id);
@@ -941,7 +1027,12 @@ server.post(`${apiPrefix}/ai/formulations/:id/generate`, async (request, reply) 
   const sourceTotals = processFormulationIngredients(sourceIngredients);
 
   for (let i = 0; i < count; i++) {
-    const variantIngredients = generateVariantIngredients(sourceIngredients, generation_type);
+    const variantIngredients = generateVariantIngredients(sourceIngredients, generation_type, {
+      target_calories,
+      target_sugar,
+      target_cost_per_liter,
+      source_cost_per_liter: sourceTotals.total_cost_per_liter,
+    });
     const totals = processFormulationIngredients(variantIngredients);
     const assessment = assessVariantIngredients(totals.ingredients);
     const localConfidence = Math.max(0, Math.min(
@@ -984,6 +1075,7 @@ server.post(`${apiPrefix}/ai/formulations/:id/generate`, async (request, reply) 
       sourceFormulation: source,
       variants,
       generationType: generation_type,
+      constraints: { target_calories, target_sugar, target_cost_per_liter },
     });
     if (ai.used) {
       const reviewsById = new Map(ai.reviews.map(review => [review.id, review]));
@@ -1062,15 +1154,27 @@ server.post(`${apiPrefix}/ai/variants/:variantId/accept`, async (request, reply)
 // ============================================================================
 
 server.post(`${apiPrefix}/target-generation/generate`, async (request, reply) => {
-  const { target_calories, target_sugar, target_cost_per_liter, beverage_type, count } = z.object({
+  const targetInput = z.object({
     target_calories: z.coerce.number().finite().nonnegative().optional(),
     target_sugar: z.coerce.number().finite().nonnegative().optional(),
     target_cost_per_liter: z.coerce.number().finite().nonnegative().optional(),
     beverage_type: z.string().trim().min(1).max(100).optional(),
     count: z.coerce.number().int().min(1).max(10).default(3),
-    min_ingredients: z.coerce.number().int().min(1).max(40).optional(),
-    max_ingredients: z.coerce.number().int().min(1).max(40).optional(),
+    min_ingredients: z.coerce.number().int().min(1).max(40).default(5),
+    max_ingredients: z.coerce.number().int().min(1).max(40).default(10),
+  }).refine(input => input.min_ingredients <= input.max_ingredients, {
+    path: ['min_ingredients'],
+    message: 'min_ingredients cannot exceed max_ingredients',
   }).parse(request.body || {});
+  const {
+    target_calories, target_sugar, target_cost_per_liter, beverage_type, count,
+    min_ingredients, max_ingredients,
+  } = targetInput;
+
+  const activeIngredients = ingredients.filter(item => item.is_active && item.regulatory_status === 'approved');
+  if (min_ingredients > activeIngredients.length) {
+    return reply.code(400).send({ error: `Only ${activeIngredients.length} active, locally approved ingredients are available` });
+  }
   
   // Generate candidates with detailed scoring
   const candidates = [];
@@ -1079,18 +1183,20 @@ server.post(`${apiPrefix}/target-generation/generate`, async (request, reply) =>
     const selectedIngredients = [];
     
     // Always include water (base)
-    const water = ingredients.find(ing => ing.category === 'base');
+    const bases = activeIngredients.filter(ing => ing.category === 'base')
+      .sort((a, b) => a.base_price_per_kg - b.base_price_per_kg);
+    const water = bases[i % Math.max(bases.length, 1)];
     if (water) {
       selectedIngredients.push({ 
         ingredient_id: water.id, 
         ingredient_name: water.name,
         category: water.category,
-        percentage: 82 + Math.random() * 8 
+        percentage: 0,
       });
     }
     
     // Add sweetener based on target sugar
-    const sweeteners = ingredients.filter(ing => ing.category === 'sweetener');
+    const sweeteners = activeIngredients.filter(ing => ing.category === 'sweetener');
     if (sweeteners.length > 0) {
       const zeroSugarSweeteners = sweeteners.filter(item => item.sugar_g === 0);
       const sugarSweeteners = sweeteners.filter(item => item.sugar_g > 0);
@@ -1099,73 +1205,101 @@ server.post(`${apiPrefix}/target-generation/generate`, async (request, reply) =>
         : target_sugar > 0 && sugarSweeteners.length > 0
         ? sugarSweeteners
         : sweeteners;
-      const sweetener = sweetenerPool[Math.floor(Math.random() * sweetenerPool.length)];
+      const orderedSweeteners = [...sweetenerPool].sort((a, b) =>
+        target_cost_per_liter === undefined ? a.name.localeCompare(b.name) : a.base_price_per_kg - b.base_price_per_kg
+      );
+      const sweetener = orderedSweeteners[i % orderedSweeteners.length];
+      const effectiveSugarTarget = target_sugar ?? (target_calories !== undefined ? target_calories / 3.87 : undefined);
       const sweetenerPct = target_sugar === 0
         ? Math.min(sweetener.max_percentage || 0.05, 0.05)
-        : target_sugar !== undefined
-        ? (target_sugar / Math.max(sweetener.sugar_g, 1)) * 100 * (0.95 + Math.random() * 0.1)
-        : 8 + Math.random() * 4;
+        : effectiveSugarTarget !== undefined
+        ? (effectiveSugarTarget / Math.max(sweetener.sugar_g, 1)) * 100
+        : 8 + i;
       selectedIngredients.push({ 
         ingredient_id: sweetener.id, 
         ingredient_name: sweetener.name,
         category: sweetener.category,
-        percentage: Math.min(15, Math.max(0.01, sweetenerPct))
+        percentage: Math.min(sweetener.max_percentage || 15, 15, Math.max(0.01, sweetenerPct))
       });
     }
     
     // Add acidulant
-    const acidulants = ingredients.filter(ing => ing.category === 'acidulant');
+    const acidulants = activeIngredients.filter(ing => ing.category === 'acidulant');
     if (acidulants.length > 0) {
-      const acidulant = acidulants[Math.floor(Math.random() * acidulants.length)];
+      const acidulant = acidulants[i % acidulants.length];
       selectedIngredients.push({ 
         ingredient_id: acidulant.id, 
         ingredient_name: acidulant.name,
         category: acidulant.category,
-        percentage: 0.2 + Math.random() * 0.3 
+        percentage: Math.min(acidulant.max_percentage || 0.3, 0.25 + (i % 3) * 0.05),
       });
     }
     
     // Add flavor
-    const flavors = ingredients.filter(ing => ing.category === 'flavor');
+    const flavors = activeIngredients.filter(ing => ing.category === 'flavor');
     if (flavors.length > 0) {
-      const flavor = flavors[Math.floor(Math.random() * flavors.length)];
+      const flavor = flavors[i % flavors.length];
       selectedIngredients.push({ 
         ingredient_id: flavor.id, 
         ingredient_name: flavor.name,
         category: flavor.category,
-        percentage: 0.1 + Math.random() * 0.2 
+        percentage: Math.min(flavor.max_percentage || 0.25, 0.15 + (i % 3) * 0.05),
       });
     }
     
     // Add preservative
-    const preservatives = ingredients.filter(ing => ing.category === 'preservative');
+    const preservatives = activeIngredients.filter(ing => ing.category === 'preservative');
     if (preservatives.length > 0) {
-      const preservative = preservatives[Math.floor(Math.random() * preservatives.length)];
+      const preservative = preservatives[i % preservatives.length];
       selectedIngredients.push({ 
         ingredient_id: preservative.id, 
         ingredient_name: preservative.name,
         category: preservative.category,
-        percentage: 0.03 + Math.random() * 0.02 
+        percentage: Math.min(preservative.max_percentage || 0.04, 0.04),
       });
     }
     
     // Optionally add colorant
-    if (Math.random() > 0.5) {
-      const colorants = ingredients.filter(ing => ing.category === 'colorant');
+    if (i % 2 === 1) {
+      const colorants = activeIngredients.filter(ing => ing.category === 'colorant');
       if (colorants.length > 0) {
-        const colorant = colorants[Math.floor(Math.random() * colorants.length)];
+        const colorant = colorants[i % colorants.length];
         selectedIngredients.push({ 
           ingredient_id: colorant.id, 
           ingredient_name: colorant.name,
           category: colorant.category,
-          percentage: 0.01 + Math.random() * 0.05 
+          percentage: Math.min(colorant.max_percentage || 0.02, 0.02),
         });
       }
     }
     
-    // Normalize percentages to 100%
-    const total = selectedIngredients.reduce((sum, ing) => sum + ing.percentage, 0);
-    selectedIngredients.forEach(ing => ing.percentage = (ing.percentage / total) * 100);
+    // Honor requested ingredient-count bounds using low-dose, active ingredients.
+    const desiredCount = Math.min(max_ingredients, min_ingredients + (i % (max_ingredients - min_ingredients + 1)));
+    const alreadySelected = new Set(selectedIngredients.map(item => item.ingredient_id));
+    const additions = activeIngredients
+      .filter(item => !alreadySelected.has(item.id) && item.category !== 'base')
+      .sort((a, b) => {
+        if (target_cost_per_liter !== undefined) return a.base_price_per_kg - b.base_price_per_kg;
+        return a.name.localeCompare(b.name);
+      });
+    while (selectedIngredients.length < desiredCount && additions.length > 0) {
+      const ingredient = additions.shift();
+      selectedIngredients.push({
+        ingredient_id: ingredient.id,
+        ingredient_name: ingredient.name,
+        category: ingredient.category,
+        percentage: Math.min(ingredient.max_percentage || 0.05, 0.05),
+      });
+    }
+    if (selectedIngredients.length > max_ingredients) selectedIngredients.splice(max_ingredients);
+
+    // Water is the balance ingredient; never inflate limited additives through normalization.
+    const balanceIngredient = selectedIngredients[0];
+    const nonWaterTotal = selectedIngredients.slice(1).reduce((sum, item) => sum + item.percentage, 0);
+    if (nonWaterTotal >= 100) {
+      return reply.code(400).send({ error: 'The requested targets cannot produce a safe 100% formulation' });
+    }
+    balanceIngredient.percentage = 100 - nonWaterTotal;
     
     // Calculate actual values
     let actualCalories = 0;
@@ -1181,7 +1315,16 @@ server.post(`${apiPrefix}/target-generation/generate`, async (request, reply) =>
       }
     }
     
-    // Calculate detailed scores
+    const localAssessment = assessVariantIngredients(selectedIngredients);
+    const hasAcidulant = selectedIngredients.some(item => item.category === 'acidulant');
+    const hasFlavor = selectedIngredients.some(item => item.category === 'flavor');
+    const hasPreservative = selectedIngredients.some(item => item.category === 'preservative');
+    const sweetnessScore = target_sugar !== undefined
+      ? target_sugar === 0 ? (actualSugar < 0.01 ? 100 : 0) : Math.max(0, 100 - Math.abs(actualSugar - target_sugar) / target_sugar * 100)
+      : 80;
+    const stabilityBase = Math.max(40, localAssessment.compatibility_score - (hasAcidulant ? 0 : 10));
+
+    // These deterministic values are local screening heuristics, not laboratory predictions.
     const scores = {
       // Target matching scores
       calorie_match: target_calories !== undefined
@@ -1195,29 +1338,32 @@ server.post(`${apiPrefix}/target-generation/generate`, async (request, reply) =>
         : 100,
       
       // Compatibility score
-      compatibility: 85 + Math.random() * 10, // Base good compatibility
+      compatibility: localAssessment.compatibility_score,
       
       // Sensory evaluation
       sensory: {
-        taste_balance: 75 + Math.random() * 20,
-        sweetness_level: 70 + Math.random() * 25,
-        acidity_balance: 80 + Math.random() * 15,
-        flavor_intensity: 70 + Math.random() * 25,
+        taste_balance: Math.round((sweetnessScore + (hasAcidulant ? 85 : 60) + (hasFlavor ? 85 : 55)) / 3),
+        sweetness_level: Math.round(sweetnessScore),
+        acidity_balance: hasAcidulant ? 85 : 55,
+        flavor_intensity: hasFlavor ? 85 : 55,
       },
       
       // Regulatory compliance
       regulatory: {
-        halal_compliant: true,
-        max_limits_ok: true,
-        preservative_ok: true,
+        halal_compliant: localAssessment.regulatory.is_halal_compliant,
+        kosher_compliant: localAssessment.regulatory.is_kosher_compliant,
+        vegan_compliant: localAssessment.regulatory.is_vegan_compliant,
+        max_limits_ok: localAssessment.regulatory.passes_local_checks,
+        preservative_ok: !hasPreservative || hasAcidulant,
       },
       
       // Stability prediction
       stability: {
-        shelf_life_months: 6 + Math.floor(Math.random() * 12),
-        ph_stability: 80 + Math.random() * 15,
-        color_stability: 75 + Math.random() * 20,
-      }
+        shelf_life_months: hasPreservative && hasAcidulant ? 9 : 3,
+        ph_stability: stabilityBase,
+        color_stability: Math.max(40, stabilityBase - (selectedIngredients.some(item => item.category === 'colorant') ? 5 : 0)),
+      },
+      basis: 'deterministic local screening heuristic; laboratory validation required',
     };
     
     // Calculate overall score
@@ -1243,6 +1389,7 @@ server.post(`${apiPrefix}/target-generation/generate`, async (request, reply) =>
       scores: scores,
       overall_score: overallScore,
       beverage_type: beverage_type || 'soft_drink',
+      local_warnings: localAssessment.warnings,
     });
   }
 
@@ -1342,13 +1489,16 @@ server.post(`${apiPrefix}/regulatory/formulations/:id/check`, async (request, re
   
   // Check compliance
   let isHalal = true;
+  let isKosher = true;
   let isVegan = true;
   const violations = [];
+  const warnings = [];
   
   for (const fi of (formulation.ingredients || [])) {
     const ing = getIngredientById(fi.ingredient_id);
     if (ing) {
       if (!ing.halal_certified) isHalal = false;
+      if (!ing.kosher_certified) isKosher = false;
       if (!ing.vegan) isVegan = false;
       if (ing.max_percentage && fi.percentage > ing.max_percentage) {
         violations.push({
@@ -1357,18 +1507,34 @@ server.post(`${apiPrefix}/regulatory/formulations/:id/check`, async (request, re
           message: `Exceeds max allowed percentage (${ing.max_percentage}%)`,
         });
       }
+      if (ing.regulatory_status === 'restricted') {
+        violations.push({
+          type: 'regulatory',
+          ingredient: ing.name,
+          message: 'Ingredient has restricted status and requires jurisdiction-specific review',
+        });
+      }
+    } else {
+      violations.push({ type: 'data', message: `Ingredient ${fi.ingredient_id} was not found` });
     }
   }
+
+  const assessment = assessVariantIngredients(formulation.ingredients || []);
+  warnings.push(...assessment.warnings);
   
   const compliance = {
       id: generateId(),
       formulation_id: formulation.id,
       is_halal_compliant: isHalal,
-      is_kosher_compliant: true,
+      is_kosher_compliant: isKosher,
       is_vegan_compliant: isVegan,
       algerian_regulatory_compliant: violations.length === 0,
       violations,
-      compliance_notes: violations.length === 0 ? 'All checks passed' : 'Issues found',
+      warnings,
+      compliance_notes: violations.length === 0
+        ? 'Passed the application’s local ingredient-data screen. This is not legal certification.'
+        : 'The local screen found issues. A qualified regulatory review is required.',
+      review_scope: 'Local ingredient certification flags, status, and maximum-percentage data only',
       checked_at: new Date().toISOString(),
     };
   const previousIndex = complianceRecords.findIndex(item => item.formulation_id === formulation.id);
@@ -1392,15 +1558,44 @@ server.post(`${apiPrefix}/regulatory/formulations/:id/labels`, async (request, r
     return reply.code(404).send({ error: 'Formulation not found' });
   }
   
-  const ings = (formulation.ingredients || []).map(fi => {
+  const labelIngredients = (language) => (formulation.ingredients || [])
+    .slice()
+    .sort((a, b) => b.percentage - a.percentage)
+    .map(fi => {
     const ing = getIngredientById(fi.ingredient_id);
-    return { name: ing?.name || 'Unknown', percentage: fi.percentage };
+    const localizedName = language === 'ar' ? ing?.name_ar : language === 'fr' ? ing?.name_fr : ing?.name_en;
+    return { name: localizedName || ing?.name || 'Unknown', percentage: fi.percentage };
   });
+
+  const nutrition = {
+    calories: Number((formulation.total_calories_per_100ml || 0).toFixed(1)),
+    sugar: Number((formulation.total_sugar_per_100ml || 0).toFixed(1)),
+    basis: 'per 100 ml, calculated from ingredient records',
+  };
+  const isHalal = (formulation.ingredients || []).every(fi => getIngredientById(fi.ingredient_id)?.halal_certified);
   
   const labels = {
-      ar: { name: formulation.name, ingredients: ings },
-      fr: { name: formulation.name, ingredients: ings },
-      en: { name: formulation.name, ingredients: ings },
+      ar: {
+        name: formulation.name,
+        ingredients: labelIngredients('ar'),
+        nutrition,
+        halal: isHalal,
+        notice: 'مسودة للمراجعة فقط — يجب التحقق من المتطلبات القانونية قبل الاستخدام.',
+      },
+      fr: {
+        name: formulation.name,
+        ingredients: labelIngredients('fr'),
+        nutrition,
+        halal: isHalal,
+        notice: 'Projet à vérifier — valider les exigences légales avant utilisation.',
+      },
+      en: {
+        name: formulation.name,
+        ingredients: labelIngredients('en'),
+        nutrition,
+        halal: isHalal,
+        notice: 'Draft for review — verify legal requirements before use.',
+      },
     };
   formulation.labels = labels;
   return reply.code(201).send({ data: labels });
@@ -1492,10 +1687,11 @@ server.get(`${apiPrefix}/cost/formulations/:id/compare-batch-sizes`, async (requ
   return {
     data: sizes.map(size => ({
       batch_size_liters: size,
-      cost_per_liter: baseCost * (1 - Math.log10(size) * 0.05),
-      total_cost: baseCost * size * (1 - Math.log10(size) * 0.05),
-      final_price_per_liter: baseCost * 1.5 * (1 - Math.log10(size) * 0.05),
-      roi_percent: 20 + Math.log10(size) * 5,
+      cost_per_liter: baseCost,
+      total_cost: baseCost * size,
+      final_price_per_liter: baseCost * 1.5,
+      roi_percent: baseCost === 0 ? 0 : 50,
+      assumption: 'Ingredient unit prices are constant because no quantity-tier supplier prices are configured.',
     })),
   };
 });
@@ -1524,10 +1720,9 @@ server.post(`${apiPrefix}/cost/formulations/:id/roi`, async (request, reply) => 
   } };
 });
 
-const pricingHistory = [];
-
 server.post(`${apiPrefix}/cost/ingredients/:ingredientId/pricing`, async (request, reply) => {
-  if (!getIngredientById(request.params.ingredientId)) return reply.code(404).send({ error: 'Ingredient not found' });
+  const ingredient = getIngredientById(request.params.ingredientId);
+  if (!ingredient) return reply.code(404).send({ error: 'Ingredient not found' });
   const input = z.object({
     price_per_kg: z.coerce.number().finite().nonnegative(),
     currency: z.string().trim().length(3).default('DZD'),
@@ -1535,7 +1730,20 @@ server.post(`${apiPrefix}/cost/ingredients/:ingredientId/pricing`, async (reques
   }).parse(request.body);
   const record = { id: generateId(), ingredient_id: request.params.ingredientId, ...input, effective_date: input.effective_date.toISOString() };
   pricingHistory.push(record);
-  return reply.code(201).send({ data: record });
+  let recalculated_formulations = 0;
+  if (input.effective_date <= new Date()) {
+    ingredient.base_price_per_kg = input.price_per_kg;
+    ingredient.price_per_kg = input.price_per_kg;
+    ingredient.currency = input.currency;
+    ingredient.updated_at = new Date().toISOString();
+    for (const formulation of formulations.filter(item =>
+      (item.ingredients || []).some(formulationIngredient => formulationIngredient.ingredient_id === ingredient.id)
+    )) {
+      Object.assign(formulation, processFormulationIngredients(formulation.ingredients), { updated_at: new Date().toISOString() });
+      recalculated_formulations += 1;
+    }
+  }
+  return reply.code(201).send({ data: record, recalculated_formulations });
 });
 
 server.get(`${apiPrefix}/cost/ingredients/:ingredientId/pricing`, async (request, reply) => {
@@ -1554,7 +1762,7 @@ if (isEntrypoint) {
   try {
     await server.listen({ port, host });
     console.log(`BeverageAI DZ Backend running on http://localhost:${port}`);
-    console.log(`Mock mode: ${ingredients.length} ingredients loaded`);
+    console.log(`Storage mode: ${getStorageConfiguration().mode}; ${ingredients.length} ingredients loaded`);
   } catch (error) {
     server.log.error(error);
     process.exit(1);

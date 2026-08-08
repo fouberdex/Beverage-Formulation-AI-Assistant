@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 const DEFAULT_MODEL = 'gemini-2.5-flash-lite';
-const DEFAULT_TIMEOUT_MS = 15_000;
+const DEFAULT_TIMEOUT_MS = 30_000;
 
 const reviewSchema = z.object({
   reviews: z.array(z.object({
@@ -146,7 +146,7 @@ export async function reviewFormulationCandidates({ candidates, constraints }, f
 }
 
 export async function reviewFormulationVariants(
-  { sourceFormulation, variants, generationType },
+  { sourceFormulation, variants, generationType, constraints = {} },
   fetchImplementation = fetch,
 ) {
   const variantPayload = variants.map(variant => ({
@@ -173,6 +173,7 @@ export async function reviewFormulationVariants(
     'Return exactly one review for every supplied variant ID as JSON matching this shape:',
     '{"reviews":[{"id":"...","confidence_score":0,"explanation":"...","warnings":[],"recommended":false}]}',
     `Generation type: ${generationType}`,
+    `Requested constraints: ${JSON.stringify(constraints)}`,
     `Source formulation: ${JSON.stringify({
       name: sourceFormulation.name,
       beverage_type: sourceFormulation.beverage_type,
