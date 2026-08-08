@@ -10,7 +10,7 @@ async function migrate() {
   try {
     console.log('🔄 Running database migrations...');
     
-    const schemaPath = join(__dirname, '../../database/schema.sql');
+    const schemaPath = join(__dirname, '../../database/supabase_schema.sql');
     const schema = readFileSync(schemaPath, 'utf8');
     
     await pool.query(schema);

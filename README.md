@@ -4,15 +4,13 @@ Beverage formulation MVP with ingredient management, formulation calculations, c
 
 ## Current status
 
-The default server uses durable local JSON storage so the complete UI can run without external services. Changes are written atomically to `backend/data/app-data.json` and survive backend restarts. Set `PERSIST_DATA=false` for an ephemeral run. PostgreSQL schema, migration, route, and service modules remain available as the foundation for a future multi-user database mode, but are not connected to the default server.
-
-This distinction is intentional: the current application is a functional local MVP, not yet a production or multi-tenant deployment.
+The application uses Supabase Postgres for durable storage and Supabase Auth for user accounts. Formulations, AI variants, compliance results, cost calculations, and target-generation runs are owner-scoped. The ingredient catalog is shared and read-only through the public Data API; application writes go through the authenticated backend. A local JSON fallback remains available by omitting `STORAGE_MODE=supabase`.
 
 ## Stack
 
 - Frontend: React, TypeScript, Vite, Tailwind CSS
 - Backend: Node.js, Fastify, Zod
-- Optional database tooling: PostgreSQL schema and migration scripts
+- Database and identity: Supabase Postgres, Auth, Row Level Security
 
 ## Quick start
 
@@ -45,6 +43,9 @@ Important backend settings:
 - `CORS_ORIGINS` is a comma-separated allowlist and defaults to `http://localhost:5173`.
 - `RATE_LIMIT_MAX` defaults to 200 requests per minute.
 - `PERSIST_DATA` defaults to `true`; `DATA_FILE` can override the local JSON data path.
+- `STORAGE_MODE=supabase` enables Supabase persistence.
+- `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, and `SUPABASE_SECRET_KEY` configure the backend. The secret key must never be placed in frontend variables.
+- `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` configure browser authentication.
 - Setting `API_KEY` requires clients to send the same value in `x-api-key`. Set `VITE_API_KEY` for the frontend when using this option.
 
 ### Free AI review
@@ -84,17 +85,11 @@ The API is available under `/api/v1` and covers:
 
 Invalid requests return HTTP 400 with structured validation details. Missing resources return HTTP 404.
 
-## PostgreSQL development
+## Supabase database
 
-PostgreSQL is not required for the current local file-backed server. To inspect or develop the future database implementation:
+The deployable schema is in `backend/database/supabase_schema.sql`. It includes explicit Data API grants, RLS policies, ownership indexes, Auth-backed profiles, normalized formulation ingredient relations, AI results, target runs, compliance, pricing, costs, and audit logs. Apply schema changes through a reviewed Supabase migration, then run the Supabase security and performance advisors.
 
-```bash
-createdb beverageai_dz
-cp backend/.env.example backend/.env
-npm run migrate --workspace=backend
-```
-
-Running this migration creates the schema but does not switch the active server away from local JSON storage.
+On the first authenticated request after importing legacy local data, unowned formulations and related records are assigned to that user. Subsequent records are created with the authenticated user's ID.
 
 ## Cost model
 
@@ -121,4 +116,4 @@ Research references:
 
 ## Before production
 
-Persistent storage, migrations with version tracking, real identity and tenant authorization, audit logs, deterministic scientific models, jurisdiction-reviewed regulatory rules, and load/security testing are still required.
+Configure custom SMTP and redirect URLs for Auth, decide whether ingredient editing requires an administrator role, rotate deployment secrets, and complete load/security testing. Scientific calculations and regulatory rules still require qualified domain validation before commercial use.

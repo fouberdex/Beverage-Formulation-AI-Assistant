@@ -26,8 +26,10 @@ import {
   complianceRecords,
   batchCostCalculations,
   pricingHistory,
+  targetGenerationRuns,
 } from './data/mockData.js';
-import { getStorageConfiguration, initializePersistentStore, persistStore } from './data/persistentStore.js';
+import { claimUnownedData, getStorageConfiguration, initializePersistentStore, persistStore } from './data/persistentStore.js';
+import { ensureUserProfile, recordAuditEvent, verifySupabaseAccessToken } from './services/supabaseClient.js';
 
 dotenv.config();
 await initializePersistentStore();
@@ -56,6 +58,16 @@ await server.register(cors, {
 server.addHook('onSend', async (request, reply, payload) => {
   if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method) && reply.statusCode < 400) {
     await persistStore();
+    if (getStorageConfiguration().mode === 'supabase' && request.user?.id) {
+      const parts = request.url.split('?')[0].split('/').filter(Boolean);
+      await recordAuditEvent({
+        ownerId: request.user.id,
+        action: request.method.toLowerCase(),
+        entityType: parts[2] || 'api',
+        entityId: parts.length > 3 ? parts.at(-1) : null,
+        metadata: { path: request.routerPath || request.url.split('?')[0], status_code: reply.statusCode },
+      }).catch(error => request.log.warn({ err: error }, 'Unable to write audit log'));
+    }
   }
   return payload;
 });
@@ -64,6 +76,29 @@ server.addHook('onRequest', async (request, reply) => {
   if (!process.env.API_KEY || request.url === '/health' || request.method === 'OPTIONS') return;
   if (request.headers['x-api-key'] !== process.env.API_KEY) {
     return reply.code(401).send({ error: 'Invalid or missing API key' });
+  }
+});
+
+const initializedUsers = new Set();
+server.addHook('preHandler', async (request, reply) => {
+  if (request.url === '/health' || request.method === 'OPTIONS') return;
+  if (process.env.NODE_TEST_CONTEXT) {
+    request.user = { id: '00000000-0000-4000-8000-000000000001', email: 'test@beverageai.local' };
+    return;
+  }
+  if (getStorageConfiguration().mode !== 'supabase') return;
+
+  const authorization = request.headers.authorization || '';
+  const accessToken = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+  if (!accessToken) return reply.code(401).send({ error: 'Authentication required' });
+  const user = await verifySupabaseAccessToken(accessToken);
+  if (!user) return reply.code(401).send({ error: 'Invalid or expired session' });
+  request.user = user;
+
+  if (!initializedUsers.has(user.id)) {
+    await ensureUserProfile(user);
+    await claimUnownedData(user.id);
+    initializedUsers.add(user.id);
   }
 });
 
@@ -92,6 +127,19 @@ server.get('/health', async () => {
 });
 
 const apiPrefix = '/api/v1';
+
+function isOwnedByRequest(request, item) {
+  return Boolean(item) && (!item.owner_id || item.owner_id === request.user?.id);
+}
+
+function findAccessibleFormulation(request, id) {
+  const formulation = formulations.find(item => item.id === id);
+  return isOwnedByRequest(request, formulation) ? formulation : null;
+}
+
+function accessibleFormulations(request) {
+  return formulations.filter(item => isOwnedByRequest(request, item));
+}
 
 const paginationSchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(100),
@@ -376,7 +424,8 @@ server.get(`${apiPrefix}/formulations`, async (request) => {
   const { search, status } = request.query;
   const { limit, offset } = paginationSchema.extend({ limit: z.coerce.number().int().min(1).max(500).default(50) }).parse(request.query);
   
-  let filtered = status === 'all' ? [...formulations] : formulations.filter(item => item.status !== 'archived');
+  const owned = accessibleFormulations(request);
+  let filtered = status === 'all' ? owned : owned.filter(item => item.status !== 'archived');
   
   if (status && status !== 'all') {
     filtered = filtered.filter(f => f.status === status);
@@ -404,7 +453,7 @@ server.get(`${apiPrefix}/formulations`, async (request) => {
 });
 
 server.get(`${apiPrefix}/formulations/:id`, async (request, reply) => {
-  const formulation = formulations.find(f => f.id === request.params.id);
+  const formulation = findAccessibleFormulation(request, request.params.id);
   if (!formulation) {
     return reply.code(404).send({ error: 'Formulation not found' });
   }
@@ -421,13 +470,14 @@ server.post(`${apiPrefix}/formulations`, async (request, reply) => {
   }).parse(request.body);
 
   const code = input.code || `FORM-${Date.now()}`;
-  if (formulations.some(item => item.code.toLowerCase() === code.toLowerCase())) {
+  if (accessibleFormulations(request).some(item => item.code.toLowerCase() === code.toLowerCase())) {
     return reply.code(409).send({ error: 'Formulation code already exists' });
   }
 
   const totals = processFormulationIngredients(input.ingredients);
   
   const newFormulation = addFormulation({
+    owner_id: request.user?.id,
     code,
     name: input.name,
     description: input.description,
@@ -451,7 +501,7 @@ server.put(`${apiPrefix}/formulations/:id`, async (request, reply) => {
     ingredients: z.array(formulationIngredientSchema).min(1).max(40).optional(),
   }).strict().parse(request.body);
   
-  const existing = formulations.find(f => f.id === id);
+  const existing = findAccessibleFormulation(request, id);
   if (!existing) {
     return reply.code(404).send({ error: 'Formulation not found' });
   }
@@ -465,6 +515,9 @@ server.put(`${apiPrefix}/formulations/:id`, async (request, reply) => {
 });
 
 server.delete(`${apiPrefix}/formulations/:id`, async (request, reply) => {
+  if (!findAccessibleFormulation(request, request.params.id)) {
+    return reply.code(404).send({ error: 'Formulation not found' });
+  }
   const deleted = deleteFormulation(request.params.id);
   if (!deleted) {
     return reply.code(404).send({ error: 'Formulation not found' });
@@ -473,7 +526,7 @@ server.delete(`${apiPrefix}/formulations/:id`, async (request, reply) => {
 });
 
 server.post(`${apiPrefix}/formulations/:id/versions`, async (request, reply) => {
-  const source = formulations.find(item => item.id === request.params.id);
+  const source = findAccessibleFormulation(request, request.params.id);
   if (!source) return reply.code(404).send({ error: 'Formulation not found' });
 
   const input = z.object({
@@ -501,19 +554,20 @@ server.post(`${apiPrefix}/formulations/:id/versions`, async (request, reply) => 
     parent_formulation_id: source.parent_formulation_id || source.id,
     is_latest_version: true,
     status: 'draft',
+    owner_id: request.user?.id,
   });
   return reply.code(201).send({ data: version });
 });
 
 server.get(`${apiPrefix}/formulations/:id/versions`, async (request, reply) => {
-  const source = formulations.find(item => item.id === request.params.id);
+  const source = findAccessibleFormulation(request, request.params.id);
   if (!source) return reply.code(404).send({ error: 'Formulation not found' });
   const rootId = source.parent_formulation_id || source.id;
-  return { data: formulations.filter(item => item.id === rootId || item.parent_formulation_id === rootId) };
+  return { data: accessibleFormulations(request).filter(item => item.id === rootId || item.parent_formulation_id === rootId) };
 });
 
 server.get(`${apiPrefix}/formulations/:id/nutrition`, async (request, reply) => {
-  const formulation = formulations.find(item => item.id === request.params.id);
+  const formulation = findAccessibleFormulation(request, request.params.id);
   if (!formulation) return reply.code(404).send({ error: 'Formulation not found' });
   return { data: {
     calories: formulation.total_calories_per_100ml,
@@ -522,7 +576,7 @@ server.get(`${apiPrefix}/formulations/:id/nutrition`, async (request, reply) => 
 });
 
 server.get(`${apiPrefix}/formulations/:id/cost`, async (request, reply) => {
-  const formulation = formulations.find(item => item.id === request.params.id);
+  const formulation = findAccessibleFormulation(request, request.params.id);
   if (!formulation) return reply.code(404).send({ error: 'Formulation not found' });
   const batchSize = z.coerce.number().finite().positive().max(1000000).default(1).parse(request.query.batch_size);
   return { data: {
@@ -537,7 +591,7 @@ server.get(`${apiPrefix}/formulations/:id/cost`, async (request, reply) => {
 // ============================================================================
 
 server.get(`${apiPrefix}/compatibility/formulations/:id`, async (request, reply) => {
-  const formulation = formulations.find(f => f.id === request.params.id);
+  const formulation = findAccessibleFormulation(request, request.params.id);
   if (!formulation) {
     return reply.code(404).send({ error: 'Formulation not found' });
   }
@@ -1017,7 +1071,7 @@ server.post(`${apiPrefix}/ai/formulations/:id/generate`, async (request, reply) 
     target_cost_per_liter: z.coerce.number().finite().nonnegative().optional(),
   }).parse(request.body || {});
   
-  const source = formulations.find(f => f.id === id);
+  const source = findAccessibleFormulation(request, id);
   if (!source) {
     return reply.code(404).send({ error: 'Source formulation not found' });
   }
@@ -1041,6 +1095,7 @@ server.post(`${apiPrefix}/ai/formulations/:id/generate`, async (request, reply) 
     ));
     const variant = {
       id: generateId(),
+      owner_id: request.user?.id,
       source_formulation_id: id,
       source_formulation_name: source.name,
       generation_type,
@@ -1098,11 +1153,11 @@ server.post(`${apiPrefix}/ai/formulations/:id/generate`, async (request, reply) 
 });
 
 server.get(`${apiPrefix}/ai/formulations/:id/variants`, async (request, reply) => {
-  if (!formulations.some(item => item.id === request.params.id)) {
+  if (!findAccessibleFormulation(request, request.params.id)) {
     return reply.code(404).send({ error: 'Source formulation not found' });
   }
   const { limit, offset } = paginationSchema.extend({ limit: z.coerce.number().int().min(1).max(100).default(50) }).parse(request.query);
-  const filtered = aiVariants.filter(item =>
+  const filtered = aiVariants.filter(item => isOwnedByRequest(request, item) &&
     item.source_formulation_id === request.params.id && (!request.query.status || item.status === request.query.status)
   );
   return {
@@ -1123,13 +1178,14 @@ server.post(`${apiPrefix}/ai/variants/:variantId/accept`, async (request, reply)
     }),
   }).parse(request.body);
 
-  const storedVariant = aiVariants.find(item => item.id === variantId);
+  const storedVariant = aiVariants.find(item => item.id === variantId && isOwnedByRequest(request, item));
   if (!storedVariant) return reply.code(404).send({ error: 'AI variant not found' });
   if (storedVariant.status === 'accepted') return reply.code(409).send({ error: 'AI variant was already accepted' });
   
   const totals = processFormulationIngredients(storedVariant.variant_ingredients);
   
   const newFormulation = addFormulation({
+    owner_id: request.user?.id,
     code: `AI-${Date.now()}`,
     name: `${variant_data.source_name || 'AI Variant'} (AI Generated)`,
     description: variant_data.explanation || 'Created from AI recommendation',
@@ -1440,9 +1496,19 @@ server.post(`${apiPrefix}/target-generation/generate`, async (request, reply) =>
   
   // Sort by overall score
   candidates.sort((a, b) => b.overall_score - a.overall_score);
+
+  const generationRun = {
+    id: generateId(),
+    owner_id: request.user?.id,
+    constraints: targetInput,
+    candidates,
+    ai,
+    created_at: new Date().toISOString(),
+  };
+  targetGenerationRuns.push(generationRun);
   
   return reply.code(201).send({
-    data: { candidates, formulations: [], ai },
+    data: { candidates, formulations: [], ai, run_id: generationRun.id },
     message: `Generated ${candidates.length} candidates`,
   });
 });
@@ -1461,6 +1527,7 @@ server.post(`${apiPrefix}/target-generation/save`, async (request, reply) => {
   const totals = processFormulationIngredients(candidate.ingredients);
   
   const newFormulation = addFormulation({
+    owner_id: request.user?.id,
     code: `TGT-${Date.now()}`,
     name: name || `Target-Generated ${new Date().toLocaleDateString()}`,
     description: `Generated from target constraints. Overall score: ${candidate.overall_score?.toFixed(1)}`,
@@ -1482,7 +1549,7 @@ server.post(`${apiPrefix}/target-generation/save`, async (request, reply) => {
 // ============================================================================
 
 server.post(`${apiPrefix}/regulatory/formulations/:id/check`, async (request, reply) => {
-  const formulation = formulations.find(f => f.id === request.params.id);
+  const formulation = findAccessibleFormulation(request, request.params.id);
   if (!formulation) {
     return reply.code(404).send({ error: 'Formulation not found' });
   }
@@ -1524,6 +1591,7 @@ server.post(`${apiPrefix}/regulatory/formulations/:id/check`, async (request, re
   
   const compliance = {
       id: generateId(),
+      owner_id: request.user?.id,
       formulation_id: formulation.id,
       is_halal_compliant: isHalal,
       is_kosher_compliant: isKosher,
@@ -1544,16 +1612,16 @@ server.post(`${apiPrefix}/regulatory/formulations/:id/check`, async (request, re
 });
 
 server.get(`${apiPrefix}/regulatory/formulations/:id/compliance`, async (request, reply) => {
-  if (!formulations.some(item => item.id === request.params.id)) {
+  if (!findAccessibleFormulation(request, request.params.id)) {
     return reply.code(404).send({ error: 'Formulation not found' });
   }
-  const compliance = complianceRecords.find(item => item.formulation_id === request.params.id);
+  const compliance = complianceRecords.find(item => item.formulation_id === request.params.id && isOwnedByRequest(request, item));
   if (!compliance) return reply.code(404).send({ error: 'Compliance has not been checked' });
   return { data: compliance };
 });
 
 server.post(`${apiPrefix}/regulatory/formulations/:id/labels`, async (request, reply) => {
-  const formulation = formulations.find(f => f.id === request.params.id);
+  const formulation = findAccessibleFormulation(request, request.params.id);
   if (!formulation) {
     return reply.code(404).send({ error: 'Formulation not found' });
   }
@@ -1602,7 +1670,7 @@ server.post(`${apiPrefix}/regulatory/formulations/:id/labels`, async (request, r
 });
 
 server.get(`${apiPrefix}/regulatory/formulations/:id/labels`, async (request, reply) => {
-  const formulation = formulations.find(item => item.id === request.params.id);
+  const formulation = findAccessibleFormulation(request, request.params.id);
   if (!formulation) return reply.code(404).send({ error: 'Formulation not found' });
   if (!formulation.labels) return reply.code(404).send({ error: 'Labels have not been generated' });
   const language = request.query.language;
@@ -1624,7 +1692,7 @@ server.post(`${apiPrefix}/cost/formulations/:id/batch-cost`, async (request, rep
     margin_percent: z.coerce.number().finite().min(0).max(1000).default(30),
   }).parse(request.body);
   
-  const formulation = formulations.find(f => f.id === id);
+  const formulation = findAccessibleFormulation(request, id);
   if (!formulation) {
     return reply.code(404).send({ error: 'Formulation not found' });
   }
@@ -1637,6 +1705,7 @@ server.post(`${apiPrefix}/cost/formulations/:id/batch-cost`, async (request, rep
   
   const calculation = {
       id: generateId(),
+      owner_id: request.user?.id,
       formulation_id: id,
       batch_size_liters,
       breakdown: {
@@ -1661,11 +1730,11 @@ server.post(`${apiPrefix}/cost/formulations/:id/batch-cost`, async (request, rep
 });
 
 server.get(`${apiPrefix}/cost/formulations/:id/batch-costs`, async (request, reply) => {
-  if (!formulations.some(item => item.id === request.params.id)) {
+  if (!findAccessibleFormulation(request, request.params.id)) {
     return reply.code(404).send({ error: 'Formulation not found' });
   }
   const { limit, offset } = paginationSchema.extend({ limit: z.coerce.number().int().min(1).max(100).default(50) }).parse(request.query);
-  const filtered = batchCostCalculations.filter(item => item.formulation_id === request.params.id);
+  const filtered = batchCostCalculations.filter(item => item.formulation_id === request.params.id && isOwnedByRequest(request, item));
   return {
     data: filtered.slice(offset, offset + limit),
     pagination: { total: filtered.length, limit, offset, has_more: offset + limit < filtered.length },
@@ -1674,7 +1743,7 @@ server.get(`${apiPrefix}/cost/formulations/:id/batch-costs`, async (request, rep
 
 server.get(`${apiPrefix}/cost/formulations/:id/compare-batch-sizes`, async (request, reply) => {
   const { id } = request.params;
-  const formulation = formulations.find(f => f.id === id);
+  const formulation = findAccessibleFormulation(request, id);
   if (!formulation) {
     return reply.code(404).send({ error: 'Formulation not found' });
   }
@@ -1697,7 +1766,7 @@ server.get(`${apiPrefix}/cost/formulations/:id/compare-batch-sizes`, async (requ
 });
 
 server.post(`${apiPrefix}/cost/formulations/:id/roi`, async (request, reply) => {
-  const formulation = formulations.find(item => item.id === request.params.id);
+  const formulation = findAccessibleFormulation(request, request.params.id);
   if (!formulation) return reply.code(404).send({ error: 'Formulation not found' });
   const input = z.object({
     batch_size_liters: z.coerce.number().finite().positive().max(1000000),
@@ -1728,7 +1797,7 @@ server.post(`${apiPrefix}/cost/ingredients/:ingredientId/pricing`, async (reques
     currency: z.string().trim().length(3).default('DZD'),
     effective_date: z.coerce.date().default(() => new Date()),
   }).parse(request.body);
-  const record = { id: generateId(), ingredient_id: request.params.ingredientId, ...input, effective_date: input.effective_date.toISOString() };
+  const record = { id: generateId(), ingredient_id: request.params.ingredientId, created_by: request.user?.id, ...input, effective_date: input.effective_date.toISOString() };
   pricingHistory.push(record);
   let recalculated_formulations = 0;
   if (input.effective_date <= new Date()) {

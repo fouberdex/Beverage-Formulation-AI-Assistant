@@ -5,16 +5,24 @@ dotenv.config();
 
 const { Pool } = pg;
 
-// Connection pool optimized for enterprise scale
+const connectionOptions = process.env.DATABASE_URL
+  ? {
+      connectionString: process.env.DATABASE_URL,
+      ssl: process.env.DB_SSL === 'false' ? false : { rejectUnauthorized: false },
+    }
+  : {
+      host: process.env.DB_HOST || 'localhost',
+      port: Number.parseInt(process.env.DB_PORT || '5432', 10),
+      database: process.env.DB_NAME || 'beverageai_dz',
+      user: process.env.DB_USER || 'user',
+      password: process.env.DB_PASSWORD || 'password',
+    };
+
 const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5432'),
-  database: process.env.DB_NAME || 'beverageai_dz',
-  user: process.env.DB_USER || 'user',
-  password: process.env.DB_PASSWORD || 'password',
-  max: 20, // Maximum pool size for concurrent connections
+  ...connectionOptions,
+  max: Number.parseInt(process.env.DB_POOL_MAX || '10', 10),
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  connectionTimeoutMillis: 10000,
 });
 
 // Test connection

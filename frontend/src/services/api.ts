@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { supabase } from './supabase';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 const API_KEY = import.meta.env.VITE_API_KEY;
@@ -9,6 +10,12 @@ const api = axios.create({
     'Content-Type': 'application/json',
     ...(API_KEY ? { 'x-api-key': API_KEY } : {}),
   },
+});
+
+api.interceptors.request.use(async (config) => {
+  const { data } = await supabase.auth.getSession();
+  if (data.session?.access_token) config.headers.Authorization = `Bearer ${data.session.access_token}`;
+  return config;
 });
 
 // Ingredients API

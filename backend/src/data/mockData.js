@@ -313,6 +313,9 @@ export const batchCostCalculations = [];
 // Ingredient supplier-price records
 export const pricingHistory = [];
 
+// Persisted target-generation request/result history
+export const targetGenerationRuns = [];
+
 // Categories
 export const categories = [...new Set(mockIngredients.map(i => i.category))];
 

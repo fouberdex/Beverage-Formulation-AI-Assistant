@@ -1,6 +1,8 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { Home, Package, FlaskConical, Sparkles, Target, Shield, DollarSign, Menu, X } from 'lucide-react';
+import { Home, Package, FlaskConical, Sparkles, Target, Shield, DollarSign, Menu, X, LogOut } from 'lucide-react';
+import { useAuth } from './auth/AuthContext';
+import AuthPage from './pages/AuthPage';
 
 // Lazy load pages to catch any import errors
 const Dashboard = React.lazy(() => import('./pages/Dashboard'));
@@ -61,6 +63,7 @@ const navItems = [
 function Navigation() {
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
   const location = useLocation();
+  const { session, signOut } = useAuth();
 
   return (
     <nav className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-50">
@@ -93,6 +96,13 @@ function Navigation() {
                 </Link>
               );
             })}
+            <span className="ml-2 max-w-36 truncate border-l pl-3 text-xs text-gray-500" title={session?.user.email}>
+              {session?.user.email}
+            </span>
+            <button type="button" onClick={() => void signOut()} title="Sign out"
+              className="ml-1 rounded-md p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-800">
+              <LogOut className="h-4 w-4" />
+            </button>
           </div>
 
           {/* Mobile menu button */}
@@ -130,6 +140,10 @@ function Navigation() {
                 );
               })}
             </div>
+            <button type="button" onClick={() => void signOut()}
+              className="mt-2 flex w-full items-center rounded-md px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50">
+              <LogOut className="mr-2 h-4 w-4" /> Sign out
+            </button>
           </div>
         )}
       </div>
@@ -138,6 +152,11 @@ function Navigation() {
 }
 
 function App() {
+  const { session, loading } = useAuth();
+
+  if (loading) return <LoadingFallback />;
+  if (!session) return <AuthPage />;
+
   return (
     <ErrorBoundary>
       <Router>
