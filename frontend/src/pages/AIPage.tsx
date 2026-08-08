@@ -1,7 +1,15 @@
 import { useState, useEffect } from 'react';
 import { aiAPI, formulationsAPI } from '../services/api';
 import { Formulation } from '../types';
-import { Sparkles, Loader, Info, CheckCircle } from 'lucide-react';
+import { Sparkles, Loader, Info, CheckCircle, AlertTriangle, ShieldCheck } from 'lucide-react';
+
+type AIStatus = {
+  provider: string;
+  model: string;
+  configured: boolean;
+  used: boolean;
+  reason?: string;
+};
 
 export default function AIPage() {
   const [formulations, setFormulations] = useState<Formulation[]>([]);
@@ -13,6 +21,7 @@ export default function AIPage() {
   const [variants, setVariants] = useState<any[]>([]);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState('');
+  const [aiStatus, setAiStatus] = useState<AIStatus | null>(null);
 
   useEffect(() => {
     loadFormulations();
@@ -42,12 +51,14 @@ export default function AIPage() {
     setLoading(true);
     setVariants([]);
     setSuccessMessage('');
+    setAiStatus(null);
     try {
       const res = await aiAPI.generateVariants(selectedFormulationId, {
         count: Math.min(count, 10),
         generation_type: generationType,
       });
       setVariants(res.data.data);
+      setAiStatus(res.data.ai || null);
     } catch (error: any) {
       alert(error.response?.data?.error || 'Error generating variants');
     } finally {
@@ -94,7 +105,7 @@ export default function AIPage() {
       <div className="px-4 py-5 sm:px-6">
         <h1 className="text-3xl font-bold text-gray-900">AI Recommendation Engine</h1>
         <p className="mt-1 text-sm text-gray-500">
-          Generate alternative formulations using AI optimization
+          Generate locally validated alternatives, then have Gemini review and rank them
         </p>
       </div>
 
@@ -119,7 +130,8 @@ export default function AIPage() {
               <li><strong>Optimization</strong>: Reduces cost while maintaining quality (±10% ingredient changes)</li>
               <li><strong>Alternative</strong>: Creates variants with different proportions (±30% changes)</li>
               <li><strong>Constraint-Based</strong>: Generates based on specific targets</li>
-              <li><strong>Confidence Score</strong>: 85%+ = Excellent, 70-84% = Good, below 70% = Needs review</li>
+              <li><strong>Safety</strong>: Percentages, ingredient limits, compatibility, cost, and nutrition are checked locally</li>
+              <li><strong>AI Review</strong>: Gemini ranks candidates and explains tradeoffs; it does not replace lab or legal validation</li>
             </ul>
           </div>
         </div>
@@ -240,6 +252,28 @@ export default function AIPage() {
 
       {variants.length > 0 && (
         <div className="mt-6 mx-4">
+          {aiStatus && (
+            <div className={`mb-4 rounded-lg border p-4 ${
+              aiStatus.used
+                ? 'bg-green-50 border-green-200 text-green-800'
+                : 'bg-amber-50 border-amber-200 text-amber-800'
+            }`}>
+              <div className="flex items-start">
+                {aiStatus.used
+                  ? <Sparkles className="h-5 w-5 mr-3 mt-0.5" />
+                  : <AlertTriangle className="h-5 w-5 mr-3 mt-0.5" />}
+                <div className="text-sm">
+                  <p className="font-semibold">
+                    {aiStatus.used
+                      ? `AI review applied: ${aiStatus.provider} / ${aiStatus.model}`
+                      : 'Validated local generation used (no external AI review)'}
+                  </p>
+                  {!aiStatus.used && <p className="mt-1">{aiStatus.reason || 'Gemini review was unavailable'}</p>}
+                  <p className="mt-1">All ingredient percentages and displayed numerical changes were calculated by the backend.</p>
+                </div>
+              </div>
+            </div>
+          )}
           <h2 className="text-xl font-semibold text-gray-900 mb-4">
             Generated Variants ({variants.length})
           </h2>
@@ -261,6 +295,9 @@ export default function AIPage() {
                       }`}>
                         {variant.confidence_score?.toFixed(0)}% confidence
                       </span>
+                    )}
+                    {variant.recommended && variant.status !== 'accepted' && (
+                      <p className="mt-2 text-xs font-semibold text-sky-700">AI recommended</p>
                     )}
                   </div>
                 </div>
@@ -284,6 +321,14 @@ export default function AIPage() {
                 
                 <div className="space-y-2 text-sm border-t pt-3">
                   <div className="flex justify-between">
+                    <span className="text-gray-500">Calculated Cost/L:</span>
+                    <span className="font-medium">{variant.calculated_values?.cost_per_liter?.toFixed(2)} DZD</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Compatibility:</span>
+                    <span className="font-medium">{variant.compatibility_score?.toFixed(0)}%</span>
+                  </div>
+                  <div className="flex justify-between">
                     <span className="text-gray-500">Cost Change:</span>
                     <span className={variant.cost_difference_percent < 0 ? 'text-green-600 font-medium' : 'text-red-600 font-medium'}>
                       {variant.cost_difference_percent > 0 ? '+' : ''}
@@ -305,6 +350,33 @@ export default function AIPage() {
                     </span>
                   </div>
                 </div>
+
+                <div className={`mt-3 rounded p-3 text-xs ${
+                  variant.regulatory?.passes_local_checks
+                    ? 'bg-green-50 text-green-800'
+                    : 'bg-red-50 text-red-800'
+                }`}>
+                  <div className="flex items-center font-semibold">
+                    <ShieldCheck className="h-4 w-4 mr-2" />
+                    {variant.regulatory?.passes_local_checks
+                      ? 'Passed local ingredient-limit screening'
+                      : 'Local regulatory screening found a concern'}
+                  </div>
+                  <p className="mt-1">Lab and legal validation are still required.</p>
+                </div>
+
+                {variant.warnings?.length > 0 && (
+                  <div className="mt-3 rounded bg-amber-50 p-3 text-xs text-amber-900">
+                    <p className="font-semibold flex items-center mb-1">
+                      <AlertTriangle className="h-4 w-4 mr-2" /> Warnings
+                    </p>
+                    <ul className="list-disc pl-5 space-y-1">
+                      {variant.warnings.map((warning: string, warningIndex: number) => (
+                        <li key={warningIndex}>{warning}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 
                 {variant.status !== 'accepted' && (
                   <button 

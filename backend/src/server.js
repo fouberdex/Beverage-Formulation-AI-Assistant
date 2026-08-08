@@ -5,7 +5,12 @@ import rateLimit from '@fastify/rate-limit';
 import dotenv from 'dotenv';
 import { pathToFileURL } from 'url';
 import { z } from 'zod';
-import { getAIConfiguration, reviewFormulationCandidates } from './services/geminiService.js';
+import {
+  describeGeminiFailure,
+  getAIConfiguration,
+  reviewFormulationCandidates,
+  reviewFormulationVariants,
+} from './services/geminiService.js';
 
 // Import mock data
 import { 
@@ -107,6 +112,14 @@ function processFormulationIngredients(input) {
         code: 'custom',
         path: ['ingredients', displayOrder, 'ingredient_id'],
         message: 'Ingredient does not exist or is inactive',
+      }]);
+    }
+
+    if (ingredient.max_percentage && item.percentage > ingredient.max_percentage + 0.0001) {
+      throw new z.ZodError([{
+        code: 'custom',
+        path: ['ingredients', displayOrder, 'percentage'],
+        message: `${ingredient.name} cannot exceed ${ingredient.max_percentage}%`,
       }]);
     }
 
@@ -834,11 +847,88 @@ server.post(`${apiPrefix}/compatibility/batch-compute`, async (request, reply) =
 // AI ROUTES
 // ============================================================================
 
+function percentageDifference(value, baseline) {
+  if (baseline === 0) return value === 0 ? 0 : 100;
+  return ((value - baseline) / baseline) * 100;
+}
+
+function assessVariantIngredients(variantIngredients) {
+  const ingredientDetails = variantIngredients.map(item => getIngredientById(item.ingredient_id));
+  const pairResults = [];
+  for (let firstIndex = 0; firstIndex < ingredientDetails.length; firstIndex += 1) {
+    for (let secondIndex = firstIndex + 1; secondIndex < ingredientDetails.length; secondIndex += 1) {
+      pairResults.push(evaluateIngredientPair(ingredientDetails[firstIndex], ingredientDetails[secondIndex]));
+    }
+  }
+
+  const riskyPairs = pairResults.filter(result => result.risk_severity !== 'none');
+  const warnings = [...new Set(riskyPairs.map(result => result.risk_description))];
+  const restrictedIngredients = ingredientDetails.filter(item => item.regulatory_status === 'restricted');
+  warnings.push(...restrictedIngredients.map(item => `${item.name} has restricted regulatory status.`));
+
+  return {
+    compatibility_score: pairResults.length
+      ? Math.min(...pairResults.map(result => result.compatibility_score))
+      : 100,
+    warnings: [...new Set(warnings)],
+    regulatory: {
+      passes_local_checks: restrictedIngredients.length === 0,
+      is_halal_compliant: ingredientDetails.every(item => item.halal_certified),
+      is_kosher_compliant: ingredientDetails.every(item => item.kosher_certified),
+      is_vegan_compliant: ingredientDetails.every(item => item.vegan),
+      note: 'Local ingredient-limit screening only; laboratory and legal review are still required.',
+    },
+  };
+}
+
+function generateVariantIngredients(sourceIngredients, generationType) {
+  const details = sourceIngredients.map(item => ({
+    source: item,
+    ingredient: getIngredientById(item.ingredient_id),
+  }));
+  const balanceIndex = details.findIndex(item => item.ingredient?.category === 'base');
+  const effectiveBalanceIndex = balanceIndex >= 0 ? balanceIndex : 0;
+
+  const generated = details.map(({ source, ingredient }, index) => {
+    if (index === effectiveBalanceIndex) {
+      return { ingredient_id: source.ingredient_id, ingredient_name: ingredient.name, percentage: 0 };
+    }
+
+    let factor;
+    if (generationType === 'optimization') {
+      const pricePressure = Math.min((ingredient.base_price_per_kg || 0) / 3000, 0.08);
+      factor = 0.9 + Math.random() * 0.1 - pricePressure;
+    } else if (generationType === 'alternative') {
+      factor = 0.7 + Math.random() * 0.6;
+    } else {
+      factor = 0.8 + Math.random() * 0.4;
+    }
+
+    const changedPercentage = Math.max(0.0001, source.percentage * factor);
+    const percentage = ingredient.max_percentage
+      ? Math.min(changedPercentage, ingredient.max_percentage)
+      : changedPercentage;
+    return { ingredient_id: source.ingredient_id, ingredient_name: ingredient.name, percentage };
+  });
+
+  const nonBalanceTotal = generated.reduce(
+    (sum, item, index) => index === effectiveBalanceIndex ? sum : sum + item.percentage,
+    0,
+  );
+  if (nonBalanceTotal >= 100) {
+    throw new Error('Unable to generate a safe variant because non-base ingredients total 100% or more');
+  }
+  generated[effectiveBalanceIndex].percentage = 100 - nonBalanceTotal;
+  return generated;
+}
+
 server.post(`${apiPrefix}/ai/formulations/:id/generate`, async (request, reply) => {
   const { id } = request.params;
   const { count, generation_type } = z.object({
     count: z.coerce.number().int().min(1).max(10).default(5),
-    generation_type: z.enum(['optimization', 'alternative', 'constraint']).default('optimization'),
+    generation_type: z.enum(['optimization', 'alternative', 'constraint', 'constraint_based'])
+      .transform(value => value === 'constraint' ? 'constraint_based' : value)
+      .default('optimization'),
   }).parse(request.body || {});
   
   const source = formulations.find(f => f.id === id);
@@ -846,55 +936,73 @@ server.post(`${apiPrefix}/ai/formulations/:id/generate`, async (request, reply) 
     return reply.code(404).send({ error: 'Source formulation not found' });
   }
   
-  // Generate variants based on source formulation
   const variants = [];
   const sourceIngredients = source.ingredients || [];
-  
+  const sourceTotals = processFormulationIngredients(sourceIngredients);
+
   for (let i = 0; i < count; i++) {
-    // Create modified ingredients for each variant
-    const variantIngredients = sourceIngredients.map(ing => {
-      const variation = generation_type === 'optimization' 
-        ? 0.9 + Math.random() * 0.2  // ±10% for optimization
-        : 0.7 + Math.random() * 0.6; // ±30% for alternatives
-      
-      // Look up ingredient name if not already present
-      const ingredient = getIngredientById(ing.ingredient_id);
-      const ingredientName = ing.ingredient_name || ingredient?.name || 'Unknown';
-      
-      return {
-        ingredient_id: ing.ingredient_id,
-        ingredient_name: ingredientName,
-        percentage: Math.max(0.01, ing.percentage * variation),
-      };
-    });
-    
-    // Normalize to 100%
-    const total = variantIngredients.reduce((sum, i) => sum + i.percentage, 0);
-    variantIngredients.forEach(i => i.percentage = (i.percentage / total) * 100);
-    
+    const variantIngredients = generateVariantIngredients(sourceIngredients, generation_type);
+    const totals = processFormulationIngredients(variantIngredients);
+    const assessment = assessVariantIngredients(totals.ingredients);
+    const localConfidence = Math.max(0, Math.min(
+      assessment.compatibility_score,
+      assessment.regulatory.passes_local_checks ? 88 : 50,
+    ));
     const variant = {
       id: generateId(),
       source_formulation_id: id,
       source_formulation_name: source.name,
       generation_type,
-      variant_ingredients: variantIngredients,
-      confidence_score: 70 + Math.random() * 25,
+      variant_ingredients: totals.ingredients,
+      confidence_score: localConfidence,
       explanation: generation_type === 'optimization' 
-        ? `Cost-optimized variant ${i + 1}: Adjusted ingredient ratios to reduce cost while maintaining quality`
+        ? `Locally generated cost-oriented variant ${i + 1}; calculated values and ingredient limits have been checked.`
         : generation_type === 'alternative'
-        ? `Alternative variant ${i + 1}: Modified proportions for different taste profile`
-        : `Constraint-based variant ${i + 1}: Optimized to meet target specifications`,
-      cost_difference_percent: (Math.random() - 0.5) * 30,
-      calorie_difference_percent: (Math.random() - 0.5) * 20,
-      sugar_difference_percent: (Math.random() - 0.5) * 25,
+        ? `Locally generated alternative ${i + 1} with a broader change in ingredient proportions.`
+        : `Locally generated constraint-oriented variant ${i + 1}; no explicit targets were supplied.`,
+      cost_difference_percent: percentageDifference(totals.total_cost_per_liter, sourceTotals.total_cost_per_liter),
+      calorie_difference_percent: percentageDifference(totals.total_calories_per_100ml, sourceTotals.total_calories_per_100ml),
+      sugar_difference_percent: percentageDifference(totals.total_sugar_per_100ml, sourceTotals.total_sugar_per_100ml),
+      calculated_values: {
+        cost_per_liter: totals.total_cost_per_liter,
+        calories_per_100ml: totals.total_calories_per_100ml,
+        sugar_per_100ml: totals.total_sugar_per_100ml,
+      },
+      compatibility_score: assessment.compatibility_score,
+      regulatory: assessment.regulatory,
+      warnings: assessment.warnings,
+      recommended: false,
       status: 'generated',
       created_at: new Date().toISOString(),
     };
     variants.push(variant);
-    aiVariants.push(variant);
   }
-  
-  return reply.code(201).send({ data: variants, count: variants.length });
+
+  let ai = { ...getAIConfiguration(), used: false, reason: 'Gemini review was not attempted' };
+  try {
+    ai = await reviewFormulationVariants({
+      sourceFormulation: source,
+      variants,
+      generationType: generation_type,
+    });
+    if (ai.used) {
+      const reviewsById = new Map(ai.reviews.map(review => [review.id, review]));
+      for (const variant of variants) {
+        const review = reviewsById.get(variant.id);
+        variant.confidence_score = review.confidence_score;
+        variant.explanation = review.explanation;
+        variant.warnings = [...new Set([...variant.warnings, ...review.warnings])];
+        variant.recommended = review.recommended;
+      }
+    }
+  } catch (error) {
+    request.log.warn({ err: error }, 'Gemini variant review failed; using validated local results');
+    ai = { ...getAIConfiguration(), used: false, reason: describeGeminiFailure(error) };
+  }
+
+  variants.forEach(variant => aiVariants.push(variant));
+  const { reviews: _reviews, ...publicAI } = ai;
+  return reply.code(201).send({ data: variants, count: variants.length, ai: publicAI });
 });
 
 server.get(`${apiPrefix}/ai/formulations/:id/variants`, async (request, reply) => {

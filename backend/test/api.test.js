@@ -1,15 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import server from '../src/server.js';
-import { INGREDIENT_IDS } from '../src/data/mockData.js';
-import { reviewFormulationCandidates } from '../src/services/geminiService.js';
+import { getIngredientById, INGREDIENT_IDS } from '../src/data/mockData.js';
+import { reviewFormulationCandidates, reviewFormulationVariants } from '../src/services/geminiService.js';
 
 const originalGeminiApiKey = process.env.GEMINI_API_KEY;
+const originalGeminiModel = process.env.GEMINI_MODEL;
 delete process.env.GEMINI_API_KEY;
+delete process.env.GEMINI_MODEL;
 
 test.after(async () => {
   if (originalGeminiApiKey) process.env.GEMINI_API_KEY = originalGeminiApiKey;
   else delete process.env.GEMINI_API_KEY;
+  if (originalGeminiModel) process.env.GEMINI_MODEL = originalGeminiModel;
+  else delete process.env.GEMINI_MODEL;
   await server.close();
 });
 
@@ -44,6 +48,22 @@ test('formulation validation rejects totals other than 100%', async () => {
   });
   assert.equal(response.statusCode, 400);
   assert.match(response.json().details[0].message, /must total 100%/);
+});
+
+test('formulation validation enforces ingredient maximum percentages', async () => {
+  const response = await server.inject({
+    method: 'POST',
+    url: '/api/v1/formulations',
+    payload: {
+      name: 'Unsafe formulation',
+      ingredients: [
+        { ingredient_id: INGREDIENT_IDS.WATER, percentage: 99 },
+        { ingredient_id: INGREDIENT_IDS.ASPARTAME, percentage: 1 },
+      ],
+    },
+  });
+  assert.equal(response.statusCode, 400);
+  assert.match(response.json().details[0].message, /cannot exceed 0.5%/);
 });
 
 test('new formulation nutrition and cost use consistent units', async () => {
@@ -101,15 +121,23 @@ test('frontend AI generation and acceptance workflow is supported', async () => 
     payload: { count: 2, generation_type: 'optimization' },
   });
   assert.equal(generatedResponse.statusCode, 201);
-  assert.equal(generatedResponse.json().data.length, 2);
+  const generatedPayload = generatedResponse.json();
+  assert.equal(generatedPayload.data.length, 2);
+  assert.equal(generatedPayload.ai.used, false);
+  assert.match(generatedPayload.ai.reason, /GEMINI_API_KEY/);
 
-  const variant = generatedResponse.json().data[0];
+  const variant = generatedPayload.data[0];
+  const calculatedCost = variant.variant_ingredients.reduce((sum, item) =>
+    sum + (item.percentage / 100) * getIngredientById(item.ingredient_id).base_price_per_kg, 0
+  );
+  assert.ok(Math.abs(variant.calculated_values.cost_per_liter - calculatedCost) < 0.000001);
+  assert.equal(variant.regulatory.passes_local_checks, true);
   const acceptedResponse = await server.inject({
     method: 'POST',
     url: `/api/v1/ai/variants/${variant.id}/accept`,
     payload: {
       variant_data: {
-        ingredients: variant.variant_ingredients,
+        ingredients: [{ ingredient_id: INGREDIENT_IDS.WATER, percentage: 100 }],
         source_name: 'Classic Orange Soda',
         beverage_type: 'carbonated',
         explanation: variant.explanation,
@@ -118,6 +146,7 @@ test('frontend AI generation and acceptance workflow is supported', async () => 
   });
   assert.equal(acceptedResponse.statusCode, 201);
   assert.equal(acceptedResponse.json().data.total_percentage, 100);
+  assert.ok(Math.abs(acceptedResponse.json().data.total_cost_per_liter - calculatedCost) < 0.000001);
 });
 
 test('regulatory checks and generated labels can be retrieved', async () => {
@@ -187,6 +216,75 @@ test('Gemini responses are schema-validated before they affect candidates', asyn
     assert.equal(result.used, true);
     assert.equal(result.model, 'gemini-2.5-flash-lite');
     assert.equal(result.reviews[0].compatibility, 92);
+  } finally {
+    delete process.env.GEMINI_API_KEY;
+  }
+});
+
+test('Gemini recommendation reviews are structured and matched to every variant', async () => {
+  process.env.GEMINI_API_KEY = 'test-key';
+  const variant = {
+    id: 'variant-1',
+    variant_ingredients: [{ ingredient_name: 'Purified Water', percentage: 100 }],
+    calculated_values: { cost_per_liter: 5, calories_per_100ml: 0, sugar_per_100ml: 0 },
+    cost_difference_percent: 0,
+    calorie_difference_percent: 0,
+    sugar_difference_percent: 0,
+    compatibility_score: 100,
+    regulatory: { passes_local_checks: true },
+    warnings: [],
+  };
+  const fakeFetch = async () => ({
+    ok: true,
+    json: async () => ({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({ reviews: [{
+        id: 'variant-1',
+        confidence_score: 91,
+        explanation: 'The calculated profile is internally consistent.',
+        warnings: ['Pilot testing is required.'],
+        recommended: true,
+      }] }) }] } }],
+    }),
+  });
+
+  try {
+    const result = await reviewFormulationVariants({
+      sourceFormulation: { name: 'Source', beverage_type: 'soft_drink' },
+      variants: [variant],
+      generationType: 'optimization',
+    }, fakeFetch);
+    assert.equal(result.used, true);
+    assert.equal(result.reviews[0].confidence_score, 91);
+    assert.equal(result.reviews[0].recommended, true);
+  } finally {
+    delete process.env.GEMINI_API_KEY;
+  }
+});
+
+test('Gemini recommendation reviews reject malformed or incomplete output', async () => {
+  process.env.GEMINI_API_KEY = 'test-key';
+  const input = {
+    sourceFormulation: { name: 'Source', beverage_type: 'soft_drink' },
+    variants: [{
+      id: 'variant-1',
+      variant_ingredients: [],
+      calculated_values: {},
+      cost_difference_percent: 0,
+      calorie_difference_percent: 0,
+      sugar_difference_percent: 0,
+      compatibility_score: 100,
+      regulatory: {},
+      warnings: [],
+    }],
+    generationType: 'optimization',
+  };
+  const fakeFetch = async () => ({
+    ok: true,
+    json: async () => ({ candidates: [{ content: { parts: [{ text: '{"reviews":[]}' }] } }] }),
+  });
+
+  try {
+    await assert.rejects(() => reviewFormulationVariants(input, fakeFetch), /every item exactly once/);
   } finally {
     delete process.env.GEMINI_API_KEY;
   }
