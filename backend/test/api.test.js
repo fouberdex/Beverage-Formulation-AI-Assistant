@@ -25,6 +25,26 @@ test('health endpoint identifies the active storage mode', async () => {
   assert.ok(response.headers['x-content-type-options']);
 });
 
+test('readiness and account identity endpoints are available', async () => {
+  const readiness = await server.inject({ method: 'GET', url: '/ready' });
+  assert.equal(readiness.statusCode, 200);
+  assert.equal(readiness.json().status, 'ready');
+
+  const identity = await server.inject({ method: 'GET', url: '/api/v1/auth/me' });
+  assert.equal(identity.statusCode, 200);
+  assert.equal(identity.json().data.role, 'admin');
+});
+
+test('target generation history is exposed only through the history endpoints', async () => {
+  const generated = await server.inject({
+    method: 'POST', url: '/api/v1/target-generation/generate', payload: { target_sugar: 8, count: 1 },
+  });
+  assert.equal(generated.statusCode, 201);
+  const history = await server.inject({ method: 'GET', url: '/api/v1/target-generation/runs?limit=10' });
+  assert.equal(history.statusCode, 200);
+  assert.ok(history.json().data.some(run => run.id === generated.json().data.run_id));
+});
+
 test('pagination treats offset and limit as numbers', async () => {
   const response = await server.inject({ method: 'GET', url: '/api/v1/formulations?offset=1&limit=2' });
   assert.equal(response.statusCode, 200);

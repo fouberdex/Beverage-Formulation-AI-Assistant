@@ -2,8 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { costAPI, ingredientsAPI } from '../services/api';
 import { Ingredient } from '../types';
 import { Plus, Search, Filter, X, Pencil, Archive } from 'lucide-react';
+import { useAuth } from '../auth/AuthContext';
 
 export default function IngredientsPage() {
+  const { profile } = useAuth();
+  const canManageIngredients = profile?.role === 'admin';
   const pageSize = 50;
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [loading, setLoading] = useState(true);
@@ -161,13 +164,15 @@ export default function IngredientsPage() {
             {ingredients.length} beverage ingredients loaded · DZD/kg values are planning estimates until replaced with supplier quotes
           </p>
         </div>
-        <button
-          onClick={openAddModal}
-          className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-sky-600 hover:bg-sky-700"
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          Add Ingredient
-        </button>
+        {canManageIngredients && (
+          <button
+            onClick={openAddModal}
+            className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-sky-600 hover:bg-sky-700"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Add Ingredient
+          </button>
+        )}
       </div>
 
       {/* The editor is deliberately inline instead of an overlay. This keeps it
@@ -296,12 +301,14 @@ export default function IngredientsPage() {
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right">
-                    <button onClick={() => openEditModal(ingredient)} className="p-2 text-sky-600 hover:bg-sky-50 rounded" title="Edit">
-                      <Pencil className="h-4 w-4" />
-                    </button>
-                    <button onClick={() => archiveIngredient(ingredient)} className="p-2 text-amber-700 hover:bg-amber-50 rounded" title="Archive">
-                      <Archive className="h-4 w-4" />
-                    </button>
+                    {canManageIngredients ? <>
+                      <button onClick={() => openEditModal(ingredient)} className="p-2 text-sky-600 hover:bg-sky-50 rounded" title="Edit">
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button onClick={() => archiveIngredient(ingredient)} className="p-2 text-amber-700 hover:bg-amber-50 rounded" title="Archive">
+                        <Archive className="h-4 w-4" />
+                      </button>
+                    </> : <span className="text-xs text-gray-400">Read only</span>}
                   </td>
                 </tr>
               ))}

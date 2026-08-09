@@ -14,7 +14,7 @@ The application uses Supabase Postgres for durable storage and Supabase Auth for
 
 ## Quick start
 
-Requirements: Node.js 18 or newer and npm.
+Requirements: Node.js 20.19 or newer and npm.
 
 ```bash
 npm install
@@ -87,7 +87,11 @@ Invalid requests return HTTP 400 with structured validation details. Missing res
 
 ## Supabase database
 
-The deployable schema is in `backend/database/supabase_schema.sql`. It includes explicit Data API grants, RLS policies, ownership indexes, Auth-backed profiles, normalized formulation ingredient relations, AI results, target runs, compliance, pricing, costs, and audit logs. Apply schema changes through a reviewed Supabase migration, then run the Supabase security and performance advisors.
+The deployable schema is in `backend/database/supabase_schema.sql`. It includes explicit Data API grants, RLS policies, ownership indexes, Auth-backed profiles and roles, normalized formulation ingredient relations, AI results, target runs, compliance, pricing, costs, audit logs, and server-only transactional synchronization functions. Apply schema changes through a reviewed Supabase migration, then run the Supabase security and performance advisors.
+
+The first account is assigned the `admin` role. Administrators can manage the shared ingredient catalog and other users; `formulator` accounts can build and evaluate their own formulations; `viewer` accounts are read-only. Account profile, password recovery, password changes, target-generation history, and audit history are available from the navigation.
+
+For password-reset links, add `http://localhost:5173/account` to Supabase Auth → URL Configuration → Redirect URLs. Use the exact deployed HTTPS account URL in production.
 
 On the first authenticated request after importing legacy local data, unowned formulations and related records are assigned to that user. Subsequent records are created with the authenticated user's ID.
 
@@ -116,4 +120,4 @@ Research references:
 
 ## Before production
 
-Configure custom SMTP and redirect URLs for Auth, decide whether ingredient editing requires an administrator role, rotate deployment secrets, and complete load/security testing. Scientific calculations and regulatory rules still require qualified domain validation before commercial use.
+Configure custom SMTP and production redirect URLs for Auth, enable leaked-password protection in the Supabase dashboard, rotate deployment secrets, and complete load/security testing. Scientific calculations and regulatory rules still require qualified domain validation before commercial use.

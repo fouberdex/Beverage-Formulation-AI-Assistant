@@ -1,6 +1,6 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { Home, Package, FlaskConical, Sparkles, Target, Shield, DollarSign, Menu, X, LogOut } from 'lucide-react';
+import { Home, Package, FlaskConical, Sparkles, Target, Shield, DollarSign, Menu, X, LogOut, UserRound, History } from 'lucide-react';
 import { useAuth } from './auth/AuthContext';
 import AuthPage from './pages/AuthPage';
 
@@ -13,6 +13,8 @@ const AIPage = React.lazy(() => import('./pages/AIPage'));
 const TargetGenerationPage = React.lazy(() => import('./pages/TargetGenerationPage'));
 const RegulatoryPage = React.lazy(() => import('./pages/RegulatoryPage'));
 const CostPage = React.lazy(() => import('./pages/CostPage'));
+const AccountPage = React.lazy(() => import('./pages/AccountPage'));
+const HistoryPage = React.lazy(() => import('./pages/HistoryPage'));
 
 function LoadingFallback() {
   return (
@@ -58,6 +60,8 @@ const navItems = [
   { to: '/target-generation', icon: Target, label: 'Target Gen' },
   { to: '/regulatory', icon: Shield, label: 'Regulatory' },
   { to: '/cost', icon: DollarSign, label: 'Cost & ROI' },
+  { to: '/history', icon: History, label: 'History' },
+  { to: '/account', icon: UserRound, label: 'Account' },
 ];
 
 function Navigation() {
@@ -175,6 +179,8 @@ function App() {
                 <Route path="/target-generation" element={<TargetGenerationPage />} />
                 <Route path="/regulatory" element={<RegulatoryPage />} />
                 <Route path="/cost" element={<CostPage />} />
+                <Route path="/history" element={<HistoryPage />} />
+                <Route path="/account" element={<AccountPage />} />
               </Routes>
             </React.Suspense>
           </main>

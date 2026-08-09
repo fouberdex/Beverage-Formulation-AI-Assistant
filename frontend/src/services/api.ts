@@ -69,6 +69,16 @@ export const aiAPI = {
 export const targetGenerationAPI = {
   generate: (constraints: any) => api.post('/target-generation/generate', constraints),
   save: (data: { candidate: any; name: string }) => api.post('/target-generation/save', data),
+  getRuns: (filters?: any) => api.get('/target-generation/runs', { params: filters }),
+  getRun: (id: string) => api.get(`/target-generation/runs/${id}`),
+};
+
+export const accountAPI = {
+  getMe: () => api.get('/auth/me'),
+  updateProfile: (displayName: string) => api.put('/auth/profile', { display_name: displayName }),
+  getAudit: (filters?: any) => api.get('/audit', { params: filters }),
+  getUsers: () => api.get('/admin/users'),
+  updateUserRole: (id: string, role: string) => api.put(`/admin/users/${id}/role`, { role }),
 };
 
 // Regulatory API

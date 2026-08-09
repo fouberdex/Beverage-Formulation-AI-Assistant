@@ -132,33 +132,10 @@ async function syncIngredients() {
 }
 
 async function syncFormulations() {
-  const client = getSupabaseAdmin();
-  await upsertInChunks('formulations', formulations.map(item => ({
-    id: item.id,
-    owner_id: item.owner_id || null,
-    code: item.code,
-    name: item.name,
-    status: item.status || 'draft',
-    parent_formulation_id: item.parent_formulation_id || null,
-    payload: item,
-    created_at: item.created_at || new Date().toISOString(),
-    updated_at: item.updated_at || new Date().toISOString(),
-  })));
-
-  const formulationIds = formulations.map(item => item.id);
-  if (formulationIds.length > 0) {
-    const { error: deleteError } = await client.from('formulation_ingredients').delete().in('formulation_id', formulationIds);
-    if (deleteError) throw deleteError;
-  }
-  const relationRows = formulations.flatMap(formulation => (formulation.ingredients || []).map((item, index) => ({
-    formulation_id: formulation.id,
-    ingredient_id: item.ingredient_id,
-    owner_id: formulation.owner_id || null,
-    percentage: item.percentage,
-    display_order: item.display_order ?? index,
-    payload: item,
-  })));
-  await upsertInChunks('formulation_ingredients', relationRows, 'formulation_id,ingredient_id');
+  const { error } = await getSupabaseAdmin().rpc('sync_formulations', {
+    p_formulations: formulations,
+  });
+  if (error) throw error;
 }
 
 async function syncPayloadCollection(table, collection, mapRow) {
@@ -272,6 +249,12 @@ export async function claimUnownedData(userId) {
   }
   if (changed) await persistStore();
   return changed;
+}
+
+export async function deletePersistedFormulation(formulationId) {
+  if (storageMode !== 'supabase') return;
+  const { error } = await getSupabaseAdmin().from('formulations').delete().eq('id', formulationId);
+  if (error) throw error;
 }
 
 export function getStorageConfiguration() {

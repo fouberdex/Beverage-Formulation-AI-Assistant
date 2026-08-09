@@ -28,8 +28,19 @@ import {
   pricingHistory,
   targetGenerationRuns,
 } from './data/mockData.js';
-import { claimUnownedData, getStorageConfiguration, initializePersistentStore, persistStore } from './data/persistentStore.js';
-import { ensureUserProfile, recordAuditEvent, verifySupabaseAccessToken } from './services/supabaseClient.js';
+import { claimUnownedData, deletePersistedFormulation, getStorageConfiguration, initializePersistentStore, persistStore } from './data/persistentStore.js';
+import {
+  checkSupabaseHealth,
+  ensureUserProfile,
+  getUserProfile,
+  listAuditEvents,
+  listUserAccounts,
+  recordAuditEvent,
+  updateUserProfile,
+  updateUserRole,
+  verifySupabaseAccessToken,
+} from './services/supabaseClient.js';
+import { authorizeApiRequest, USER_ROLES } from './services/authorization.js';
 
 dotenv.config();
 await initializePersistentStore();
@@ -65,7 +76,7 @@ server.addHook('onSend', async (request, reply, payload) => {
         action: request.method.toLowerCase(),
         entityType: parts[2] || 'api',
         entityId: parts.length > 3 ? parts.at(-1) : null,
-        metadata: { path: request.routerPath || request.url.split('?')[0], status_code: reply.statusCode },
+        metadata: { path: request.routeOptions?.url || request.url.split('?')[0], status_code: reply.statusCode },
       }).catch(error => request.log.warn({ err: error }, 'Unable to write audit log'));
     }
   }
@@ -73,7 +84,7 @@ server.addHook('onSend', async (request, reply, payload) => {
 });
 
 server.addHook('onRequest', async (request, reply) => {
-  if (!process.env.API_KEY || request.url === '/health' || request.method === 'OPTIONS') return;
+  if (!process.env.API_KEY || ['/health', '/ready'].includes(request.url) || request.method === 'OPTIONS') return;
   if (request.headers['x-api-key'] !== process.env.API_KEY) {
     return reply.code(401).send({ error: 'Invalid or missing API key' });
   }
@@ -81,9 +92,10 @@ server.addHook('onRequest', async (request, reply) => {
 
 const initializedUsers = new Set();
 server.addHook('preHandler', async (request, reply) => {
-  if (request.url === '/health' || request.method === 'OPTIONS') return;
+  if (['/health', '/ready'].includes(request.url) || request.method === 'OPTIONS') return;
   if (process.env.NODE_TEST_CONTEXT) {
     request.user = { id: '00000000-0000-4000-8000-000000000001', email: 'test@beverageai.local' };
+    request.profile = { id: request.user.id, display_name: 'Test User', role: USER_ROLES.ADMIN };
     return;
   }
   if (getStorageConfiguration().mode !== 'supabase') return;
@@ -96,9 +108,17 @@ server.addHook('preHandler', async (request, reply) => {
   request.user = user;
 
   if (!initializedUsers.has(user.id)) {
-    await ensureUserProfile(user);
+    request.profile = await ensureUserProfile(user);
     await claimUnownedData(user.id);
     initializedUsers.add(user.id);
+  } else {
+    request.profile = await getUserProfile(user.id);
+  }
+
+  const path = request.url.split('?')[0];
+  const authorizationResult = authorizeApiRequest({ method: request.method, path, role: request.profile.role });
+  if (!authorizationResult.allowed) {
+    return reply.code(403).send({ error: authorizationResult.reason });
   }
 });
 
@@ -126,6 +146,16 @@ server.get('/health', async () => {
   };
 });
 
+server.get('/ready', async (_request, reply) => {
+  try {
+    if (getStorageConfiguration().mode === 'supabase') await checkSupabaseHealth();
+    return { status: 'ready', timestamp: new Date().toISOString() };
+  } catch (error) {
+    server.log.error({ err: error }, 'Readiness check failed');
+    return reply.code(503).send({ status: 'not_ready', timestamp: new Date().toISOString() });
+  }
+});
+
 const apiPrefix = '/api/v1';
 
 function isOwnedByRequest(request, item) {
@@ -144,6 +174,48 @@ function accessibleFormulations(request) {
 const paginationSchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(100),
   offset: z.coerce.number().int().min(0).default(0),
+});
+
+server.get(`${apiPrefix}/auth/me`, async (request) => ({
+  data: {
+    id: request.user?.id,
+    email: request.user?.email,
+    display_name: request.profile?.display_name || null,
+    role: request.profile?.role || USER_ROLES.ADMIN,
+  },
+}));
+
+server.put(`${apiPrefix}/auth/profile`, async (request) => {
+  const { display_name } = z.object({
+    display_name: z.string().trim().min(1).max(100),
+  }).parse(request.body);
+  if (getStorageConfiguration().mode !== 'supabase') {
+    request.profile = { ...request.profile, display_name };
+    return { data: request.profile };
+  }
+  const profile = await updateUserProfile(request.user.id, display_name);
+  request.profile = profile;
+  return { data: profile };
+});
+
+server.get(`${apiPrefix}/audit`, async (request) => {
+  const { limit, offset } = paginationSchema.parse(request.query);
+  if (getStorageConfiguration().mode !== 'supabase') {
+    return { data: [], pagination: { total: 0, limit, offset, has_more: false } };
+  }
+  const includeAll = request.profile.role === USER_ROLES.ADMIN && request.query.scope === 'all';
+  const result = await listAuditEvents({ ownerId: request.user.id, includeAll, limit, offset });
+  return {
+    data: result.data,
+    pagination: { total: result.total, limit, offset, has_more: offset + limit < result.total },
+  };
+});
+
+server.get(`${apiPrefix}/admin/users`, async () => ({ data: await listUserAccounts() }));
+
+server.put(`${apiPrefix}/admin/users/:id/role`, async (request) => {
+  const { role } = z.object({ role: z.enum(Object.values(USER_ROLES)) }).parse(request.body);
+  return { data: await updateUserRole(request.params.id, role) };
 });
 
 const formulationIngredientSchema = z.object({
@@ -522,6 +594,7 @@ server.delete(`${apiPrefix}/formulations/:id`, async (request, reply) => {
   if (!deleted) {
     return reply.code(404).send({ error: 'Formulation not found' });
   }
+  await deletePersistedFormulation(request.params.id);
   return { data: deleted, message: 'Formulation archived' };
 });
 
@@ -1208,6 +1281,23 @@ server.post(`${apiPrefix}/ai/variants/:variantId/accept`, async (request, reply)
 // ============================================================================
 // TARGET GENERATION ROUTES
 // ============================================================================
+
+server.get(`${apiPrefix}/target-generation/runs`, async (request) => {
+  const { limit, offset } = paginationSchema.parse(request.query);
+  const filtered = targetGenerationRuns
+    .filter(item => isOwnedByRequest(request, item))
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  return {
+    data: filtered.slice(offset, offset + limit),
+    pagination: { total: filtered.length, limit, offset, has_more: offset + limit < filtered.length },
+  };
+});
+
+server.get(`${apiPrefix}/target-generation/runs/:id`, async (request, reply) => {
+  const run = targetGenerationRuns.find(item => item.id === request.params.id && isOwnedByRequest(request, item));
+  if (!run) return reply.code(404).send({ error: 'Generation run not found' });
+  return { data: run };
+});
 
 server.post(`${apiPrefix}/target-generation/generate`, async (request, reply) => {
   const targetInput = z.object({
