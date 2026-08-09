@@ -6,6 +6,34 @@ Beverage formulation MVP with ingredient management, formulation calculations, c
 
 The application uses Supabase Postgres for durable storage and Supabase Auth for user accounts. Formulations, AI variants, compliance results, cost calculations, and target-generation runs are owner-scoped. The ingredient catalog is shared and read-only through the public Data API; application writes go through the authenticated backend. A local JSON fallback remains available by omitting `STORAGE_MODE=supabase`.
 
+## Implemented capabilities
+
+### Data and formulation
+
+- 466 halal-compatible, non-intoxicating beverage ingredients are currently loaded.
+- Formulations and their normalized ingredient rows are stored transactionally in Supabase.
+- Compatibility is screened on demand from ingredient properties and deterministic rules; the app does not store or claim a precomputed 1.4-million-pair matrix.
+
+### Storage and API
+
+- PostgreSQL indexes support the application’s current ownership and lookup queries.
+- Row Level Security and backend authorization isolate owner-scoped records.
+- The API includes request validation, rate limiting, pagination, readiness checks, and batch compatibility operations.
+- No 100,000-formulation capacity or 500 ms response-time guarantee is claimed because production load benchmarks have not been completed.
+
+### Product features
+
+- Gemini can review locally generated recommendation candidates; validated local generation remains available if Gemini is unavailable.
+- Algerian regulatory checks and multilingual labels are draft screening tools, not legal certification.
+- Cost, ROI, batch-cost, ingredient pricing history, target-generation history, and audit history are implemented.
+
+### Access and history
+
+- Authenticated accounts have `admin`, `formulator`, or read-only `viewer` roles.
+- Formulations, generated variants, compliance results, and calculations are owner-scoped.
+- Formulation version creation and history are supported. This is application-level versioning, not Git-style branching or enterprise document control.
+- Organization workspaces, team invitations, billing tenants, quotas, and enterprise SSO are not implemented, so the app does not claim full enterprise multi-tenancy.
+
 ## Stack
 
 - Frontend: React, TypeScript, Vite, Tailwind CSS
@@ -107,7 +135,7 @@ Real production costing should incorporate measured density, process loss, packa
 
 ## Ingredient catalog methodology
 
-The bundled catalog contains more than 300 beverage-use ingredients selected from beverage-relevant functional classes and ingredient inventories maintained by Codex GSFA, the US FDA, and the European Commission. It excludes intoxicating ingredients and known animal-derived additives such as gelatin, carmine, and shellac. Catalog halal status means the named plant, mineral, microbial, or synthetic source is halal-compatible; procurement must still verify the supplier certificate, processing aids, cross-contamination controls, and exact source.
+The bundled catalog currently contains 466 beverage-use ingredients selected from beverage-relevant functional classes and ingredient inventories maintained by Codex GSFA, the US FDA, and the European Commission. It excludes intoxicating ingredients and known animal-derived additives such as gelatin, carmine, and shellac. Catalog halal status means the named plant, mineral, microbial, or synthetic source is halal-compatible; procurement must still verify the supplier certificate, processing aids, cross-contamination controls, and exact source.
 
 Bundled DZD/kg values are dated planning estimates, not quotations. They use category benchmarks and an official Bank of Algeria USD/DZD reference of 133.3152, then vary by ingredient class. Replace them through the ingredient editor with current supplier quotes; price changes are recorded and formulations are recalculated automatically.
 
@@ -120,4 +148,4 @@ Research references:
 
 ## Before production
 
-Configure custom SMTP and production redirect URLs for Auth, enable leaked-password protection in the Supabase dashboard, rotate deployment secrets, and complete load/security testing. Scientific calculations and regulatory rules still require qualified domain validation before commercial use.
+Configure custom SMTP and production redirect URLs for Auth, rotate deployment secrets, and complete load/security testing. Supabase leaked-password protection requires the Pro plan or above; Free-plan deployments should document that limitation and enforce strong password guidance. Scientific calculations and regulatory rules still require qualified domain validation before commercial use.

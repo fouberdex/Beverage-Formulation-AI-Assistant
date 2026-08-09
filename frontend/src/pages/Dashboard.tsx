@@ -39,7 +39,7 @@ export default function Dashboard() {
       <div className="px-4 py-5 sm:px-6">
         <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
         <p className="mt-1 text-sm text-gray-500">
-          Enterprise Beverage Formulation Platform
+          Authenticated beverage formulation and evaluation workspace
         </p>
       </div>
 
@@ -101,35 +101,35 @@ export default function Dashboard() {
         <h2 className="text-xl font-semibold text-gray-900 mb-4">System Capabilities</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <CapabilityItem
-            title="Scale Support"
+            title="Data & formulation"
             items={[
-              '1,200+ ingredients',
-              '100,000+ formulations',
-              '1.4M+ compatibility pairs',
+              '466 halal beverage ingredients currently loaded',
+              'Owner-scoped formulations stored in Supabase',
+              'Compatibility screening computed on demand',
             ]}
           />
           <CapabilityItem
-            title="Performance"
+            title="Storage & API"
             items={[
-              '≤500ms compatibility evaluation',
-              'Optimized database indexes',
-              'Batch operations support',
+              'Indexed PostgreSQL storage with Row Level Security',
+              'Atomic formulation and ingredient synchronization',
+              'Rate limiting and batch compatibility operations',
             ]}
           />
           <CapabilityItem
             title="Features"
             items={[
-              'AI recommendation engine',
-              'Regulatory compliance (Algerian)',
-              'Cost & ROI analysis',
+              'Gemini-assisted recommendations with local fallback',
+              'Draft Algerian compliance checks and labels',
+              'Cost, ROI, and ingredient price history',
             ]}
           />
           <CapabilityItem
-            title="Multi-tenant"
+            title="Access & history"
             items={[
-              'Enterprise-ready',
-              'Version control',
-              'Unlimited versioning',
+              'Administrator, formulator, and viewer roles',
+              'Owner-scoped multi-user data isolation',
+              'Formulation versions, generation history, and audit log',
             ]}
           />
         </div>
@@ -191,4 +191,3 @@ function CapabilityItem({ title, items }: any) {
     </div>
   );
 }
-
