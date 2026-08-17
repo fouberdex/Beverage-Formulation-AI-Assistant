@@ -2,8 +2,10 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
+import fastifyStatic from '@fastify/static';
 import dotenv from 'dotenv';
-import { pathToFileURL } from 'url';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import {
   describeGeminiFailure,
@@ -12,44 +14,86 @@ import {
   reviewFormulationVariants,
 } from './services/geminiService.js';
 
-// Import mock data
-import { 
-  ingredients, 
-  formulations, 
-  categories, 
-  generateId, 
-  getIngredientById,
-  addFormulation,
-  updateFormulation,
-  deleteFormulation,
-  aiVariants,
-  complianceRecords,
-  batchCostCalculations,
-  pricingHistory,
-  targetGenerationRuns,
-} from './data/mockData.js';
-import { claimUnownedData, deletePersistedFormulation, getStorageConfiguration, initializePersistentStore, persistStore } from './data/persistentStore.js';
+import { generateId } from './data/mockData.js';
+import { getStorageConfiguration, initializePersistentStore } from './data/persistentStore.js';
+import { commitRequestStore, loadRequestStore } from './data/requestRepository.js';
 import {
   checkSupabaseHealth,
   ensureUserProfile,
   getUserProfile,
   listAuditEvents,
   listUserAccounts,
-  recordAuditEvent,
   updateUserProfile,
   updateUserRole,
   verifySupabaseAccessToken,
 } from './services/supabaseClient.js';
 import { authorizeApiRequest, USER_ROLES } from './services/authorization.js';
+import { validateRuntimeConfiguration } from './services/runtimeConfiguration.js';
+import {
+  createRequestId,
+  observeRequest,
+  renderPrometheusMetrics,
+  tokensMatch,
+} from './services/observability.js';
 
 dotenv.config();
+validateRuntimeConfiguration();
 await initializePersistentStore();
 
+const production = process.env.NODE_ENV === 'production';
+const applicationVersion = process.env.APP_VERSION || '1.0.0';
+const trustedProxies = process.env.TRUST_PROXY
+  ? process.env.TRUST_PROXY.split(',').map(value => value.trim()).filter(Boolean)
+  : false;
 const server = Fastify({
-  logger: true,
+  logger: {
+    level: process.env.LOG_LEVEL || 'info',
+    redact: {
+      paths: [
+        'req.headers.authorization',
+        'req.headers.cookie',
+        'req.headers.x-api-key',
+        'res.headers.set-cookie',
+        '*.password',
+        '*.access_token',
+        '*.refresh_token',
+        '*.SUPABASE_SECRET_KEY',
+        '*.GEMINI_API_KEY',
+      ],
+      censor: '[REDACTED]',
+    },
+  },
+  genReqId: createRequestId,
+  trustProxy: trustedProxies,
+  bodyLimit: Number.parseInt(process.env.BODY_LIMIT_BYTES || '1048576', 10),
+  requestTimeout: Number.parseInt(process.env.REQUEST_TIMEOUT_MS || '30000', 10),
 });
 
-await server.register(helmet);
+let supabaseOrigin;
+try {
+  supabaseOrigin = process.env.SUPABASE_URL ? new URL(process.env.SUPABASE_URL).origin : undefined;
+} catch {
+  supabaseOrigin = undefined;
+}
+
+await server.register(helmet, {
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      baseUri: ["'self'"],
+      connectSrc: ["'self'", ...(supabaseOrigin ? [supabaseOrigin] : [])],
+      fontSrc: ["'self'", 'data:'],
+      formAction: ["'self'"],
+      frameAncestors: ["'none'"],
+      imgSrc: ["'self'", 'data:'],
+      objectSrc: ["'none'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'"],
+    },
+  },
+  hsts: production ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false,
+  referrerPolicy: { policy: 'no-referrer' },
+});
 
 await server.register(rateLimit, {
   max: Number.parseInt(process.env.RATE_LIMIT_MAX || '200', 10),
@@ -66,25 +110,42 @@ await server.register(cors, {
   credentials: true,
 });
 
+const operationalPaths = new Set(['/health', '/ready', '/metrics']);
+
+server.addHook('onRequest', async (request, reply) => {
+  reply.header('x-request-id', request.id);
+});
+
+server.addHook('onResponse', async (request, reply) => {
+  observeRequest({
+    method: request.method,
+    route: request.routeOptions?.url || 'unmatched',
+    statusCode: reply.statusCode,
+    durationMs: reply.elapsedTime,
+  });
+});
+
 server.addHook('onSend', async (request, reply, payload) => {
   if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method) && reply.statusCode < 400) {
-    await persistStore();
+    let auditEvent = null;
     if (getStorageConfiguration().mode === 'supabase' && request.user?.id) {
       const parts = request.url.split('?')[0].split('/').filter(Boolean);
-      await recordAuditEvent({
-        ownerId: request.user.id,
+      auditEvent = {
+        owner_id: request.user.id,
         action: request.method.toLowerCase(),
-        entityType: parts[2] || 'api',
-        entityId: parts.length > 3 ? parts.at(-1) : null,
+        entity_type: parts[2] || 'api',
+        entity_id: parts.length > 3 ? parts.at(-1) : null,
         metadata: { path: request.routeOptions?.url || request.url.split('?')[0], status_code: reply.statusCode },
-      }).catch(error => request.log.warn({ err: error }, 'Unable to write audit log'));
+      };
     }
+    await commitRequestStore(request.store, auditEvent);
   }
   return payload;
 });
 
 server.addHook('onRequest', async (request, reply) => {
-  if (!process.env.API_KEY || ['/health', '/ready'].includes(request.url) || request.method === 'OPTIONS') return;
+  const pathname = request.url.split('?')[0];
+  if (!process.env.API_KEY || operationalPaths.has(pathname) || !pathname.startsWith('/api/') || request.method === 'OPTIONS') return;
   if (request.headers['x-api-key'] !== process.env.API_KEY) {
     return reply.code(401).send({ error: 'Invalid or missing API key' });
   }
@@ -92,29 +153,30 @@ server.addHook('onRequest', async (request, reply) => {
 
 const initializedUsers = new Set();
 server.addHook('preHandler', async (request, reply) => {
-  if (['/health', '/ready'].includes(request.url) || request.method === 'OPTIONS') return;
+  const pathname = request.url.split('?')[0];
+  if (operationalPaths.has(pathname) || !pathname.startsWith('/api/') || request.method === 'OPTIONS') return;
   if (process.env.NODE_TEST_CONTEXT) {
     request.user = { id: '00000000-0000-4000-8000-000000000001', email: 'test@beverageai.local' };
     request.profile = { id: request.user.id, display_name: 'Test User', role: USER_ROLES.ADMIN };
-    return;
-  }
-  if (getStorageConfiguration().mode !== 'supabase') return;
+  } else if (getStorageConfiguration().mode === 'supabase') {
+    const authorization = request.headers.authorization || '';
+    const accessToken = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+    if (!accessToken) return reply.code(401).send({ error: 'Authentication required' });
+    const user = await verifySupabaseAccessToken(accessToken);
+    if (!user) return reply.code(401).send({ error: 'Invalid or expired session' });
+    request.user = user;
 
-  const authorization = request.headers.authorization || '';
-  const accessToken = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
-  if (!accessToken) return reply.code(401).send({ error: 'Authentication required' });
-  const user = await verifySupabaseAccessToken(accessToken);
-  if (!user) return reply.code(401).send({ error: 'Invalid or expired session' });
-  request.user = user;
-
-  if (!initializedUsers.has(user.id)) {
-    request.profile = await ensureUserProfile(user);
-    await claimUnownedData(user.id);
-    initializedUsers.add(user.id);
+    if (!initializedUsers.has(user.id)) {
+      request.profile = await ensureUserProfile(user);
+      initializedUsers.add(user.id);
+    } else {
+      request.profile = await getUserProfile(user.id);
+    }
   } else {
-    request.profile = await getUserProfile(user.id);
+    request.profile = { id: null, display_name: 'Local developer', role: USER_ROLES.ADMIN };
   }
 
+  request.store = await loadRequestStore(request.user?.id);
   const path = request.url.split('?')[0];
   const authorizationResult = authorizeApiRequest({ method: request.method, path, role: request.profile.role });
   if (!authorizationResult.allowed) {
@@ -138,11 +200,14 @@ server.setErrorHandler((error, request, reply) => {
 
 // Health check endpoint
 server.get('/health', async () => {
+  const storage = getStorageConfiguration();
   return {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    ...getStorageConfiguration(),
-    ai: getAIConfiguration(),
+    version: applicationVersion,
+    uptime_seconds: Math.floor(process.uptime()),
+    mode: storage.mode,
+    persistent: storage.persistent,
   };
 });
 
@@ -156,6 +221,17 @@ server.get('/ready', async (_request, reply) => {
   }
 });
 
+server.get('/metrics', async (request, reply) => {
+  const authorization = request.headers.authorization || '';
+  const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+  if (!tokensMatch(token, process.env.METRICS_TOKEN)) {
+    return reply.code(process.env.METRICS_TOKEN ? 401 : 404).send({ error: 'Metrics unavailable' });
+  }
+  return reply
+    .type('text/plain; version=0.0.4; charset=utf-8')
+    .send(renderPrometheusMetrics({ version: applicationVersion }));
+});
+
 const apiPrefix = '/api/v1';
 
 function isOwnedByRequest(request, item) {
@@ -163,12 +239,46 @@ function isOwnedByRequest(request, item) {
 }
 
 function findAccessibleFormulation(request, id) {
-  const formulation = formulations.find(item => item.id === id);
+  const formulation = request.store.formulations.find(item => item.id === id);
   return isOwnedByRequest(request, formulation) ? formulation : null;
 }
 
 function accessibleFormulations(request) {
-  return formulations.filter(item => isOwnedByRequest(request, item));
+  return request.store.formulations.filter(item => isOwnedByRequest(request, item));
+}
+
+function getIngredientById(request, id) {
+  return request.store.ingredients.find(item => item.id === id);
+}
+
+function addFormulation(request, formulation) {
+  const newFormulation = {
+    ...formulation,
+    id: generateId(),
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  request.store.formulations.push(newFormulation);
+  return newFormulation;
+}
+
+function updateFormulation(request, id, data) {
+  const index = request.store.formulations.findIndex(item => item.id === id);
+  if (index < 0) return null;
+  request.store.formulations[index] = {
+    ...request.store.formulations[index],
+    ...data,
+    updated_at: new Date().toISOString(),
+  };
+  return request.store.formulations[index];
+}
+
+function archiveFormulation(request, id) {
+  const formulation = request.store.formulations.find(item => item.id === id);
+  if (!formulation) return null;
+  formulation.status = 'archived';
+  formulation.updated_at = new Date().toISOString();
+  return formulation;
 }
 
 const paginationSchema = z.object({
@@ -223,7 +333,7 @@ const formulationIngredientSchema = z.object({
   percentage: z.coerce.number().finite().positive().max(100),
 });
 
-function processFormulationIngredients(input) {
+function processFormulationIngredients(request, input) {
   const formIngredients = z.array(formulationIngredientSchema).min(1).max(40).parse(input);
   const ids = formIngredients.map(item => item.ingredient_id);
   if (new Set(ids).size !== ids.length) {
@@ -236,7 +346,7 @@ function processFormulationIngredients(input) {
   let totalSugar = 0;
 
   const processedIngredients = formIngredients.map((item, displayOrder) => {
-    const ingredient = getIngredientById(item.ingredient_id);
+    const ingredient = getIngredientById(request, item.ingredient_id);
     if (!ingredient || !ingredient.is_active) {
       throw new z.ZodError([{
         code: 'custom',
@@ -302,7 +412,7 @@ server.get(`${apiPrefix}/ingredients`, async (request) => {
   const { category, search } = request.query;
   const { limit, offset } = paginationSchema.parse(request.query);
   
-  let filtered = [...ingredients].filter(i => i.is_active);
+  let filtered = [...request.store.ingredients].filter(i => i.is_active);
   
   if (category) {
     filtered = filtered.filter(i => i.category === category);
@@ -330,7 +440,7 @@ server.get(`${apiPrefix}/ingredients`, async (request) => {
 });
 
 server.get(`${apiPrefix}/ingredients/:id`, async (request, reply) => {
-  const ingredient = ingredients.find(i => i.id === request.params.id);
+  const ingredient = request.store.ingredients.find(i => i.id === request.params.id);
   if (!ingredient) {
     return reply.code(404).send({ error: 'Ingredient not found' });
   }
@@ -338,23 +448,23 @@ server.get(`${apiPrefix}/ingredients/:id`, async (request, reply) => {
 });
 
 server.get(`${apiPrefix}/ingredients/code/:code`, async (request, reply) => {
-  const ingredient = ingredients.find(i => i.code.toLowerCase() === request.params.code.toLowerCase());
+  const ingredient = request.store.ingredients.find(i => i.code.toLowerCase() === request.params.code.toLowerCase());
   if (!ingredient) {
     return reply.code(404).send({ error: 'Ingredient not found' });
   }
   return { data: ingredient };
 });
 
-server.get(`${apiPrefix}/ingredients/meta/categories`, async () => {
-  return { data: categories };
+server.get(`${apiPrefix}/ingredients/meta/categories`, async (request) => {
+  return { data: request.store.categories };
 });
 
-server.get(`${apiPrefix}/ingredients/meta/stats`, async () => {
+server.get(`${apiPrefix}/ingredients/meta/stats`, async (request) => {
   return {
     data: {
-      total_ingredients: ingredients.filter(i => i.is_active).length,
-      total_categories: categories.length,
-      categories: categories,
+      total_ingredients: request.store.ingredients.filter(i => i.is_active).length,
+      total_categories: request.store.categories.length,
+      categories: request.store.categories,
     },
   };
 });
@@ -378,7 +488,7 @@ server.post(`${apiPrefix}/ingredients`, async (request, reply) => {
     max_percentage: z.coerce.number().finite().positive().max(100).optional(),
   }).parse(request.body);
 
-  if (ingredients.some(item => item.code.toLowerCase() === ingredientInput.code.toLowerCase())) {
+  if (request.store.ingredients.some(item => item.code.toLowerCase() === ingredientInput.code.toLowerCase())) {
     return reply.code(409).send({ error: 'Ingredient code already exists' });
   }
 
@@ -409,18 +519,18 @@ server.post(`${apiPrefix}/ingredients`, async (request, reply) => {
     updated_at: new Date().toISOString(),
   };
 
-  ingredients.push(newIngredient);
+  request.store.ingredients.push(newIngredient);
   
   // Update categories if new
-  if (!categories.includes(category)) {
-    categories.push(category);
+  if (!request.store.categories.includes(category)) {
+    request.store.categories.push(category);
   }
 
   return reply.code(201).send({ data: newIngredient });
 });
 
 server.put(`${apiPrefix}/ingredients/:id`, async (request, reply) => {
-  const ingredient = ingredients.find(item => item.id === request.params.id);
+  const ingredient = request.store.ingredients.find(item => item.id === request.params.id);
   if (!ingredient) {
     return reply.code(404).send({ error: 'Ingredient not found' });
   }
@@ -443,17 +553,17 @@ server.put(`${apiPrefix}/ingredients/:id`, async (request, reply) => {
     is_active: z.boolean().optional(),
   }).strict().parse(request.body);
 
-  if (updates.code && ingredients.some(item => item.id !== ingredient.id && item.code.toLowerCase() === updates.code.toLowerCase())) {
+  if (updates.code && request.store.ingredients.some(item => item.id !== ingredient.id && item.code.toLowerCase() === updates.code.toLowerCase())) {
     return reply.code(409).send({ error: 'Ingredient code already exists' });
   }
 
   const previousPrice = ingredient.base_price_per_kg;
   Object.assign(ingredient, updates, { updated_at: new Date().toISOString() });
-  if (updates.category && !categories.includes(updates.category)) categories.push(updates.category);
+  if (updates.category && !request.store.categories.includes(updates.category)) request.store.categories.push(updates.category);
   let recalculatedFormulations = 0;
   if (updates.base_price_per_kg !== undefined && updates.base_price_per_kg !== previousPrice) {
     ingredient.price_per_kg = updates.base_price_per_kg;
-    pricingHistory.push({
+    request.store.pricingHistory.push({
       id: generateId(),
       ingredient_id: ingredient.id,
       price_per_kg: updates.base_price_per_kg,
@@ -461,10 +571,10 @@ server.put(`${apiPrefix}/ingredients/:id`, async (request, reply) => {
       effective_date: new Date().toISOString(),
       source: 'ingredient edit',
     });
-    for (const formulation of formulations.filter(item =>
+    for (const formulation of request.store.formulations.filter(item =>
       item.status !== 'archived' && (item.ingredients || []).some(fi => fi.ingredient_id === ingredient.id)
     )) {
-      Object.assign(formulation, processFormulationIngredients(formulation.ingredients), { updated_at: new Date().toISOString() });
+      Object.assign(formulation, processFormulationIngredients(request, formulation.ingredients), { updated_at: new Date().toISOString() });
       recalculatedFormulations += 1;
     }
   }
@@ -472,11 +582,11 @@ server.put(`${apiPrefix}/ingredients/:id`, async (request, reply) => {
 });
 
 server.delete(`${apiPrefix}/ingredients/:id`, async (request, reply) => {
-  const ingredient = ingredients.find(item => item.id === request.params.id);
+  const ingredient = request.store.ingredients.find(item => item.id === request.params.id);
   if (!ingredient) {
     return reply.code(404).send({ error: 'Ingredient not found' });
   }
-  const usedBy = formulations.filter(item => item.status !== 'archived' &&
+  const usedBy = request.store.formulations.filter(item => item.status !== 'archived' &&
     (item.ingredients || []).some(fi => fi.ingredient_id === ingredient.id));
   if (usedBy.length > 0) {
     return reply.code(409).send({
@@ -546,9 +656,9 @@ server.post(`${apiPrefix}/formulations`, async (request, reply) => {
     return reply.code(409).send({ error: 'Formulation code already exists' });
   }
 
-  const totals = processFormulationIngredients(input.ingredients);
+  const totals = processFormulationIngredients(request, input.ingredients);
   
-  const newFormulation = addFormulation({
+  const newFormulation = addFormulation(request, {
     owner_id: request.user?.id,
     code,
     name: input.name,
@@ -580,9 +690,9 @@ server.put(`${apiPrefix}/formulations/:id`, async (request, reply) => {
   
   const updates = {};
   Object.assign(updates, input);
-  if (input.ingredients) Object.assign(updates, processFormulationIngredients(input.ingredients));
+  if (input.ingredients) Object.assign(updates, processFormulationIngredients(request, input.ingredients));
   
-  const updated = updateFormulation(id, updates);
+  const updated = updateFormulation(request, id, updates);
   return { data: updated };
 });
 
@@ -590,11 +700,10 @@ server.delete(`${apiPrefix}/formulations/:id`, async (request, reply) => {
   if (!findAccessibleFormulation(request, request.params.id)) {
     return reply.code(404).send({ error: 'Formulation not found' });
   }
-  const deleted = deleteFormulation(request.params.id);
+  const deleted = archiveFormulation(request, request.params.id);
   if (!deleted) {
     return reply.code(404).send({ error: 'Formulation not found' });
   }
-  await deletePersistedFormulation(request.params.id);
   return { data: deleted, message: 'Formulation archived' };
 });
 
@@ -608,7 +717,7 @@ server.post(`${apiPrefix}/formulations/:id/versions`, async (request, reply) => 
     beverage_type: z.string().trim().min(1).max(100).optional(),
     ingredients: z.array(formulationIngredientSchema).min(1).max(40).optional(),
   }).strict().parse(request.body || {});
-  const totals = input.ingredients ? processFormulationIngredients(input.ingredients) : {
+  const totals = input.ingredients ? processFormulationIngredients(request, input.ingredients) : {
     ingredients: source.ingredients.map(item => ({ ...item })),
     total_percentage: source.total_percentage,
     total_cost_per_liter: source.total_cost_per_liter,
@@ -617,7 +726,7 @@ server.post(`${apiPrefix}/formulations/:id/versions`, async (request, reply) => 
   };
 
   source.is_latest_version = false;
-  const version = addFormulation({
+  const version = addFormulation(request, {
     ...source,
     ...input,
     ...totals,
@@ -677,7 +786,7 @@ server.get(`${apiPrefix}/compatibility/formulations/:id`, async (request, reply)
   const ings = formulation.ingredients || [];
   const ingredientDetails = ings.map(i => ({
     ...i,
-    details: getIngredientById(i.ingredient_id)
+    details: getIngredientById(request, i.ingredient_id)
   })).filter(i => i.details);
 
   // ============================================
@@ -1002,8 +1111,8 @@ function evaluateIngredientPair(first, second) {
 }
 
 server.get(`${apiPrefix}/compatibility/ingredients/:ingredientAId/:ingredientBId`, async (request, reply) => {
-  const first = getIngredientById(request.params.ingredientAId);
-  const second = getIngredientById(request.params.ingredientBId);
+  const first = getIngredientById(request, request.params.ingredientAId);
+  const second = getIngredientById(request, request.params.ingredientBId);
   if (!first || !second) return reply.code(404).send({ error: 'Ingredient not found' });
   if (first.id === second.id) return reply.code(400).send({ error: 'Choose two different ingredients' });
   return { data: evaluateIngredientPair(first, second) };
@@ -1012,8 +1121,8 @@ server.get(`${apiPrefix}/compatibility/ingredients/:ingredientAId/:ingredientBId
 server.post(`${apiPrefix}/compatibility/batch-compute`, async (request, reply) => {
   const input = z.object({ ingredient_ids: z.array(z.string().min(1)).min(2).max(100).optional() }).parse(request.body || {});
   const selected = input.ingredient_ids
-    ? input.ingredient_ids.map(getIngredientById)
-    : ingredients.filter(item => item.is_active);
+    ? input.ingredient_ids.map(id => getIngredientById(request, id))
+    : request.store.ingredients.filter(item => item.is_active);
   if (selected.some(item => !item)) return reply.code(404).send({ error: 'One or more ingredients were not found' });
 
   const results = [];
@@ -1034,8 +1143,8 @@ function percentageDifference(value, baseline) {
   return ((value - baseline) / baseline) * 100;
 }
 
-function assessVariantIngredients(variantIngredients) {
-  const ingredientDetails = variantIngredients.map(item => getIngredientById(item.ingredient_id));
+function assessVariantIngredients(request, variantIngredients) {
+  const ingredientDetails = variantIngredients.map(item => getIngredientById(request, item.ingredient_id));
   const pairResults = [];
   for (let firstIndex = 0; firstIndex < ingredientDetails.length; firstIndex += 1) {
     for (let secondIndex = firstIndex + 1; secondIndex < ingredientDetails.length; secondIndex += 1) {
@@ -1063,14 +1172,14 @@ function assessVariantIngredients(variantIngredients) {
   };
 }
 
-function generateVariantIngredients(sourceIngredients, generationType, constraints = {}) {
+function generateVariantIngredients(request, sourceIngredients, generationType, constraints = {}) {
   const sourceIds = new Set(sourceIngredients.map(item => item.ingredient_id));
   const replacementIds = new Set();
   const details = sourceIngredients.map(item => {
-    const sourceIngredient = getIngredientById(item.ingredient_id);
+    const sourceIngredient = getIngredientById(request, item.ingredient_id);
     let ingredient = sourceIngredient;
     if (generationType === 'alternative' && sourceIngredient?.category !== 'base') {
-      const alternatives = ingredients.filter(candidate =>
+      const alternatives = request.store.ingredients.filter(candidate =>
         candidate.is_active &&
         candidate.category === sourceIngredient.category &&
         !sourceIds.has(candidate.id) &&
@@ -1151,17 +1260,17 @@ server.post(`${apiPrefix}/ai/formulations/:id/generate`, async (request, reply) 
   
   const variants = [];
   const sourceIngredients = source.ingredients || [];
-  const sourceTotals = processFormulationIngredients(sourceIngredients);
+  const sourceTotals = processFormulationIngredients(request, sourceIngredients);
 
   for (let i = 0; i < count; i++) {
-    const variantIngredients = generateVariantIngredients(sourceIngredients, generation_type, {
+    const variantIngredients = generateVariantIngredients(request, sourceIngredients, generation_type, {
       target_calories,
       target_sugar,
       target_cost_per_liter,
       source_cost_per_liter: sourceTotals.total_cost_per_liter,
     });
-    const totals = processFormulationIngredients(variantIngredients);
-    const assessment = assessVariantIngredients(totals.ingredients);
+    const totals = processFormulationIngredients(request, variantIngredients);
+    const assessment = assessVariantIngredients(request, totals.ingredients);
     const localConfidence = Math.max(0, Math.min(
       assessment.compatibility_score,
       assessment.regulatory.passes_local_checks ? 88 : 50,
@@ -1220,7 +1329,7 @@ server.post(`${apiPrefix}/ai/formulations/:id/generate`, async (request, reply) 
     ai = { ...getAIConfiguration(), used: false, reason: describeGeminiFailure(error) };
   }
 
-  variants.forEach(variant => aiVariants.push(variant));
+  variants.forEach(variant => request.store.aiVariants.push(variant));
   const { reviews: _reviews, ...publicAI } = ai;
   return reply.code(201).send({ data: variants, count: variants.length, ai: publicAI });
 });
@@ -1230,7 +1339,7 @@ server.get(`${apiPrefix}/ai/formulations/:id/variants`, async (request, reply) =
     return reply.code(404).send({ error: 'Source formulation not found' });
   }
   const { limit, offset } = paginationSchema.extend({ limit: z.coerce.number().int().min(1).max(100).default(50) }).parse(request.query);
-  const filtered = aiVariants.filter(item => isOwnedByRequest(request, item) &&
+  const filtered = request.store.aiVariants.filter(item => isOwnedByRequest(request, item) &&
     item.source_formulation_id === request.params.id && (!request.query.status || item.status === request.query.status)
   );
   return {
@@ -1251,13 +1360,13 @@ server.post(`${apiPrefix}/ai/variants/:variantId/accept`, async (request, reply)
     }),
   }).parse(request.body);
 
-  const storedVariant = aiVariants.find(item => item.id === variantId && isOwnedByRequest(request, item));
+  const storedVariant = request.store.aiVariants.find(item => item.id === variantId && isOwnedByRequest(request, item));
   if (!storedVariant) return reply.code(404).send({ error: 'AI variant not found' });
   if (storedVariant.status === 'accepted') return reply.code(409).send({ error: 'AI variant was already accepted' });
   
-  const totals = processFormulationIngredients(storedVariant.variant_ingredients);
+  const totals = processFormulationIngredients(request, storedVariant.variant_ingredients);
   
-  const newFormulation = addFormulation({
+  const newFormulation = addFormulation(request, {
     owner_id: request.user?.id,
     code: `AI-${Date.now()}`,
     name: `${variant_data.source_name || 'AI Variant'} (AI Generated)`,
@@ -1284,7 +1393,7 @@ server.post(`${apiPrefix}/ai/variants/:variantId/accept`, async (request, reply)
 
 server.get(`${apiPrefix}/target-generation/runs`, async (request) => {
   const { limit, offset } = paginationSchema.parse(request.query);
-  const filtered = targetGenerationRuns
+  const filtered = request.store.targetGenerationRuns
     .filter(item => isOwnedByRequest(request, item))
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   return {
@@ -1294,7 +1403,7 @@ server.get(`${apiPrefix}/target-generation/runs`, async (request) => {
 });
 
 server.get(`${apiPrefix}/target-generation/runs/:id`, async (request, reply) => {
-  const run = targetGenerationRuns.find(item => item.id === request.params.id && isOwnedByRequest(request, item));
+  const run = request.store.targetGenerationRuns.find(item => item.id === request.params.id && isOwnedByRequest(request, item));
   if (!run) return reply.code(404).send({ error: 'Generation run not found' });
   return { data: run };
 });
@@ -1317,7 +1426,7 @@ server.post(`${apiPrefix}/target-generation/generate`, async (request, reply) =>
     min_ingredients, max_ingredients,
   } = targetInput;
 
-  const activeIngredients = ingredients.filter(item => item.is_active && item.regulatory_status === 'approved');
+  const activeIngredients = request.store.ingredients.filter(item => item.is_active && item.regulatory_status === 'approved');
   if (min_ingredients > activeIngredients.length) {
     return reply.code(400).send({ error: `Only ${activeIngredients.length} active, locally approved ingredients are available` });
   }
@@ -1453,7 +1562,7 @@ server.post(`${apiPrefix}/target-generation/generate`, async (request, reply) =>
     let actualCost = 0;
     
     for (const item of selectedIngredients) {
-      const ing = getIngredientById(item.ingredient_id);
+      const ing = getIngredientById(request, item.ingredient_id);
       if (ing) {
         actualCalories += (item.percentage / 100) * (ing.calories_per_100g || 0);
         actualSugar += (item.percentage / 100) * (ing.sugar_g || 0);
@@ -1461,7 +1570,7 @@ server.post(`${apiPrefix}/target-generation/generate`, async (request, reply) =>
       }
     }
     
-    const localAssessment = assessVariantIngredients(selectedIngredients);
+    const localAssessment = assessVariantIngredients(request, selectedIngredients);
     const hasAcidulant = selectedIngredients.some(item => item.category === 'acidulant');
     const hasFlavor = selectedIngredients.some(item => item.category === 'flavor');
     const hasPreservative = selectedIngredients.some(item => item.category === 'preservative');
@@ -1595,7 +1704,7 @@ server.post(`${apiPrefix}/target-generation/generate`, async (request, reply) =>
     ai,
     created_at: new Date().toISOString(),
   };
-  targetGenerationRuns.push(generationRun);
+  request.store.targetGenerationRuns.push(generationRun);
   
   return reply.code(201).send({
     data: { candidates, formulations: [], ai, run_id: generationRun.id },
@@ -1614,9 +1723,9 @@ server.post(`${apiPrefix}/target-generation/save`, async (request, reply) => {
     name: z.string().trim().min(1).max(255).optional(),
   }).parse(request.body);
   
-  const totals = processFormulationIngredients(candidate.ingredients);
+  const totals = processFormulationIngredients(request, candidate.ingredients);
   
-  const newFormulation = addFormulation({
+  const newFormulation = addFormulation(request, {
     owner_id: request.user?.id,
     code: `TGT-${Date.now()}`,
     name: name || `Target-Generated ${new Date().toLocaleDateString()}`,
@@ -1652,7 +1761,7 @@ server.post(`${apiPrefix}/regulatory/formulations/:id/check`, async (request, re
   const warnings = [];
   
   for (const fi of (formulation.ingredients || [])) {
-    const ing = getIngredientById(fi.ingredient_id);
+    const ing = getIngredientById(request, fi.ingredient_id);
     if (ing) {
       if (!ing.halal_certified) isHalal = false;
       if (!ing.kosher_certified) isKosher = false;
@@ -1676,7 +1785,7 @@ server.post(`${apiPrefix}/regulatory/formulations/:id/check`, async (request, re
     }
   }
 
-  const assessment = assessVariantIngredients(formulation.ingredients || []);
+  const assessment = assessVariantIngredients(request, formulation.ingredients || []);
   warnings.push(...assessment.warnings);
   
   const compliance = {
@@ -1695,9 +1804,9 @@ server.post(`${apiPrefix}/regulatory/formulations/:id/check`, async (request, re
       review_scope: 'Local ingredient certification flags, status, and maximum-percentage data only',
       checked_at: new Date().toISOString(),
     };
-  const previousIndex = complianceRecords.findIndex(item => item.formulation_id === formulation.id);
-  if (previousIndex >= 0) complianceRecords[previousIndex] = compliance;
-  else complianceRecords.push(compliance);
+  const previousIndex = request.store.complianceRecords.findIndex(item => item.formulation_id === formulation.id);
+  if (previousIndex >= 0) request.store.complianceRecords[previousIndex] = compliance;
+  else request.store.complianceRecords.push(compliance);
   return reply.code(201).send({ data: compliance });
 });
 
@@ -1705,7 +1814,7 @@ server.get(`${apiPrefix}/regulatory/formulations/:id/compliance`, async (request
   if (!findAccessibleFormulation(request, request.params.id)) {
     return reply.code(404).send({ error: 'Formulation not found' });
   }
-  const compliance = complianceRecords.find(item => item.formulation_id === request.params.id && isOwnedByRequest(request, item));
+  const compliance = request.store.complianceRecords.find(item => item.formulation_id === request.params.id && isOwnedByRequest(request, item));
   if (!compliance) return reply.code(404).send({ error: 'Compliance has not been checked' });
   return { data: compliance };
 });
@@ -1720,7 +1829,7 @@ server.post(`${apiPrefix}/regulatory/formulations/:id/labels`, async (request, r
     .slice()
     .sort((a, b) => b.percentage - a.percentage)
     .map(fi => {
-    const ing = getIngredientById(fi.ingredient_id);
+    const ing = getIngredientById(request, fi.ingredient_id);
     const localizedName = language === 'ar' ? ing?.name_ar : language === 'fr' ? ing?.name_fr : ing?.name_en;
     return { name: localizedName || ing?.name || 'Unknown', percentage: fi.percentage };
   });
@@ -1730,7 +1839,7 @@ server.post(`${apiPrefix}/regulatory/formulations/:id/labels`, async (request, r
     sugar: Number((formulation.total_sugar_per_100ml || 0).toFixed(1)),
     basis: 'per 100 ml, calculated from ingredient records',
   };
-  const isHalal = (formulation.ingredients || []).every(fi => getIngredientById(fi.ingredient_id)?.halal_certified);
+  const isHalal = (formulation.ingredients || []).every(fi => getIngredientById(request, fi.ingredient_id)?.halal_certified);
   
   const labels = {
       ar: {
@@ -1815,7 +1924,7 @@ server.post(`${apiPrefix}/cost/formulations/:id/batch-cost`, async (request, rep
       },
       calculated_at: new Date().toISOString(),
     };
-  batchCostCalculations.push(calculation);
+  request.store.batchCostCalculations.push(calculation);
   return reply.code(201).send({ data: calculation });
 });
 
@@ -1824,7 +1933,7 @@ server.get(`${apiPrefix}/cost/formulations/:id/batch-costs`, async (request, rep
     return reply.code(404).send({ error: 'Formulation not found' });
   }
   const { limit, offset } = paginationSchema.extend({ limit: z.coerce.number().int().min(1).max(100).default(50) }).parse(request.query);
-  const filtered = batchCostCalculations.filter(item => item.formulation_id === request.params.id && isOwnedByRequest(request, item));
+  const filtered = request.store.batchCostCalculations.filter(item => item.formulation_id === request.params.id && isOwnedByRequest(request, item));
   return {
     data: filtered.slice(offset, offset + limit),
     pagination: { total: filtered.length, limit, offset, has_more: offset + limit < filtered.length },
@@ -1880,7 +1989,7 @@ server.post(`${apiPrefix}/cost/formulations/:id/roi`, async (request, reply) => 
 });
 
 server.post(`${apiPrefix}/cost/ingredients/:ingredientId/pricing`, async (request, reply) => {
-  const ingredient = getIngredientById(request.params.ingredientId);
+  const ingredient = getIngredientById(request, request.params.ingredientId);
   if (!ingredient) return reply.code(404).send({ error: 'Ingredient not found' });
   const input = z.object({
     price_per_kg: z.coerce.number().finite().nonnegative(),
@@ -1888,17 +1997,17 @@ server.post(`${apiPrefix}/cost/ingredients/:ingredientId/pricing`, async (reques
     effective_date: z.coerce.date().default(() => new Date()),
   }).parse(request.body);
   const record = { id: generateId(), ingredient_id: request.params.ingredientId, created_by: request.user?.id, ...input, effective_date: input.effective_date.toISOString() };
-  pricingHistory.push(record);
+  request.store.pricingHistory.push(record);
   let recalculated_formulations = 0;
   if (input.effective_date <= new Date()) {
     ingredient.base_price_per_kg = input.price_per_kg;
     ingredient.price_per_kg = input.price_per_kg;
     ingredient.currency = input.currency;
     ingredient.updated_at = new Date().toISOString();
-    for (const formulation of formulations.filter(item =>
+    for (const formulation of request.store.formulations.filter(item =>
       (item.ingredients || []).some(formulationIngredient => formulationIngredient.ingredient_id === ingredient.id)
     )) {
-      Object.assign(formulation, processFormulationIngredients(formulation.ingredients), { updated_at: new Date().toISOString() });
+      Object.assign(formulation, processFormulationIngredients(request, formulation.ingredients), { updated_at: new Date().toISOString() });
       recalculated_formulations += 1;
     }
   }
@@ -1906,11 +2015,31 @@ server.post(`${apiPrefix}/cost/ingredients/:ingredientId/pricing`, async (reques
 });
 
 server.get(`${apiPrefix}/cost/ingredients/:ingredientId/pricing`, async (request, reply) => {
-  if (!getIngredientById(request.params.ingredientId)) return reply.code(404).send({ error: 'Ingredient not found' });
+  if (!getIngredientById(request, request.params.ingredientId)) return reply.code(404).send({ error: 'Ingredient not found' });
   const { limit, offset } = paginationSchema.parse(request.query);
-  const filtered = pricingHistory.filter(item => item.ingredient_id === request.params.ingredientId);
+  const filtered = request.store.pricingHistory.filter(item => item.ingredient_id === request.params.ingredientId);
   return { data: filtered.slice(offset, offset + limit), pagination: { total: filtered.length, limit, offset, has_more: offset + limit < filtered.length } };
 });
+
+const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
+const frontendDistribution = path.resolve(moduleDirectory, '../../frontend/dist');
+const serveFrontend = process.env.SERVE_FRONTEND === 'true' || (production && process.env.SERVE_FRONTEND !== 'false');
+
+if (serveFrontend) {
+  await server.register(fastifyStatic, {
+    root: frontendDistribution,
+    prefix: '/',
+    wildcard: false,
+    index: false,
+  });
+  server.setNotFoundHandler((request, reply) => {
+    const pathname = request.url.split('?')[0];
+    if (request.method === 'GET' && !pathname.startsWith('/api/') && request.headers.accept?.includes('text/html')) {
+      return reply.header('cache-control', 'no-store').sendFile('index.html');
+    }
+    return reply.code(404).send({ error: 'Not found' });
+  });
+}
 
 export default server;
 
@@ -1920,8 +2049,24 @@ if (isEntrypoint) {
   const host = process.env.HOST || '127.0.0.1';
   try {
     await server.listen({ port, host });
-    console.log(`BeverageAI DZ Backend running on http://localhost:${port}`);
-    console.log(`Storage mode: ${getStorageConfiguration().mode}; ${ingredients.length} ingredients loaded`);
+    server.log.info({ host, port, version: applicationVersion, storage_mode: getStorageConfiguration().mode }, 'BeverageAI DZ started');
+
+    let shuttingDown = false;
+    const shutdown = async (signal) => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      server.log.info({ signal }, 'Graceful shutdown started');
+      const forcedExit = setTimeout(() => {
+        server.log.fatal({ signal }, 'Graceful shutdown timed out');
+        process.exit(1);
+      }, 10000);
+      forcedExit.unref();
+      await server.close();
+      clearTimeout(forcedExit);
+      process.exit(0);
+    };
+    process.once('SIGTERM', () => void shutdown('SIGTERM'));
+    process.once('SIGINT', () => void shutdown('SIGINT'));
   } catch (error) {
     server.log.error(error);
     process.exit(1);

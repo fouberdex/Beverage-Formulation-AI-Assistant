@@ -11,7 +11,7 @@ import {
   pricingHistory,
   targetGenerationRuns,
 } from './mockData.js';
-import { getSupabaseAdmin, isSupabaseConfigured } from '../services/supabaseClient.js';
+import { isSupabaseConfigured } from '../services/supabaseClient.js';
 
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const defaultDataFile = path.resolve(moduleDirectory, '../../data/app-data.json');
@@ -29,14 +29,9 @@ let dataFile = defaultDataFile;
 let storageMode = 'file';
 let persistenceEnabled = true;
 let writeQueue = Promise.resolve();
-const persistedHashes = new Map();
 
 function replaceContents(target, values) {
   target.splice(0, target.length, ...values);
-}
-
-function hashCollection(value) {
-  return JSON.stringify(value);
 }
 
 async function loadLocalData() {
@@ -60,174 +55,34 @@ async function loadLocalData() {
   replaceContents(categories, [...new Set(ingredients.map(item => item.category))]);
 }
 
-async function fetchAll(table, columns) {
-  const client = getSupabaseAdmin();
-  const result = [];
-  const pageSize = 1000;
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await client.from(table).select(columns).range(from, from + pageSize - 1);
-    if (error) throw error;
-    result.push(...data);
-    if (data.length < pageSize) return result;
-  }
-}
-
-function unpackPayload(row, ownershipColumn = 'owner_id') {
-  return {
-    ...(row.payload || {}),
-    ...(row[ownershipColumn] ? { [ownershipColumn]: row[ownershipColumn] } : {}),
-  };
-}
-
-async function loadSupabaseData() {
-  const [ingredientRows, formulationRows, variantRows, complianceRows, batchRows, pricingRows, targetRows] = await Promise.all([
-    fetchAll('ingredients', 'payload'),
-    fetchAll('formulations', 'payload,owner_id'),
-    fetchAll('ai_variants', 'payload,owner_id'),
-    fetchAll('compliance_records', 'payload,owner_id'),
-    fetchAll('batch_cost_calculations', 'payload,owner_id'),
-    fetchAll('pricing_history', 'payload,created_by'),
-    fetchAll('target_generation_runs', 'id,owner_id,constraints,candidates,ai_metadata,created_at'),
-  ]);
-
-  const hasRemoteData = ingredientRows.length > 0;
-  if (hasRemoteData) replaceContents(ingredients, ingredientRows.map(row => row.payload));
-  if (formulationRows.length > 0) replaceContents(formulations, formulationRows.map(row => unpackPayload(row)));
-  if (variantRows.length > 0) replaceContents(aiVariants, variantRows.map(row => unpackPayload(row)));
-  if (complianceRows.length > 0) replaceContents(complianceRecords, complianceRows.map(row => unpackPayload(row)));
-  if (batchRows.length > 0) replaceContents(batchCostCalculations, batchRows.map(row => unpackPayload(row)));
-  if (pricingRows.length > 0) replaceContents(pricingHistory, pricingRows.map(row => unpackPayload(row, 'created_by')));
-  if (targetRows.length > 0) replaceContents(targetGenerationRuns, targetRows.map(row => ({
-    id: row.id,
-    owner_id: row.owner_id,
-    constraints: row.constraints,
-    candidates: row.candidates,
-    ai: row.ai_metadata,
-    created_at: row.created_at,
-  })));
-  replaceContents(categories, [...new Set(ingredients.map(item => item.category))]);
-  return hasRemoteData;
-}
-
-async function upsertInChunks(table, rows, onConflict = 'id') {
-  if (rows.length === 0) return;
-  const client = getSupabaseAdmin();
-  for (let index = 0; index < rows.length; index += 200) {
-    const { error } = await client.from(table).upsert(rows.slice(index, index + 200), { onConflict });
-    if (error) throw error;
-  }
-}
-
-async function syncIngredients() {
-  await upsertInChunks('ingredients', ingredients.map(item => ({
-    id: item.id,
-    code: item.code,
-    name: item.name,
-    category: item.category,
-    is_active: item.is_active !== false,
-    payload: item,
-    created_at: item.created_at || new Date().toISOString(),
-    updated_at: item.updated_at || new Date().toISOString(),
-  })));
-}
-
-async function syncFormulations() {
-  const { error } = await getSupabaseAdmin().rpc('sync_formulations', {
-    p_formulations: formulations,
-  });
-  if (error) throw error;
-}
-
-async function syncPayloadCollection(table, collection, mapRow) {
-  await upsertInChunks(table, collection.map(mapRow));
-}
-
-async function persistSupabase(force = false) {
-  const jobs = [];
-  const schedule = (name, task) => {
-    const nextHash = hashCollection(collections[name]);
-    if (force || persistedHashes.get(name) !== nextHash) {
-      jobs.push({ name, nextHash, task });
-    }
-  };
-
-  schedule('ingredients', syncIngredients);
-  schedule('formulations', syncFormulations);
-  schedule('aiVariants', () => syncPayloadCollection('ai_variants', aiVariants, item => ({
-    id: item.id,
-    owner_id: item.owner_id || null,
-    source_formulation_id: item.source_formulation_id,
-    status: item.status || 'generated',
-    payload: item,
-    created_at: item.created_at || new Date().toISOString(),
-    updated_at: item.updated_at || new Date().toISOString(),
-  })));
-  schedule('complianceRecords', () => syncPayloadCollection('compliance_records', complianceRecords, item => ({
-    id: item.id,
-    owner_id: item.owner_id || null,
-    formulation_id: item.formulation_id,
-    payload: item,
-    checked_at: item.checked_at || new Date().toISOString(),
-  })));
-  schedule('batchCostCalculations', () => syncPayloadCollection('batch_cost_calculations', batchCostCalculations, item => ({
-    id: item.id,
-    owner_id: item.owner_id || null,
-    formulation_id: item.formulation_id,
-    batch_size_liters: item.batch_size_liters,
-    payload: item,
-    calculated_at: item.calculated_at || new Date().toISOString(),
-  })));
-  schedule('pricingHistory', () => syncPayloadCollection('pricing_history', pricingHistory, item => ({
-    id: item.id,
-    ingredient_id: item.ingredient_id,
-    created_by: item.created_by || null,
-    price_per_kg: item.price_per_kg,
-    currency: item.currency || 'DZD',
-    payload: item,
-    effective_date: item.effective_date || new Date().toISOString(),
-  })));
-  schedule('targetGenerationRuns', () => syncPayloadCollection('target_generation_runs', targetGenerationRuns, item => ({
-    id: item.id,
-    owner_id: item.owner_id,
-    constraints: item.constraints || {},
-    candidates: item.candidates || [],
-    ai_metadata: item.ai || {},
-    created_at: item.created_at || new Date().toISOString(),
-  })));
-  // Preserve foreign-key ordering: ingredients, formulations, then their child records.
-  for (const job of jobs) {
-    await job.task();
-    persistedHashes.set(job.name, job.nextHash);
-  }
-}
-
 export async function initializePersistentStore() {
   dataFile = path.resolve(process.env.DATA_FILE || defaultDataFile);
-  persistenceEnabled = process.env.PERSIST_DATA !== 'false' && !process.env.NODE_TEST_CONTEXT;
+  if (process.env.NODE_TEST_CONTEXT) {
+    persistenceEnabled = false;
+    storageMode = 'memory';
+    return;
+  }
+
+  if (process.env.STORAGE_MODE === 'supabase') {
+    if (!isSupabaseConfigured()) throw new Error('Supabase storage selected but credentials are missing');
+    persistenceEnabled = true;
+    storageMode = 'supabase';
+    return;
+  }
+
+  persistenceEnabled = process.env.PERSIST_DATA !== 'false';
   if (!persistenceEnabled) {
     storageMode = 'memory';
     return;
   }
 
+  storageMode = 'file';
   await loadLocalData();
-  if (process.env.STORAGE_MODE === 'supabase') {
-    if (!isSupabaseConfigured()) throw new Error('Supabase storage selected but credentials are missing');
-    storageMode = 'supabase';
-    const hasRemoteData = await loadSupabaseData();
-    await persistSupabase(!hasRemoteData);
-  } else {
-    storageMode = 'file';
-  }
-  for (const [name, value] of Object.entries(collections)) persistedHashes.set(name, hashCollection(value));
 }
 
 export async function persistStore() {
-  if (!persistenceEnabled) return;
+  if (!persistenceEnabled || storageMode !== 'file') return;
   writeQueue = writeQueue.catch(() => undefined).then(async () => {
-    if (storageMode === 'supabase') {
-      await persistSupabase();
-      return;
-    }
     await mkdir(path.dirname(dataFile), { recursive: true });
     const temporaryFile = `${dataFile}.tmp`;
     const data = { version: 1, saved_at: new Date().toISOString(), ...collections };
@@ -237,24 +92,8 @@ export async function persistStore() {
   await writeQueue;
 }
 
-export async function claimUnownedData(userId) {
-  let changed = false;
-  for (const collection of [formulations, aiVariants, complianceRecords, batchCostCalculations]) {
-    for (const item of collection) {
-      if (!item.owner_id) {
-        item.owner_id = userId;
-        changed = true;
-      }
-    }
-  }
-  if (changed) await persistStore();
-  return changed;
-}
-
-export async function deletePersistedFormulation(formulationId) {
-  if (storageMode !== 'supabase') return;
-  const { error } = await getSupabaseAdmin().from('formulations').delete().eq('id', formulationId);
-  if (error) throw error;
+export function getLocalCollections() {
+  return { ...collections, categories };
 }
 
 export function getStorageConfiguration() {

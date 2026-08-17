@@ -30,6 +30,7 @@ The application uses Supabase Postgres for durable storage and Supabase Auth for
 ### Access and history
 
 - Authenticated accounts have `admin`, `formulator`, or read-only `viewer` roles.
+- Administrator bootstrap is tied to one explicitly configured Auth email; signup order never grants privileges.
 - Formulations, generated variants, compliance results, and calculations are owner-scoped.
 - Formulation version creation and history are supported. This is application-level versioning, not Git-style branching or enterprise document control.
 - Organization workspaces, team invitations, billing tenants, quotas, and enterprise SSO are not implemented, so the app does not claim full enterprise multi-tenancy.
@@ -68,13 +69,20 @@ cp frontend/.env.example frontend/.env
 Important backend settings:
 
 - `HOST` defaults to `127.0.0.1`.
+- `NODE_ENV=production` enables fail-closed startup checks: Supabase storage,
+  server credentials, and an explicit HTTPS CORS allowlist are required.
 - `CORS_ORIGINS` is a comma-separated allowlist and defaults to `http://localhost:5173`.
 - `RATE_LIMIT_MAX` defaults to 200 requests per minute.
 - `PERSIST_DATA` defaults to `true`; `DATA_FILE` can override the local JSON data path.
 - `STORAGE_MODE=supabase` enables Supabase persistence.
 - `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, and `SUPABASE_SECRET_KEY` configure the backend. The secret key must never be placed in frontend variables.
+- `BOOTSTRAP_ADMIN_EMAIL` is required in production and identifies the Auth account permitted to claim the initial administrator role.
 - `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` configure browser authentication.
 - Setting `API_KEY` requires clients to send the same value in `x-api-key`. Set `VITE_API_KEY` for the frontend when using this option.
+
+The unauthenticated JSON-file fallback can bind only to a loopback host. It is
+rejected when `NODE_ENV=production`; do not use it for shared or deployed
+environments. `PERSIST_DATA=false` is also rejected in production.
 
 ### Free AI review
 
@@ -97,7 +105,14 @@ Do not treat a value embedded through `VITE_API_KEY` as a secret; browser users 
 npm run dev       # start backend and frontend
 npm run build     # validate backend syntax and build the frontend
 npm test          # run backend API tests
+npm run test:db   # rebuild local Supabase and execute pgTAP RLS tests
 ```
+
+## CI and production operations
+
+GitHub Actions now validates the application, database migrations, RLS policies, dependency audit, and production container. Published releases apply reviewed Supabase migrations and publish an immutable container image to GitHub Container Registry. A separate scheduled workflow creates encrypted logical database backups.
+
+See `OPERATIONS.md` for environment protection, deployment, rollback, backup restoration, monitoring, alerts, and incident response. See `SECURITY.md` for vulnerability reporting and production access requirements.
 
 ## API
 
@@ -115,13 +130,29 @@ Invalid requests return HTTP 400 with structured validation details. Missing res
 
 ## Supabase database
 
-The deployable schema is in `backend/database/supabase_schema.sql`. It includes explicit Data API grants, RLS policies, ownership indexes, Auth-backed profiles and roles, normalized formulation ingredient relations, AI results, target runs, compliance, pricing, costs, audit logs, and server-only transactional synchronization functions. Apply schema changes through a reviewed Supabase migration, then run the Supabase security and performance advisors.
+Versioned migrations live in `supabase/migrations`; `backend/database/supabase_schema.sql` is the consolidated schema reference. The migrations include explicit Data API grants, RLS policies, cross-tenant relational constraints, Auth-backed profiles and roles, normalized formulation ingredients, AI results, target runs, compliance, pricing, costs, audit logs, and server-only transaction functions.
 
-The first account is assigned the `admin` role. Administrators can manage the shared ingredient catalog and other users; `formulator` accounts can build and evaluate their own formulations; `viewer` accounts are read-only. Account profile, password recovery, password changes, target-generation history, and audit history are available from the navigation.
+All ordinary accounts start as `formulator`. Set `BOOTSTRAP_ADMIN_EMAIL` before the intended administrator signs in. The backend asks a service-role-only database function to verify that exact email against `auth.users`; the bootstrap is idempotent for that account and rejects every second identity. Administrators can manage the shared ingredient catalog and other users; `viewer` accounts are read-only.
+
+For local database development, install Docker and run:
+
+```bash
+npm run db:start
+npm run test:db
+```
+
+`db:reset` rebuilds the database from versioned migrations and applies `supabase/seed.sql`. The seed is tenant-neutral: it contains only shared ingredient catalog rows and never creates Auth users, profiles, formulations, or audit records. RLS tests under `supabase/tests/database` create two temporary tenants inside transactions and roll everything back.
+
+Before pushing migrations to a hosted project, review legacy owner-scoped rows. The tenant-integrity migration deliberately stops if any formulation, formulation ingredient, AI variant, compliance record, or batch calculation has a null owner. Assign or remove those rows in a reviewed migration rather than claiming them automatically. Apply schema changes through the deployment pipeline, then run the Supabase security and performance advisors.
 
 For password-reset links, add `http://localhost:5173/account` to Supabase Auth → URL Configuration → Redirect URLs. Use the exact deployed HTTPS account URL in production.
 
-On the first authenticated request after importing legacy local data, unowned formulations and related records are assigned to that user. Subsequent records are created with the authenticated user's ID.
+Supabase requests load only the authenticated owner's records. Successful API
+mutations are diffed against that request snapshot and committed, together with
+their audit event, through one PostgreSQL transaction. The server never loads
+all tenants into a shared process-wide store. Legacy rows without an owner are
+not exposed or claimed automatically; assign them deliberately during a
+reviewed data migration.
 
 ## Cost model
 

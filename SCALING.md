@@ -4,13 +4,15 @@ This document outlines scaling strategies and TODOs for taking BeverageAI DZ bey
 
 ## Current MVP Capabilities
 
-- ✅ End-to-end local workflows backed by in-memory sample data
+- ✅ End-to-end local workflows with a loopback-only JSON fallback
 - ✅ Validated formulation, compatibility, regulatory, generation, and cost APIs
-- ✅ PostgreSQL schema and service prototypes for future integration
-- ❌ Persistent runtime storage
+- ✅ Supabase Auth, owner-filtered request repositories, and transactional changed-row commits
+- ✅ Versioned migrations, tenant-safe seeds, controlled admin bootstrap, and pgTAP RLS tests
+- ✅ CI gates, immutable container releases, encrypted backups, protected metrics, and operational runbooks
+- ✅ Persistent Supabase runtime storage and explicit RLS policies
 - ❌ Proven support for 1,200+ ingredients or 100,000+ formulations
 - ❌ Materialized 1.4M+ compatibility evaluations
-- ❌ Authentication and multi-tenant authorization
+- ✅ Authentication and owner-level multi-user authorization
 - ❌ Measured performance service-level objectives
 
 ## Scaling Priorities

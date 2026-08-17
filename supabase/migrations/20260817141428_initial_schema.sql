@@ -1,3 +1,4 @@
+-- Baseline schema for a fresh Supabase project.
 -- BeverageAI Supabase schema.
 -- Public Data API access is opt-in through explicit grants and protected by RLS.
 
@@ -22,63 +23,52 @@ create table if not exists public.ingredients (
 
 create table if not exists public.formulations (
   id text primary key,
-  owner_id uuid not null references auth.users(id) on delete cascade,
+  owner_id uuid references auth.users(id) on delete cascade,
   code text not null,
   name text not null,
   status text not null default 'draft',
-  parent_formulation_id text,
+  parent_formulation_id text references public.formulations(id) on delete set null,
   payload jsonb not null default '{}'::jsonb check (jsonb_typeof(payload) = 'object'),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (owner_id, code),
-  unique (owner_id, id),
-  constraint formulations_owner_parent_fkey foreign key (owner_id, parent_formulation_id)
-    references public.formulations(owner_id, id) on delete restrict
+  unique (owner_id, code)
 );
 
 create table if not exists public.formulation_ingredients (
-  formulation_id text not null,
+  formulation_id text not null references public.formulations(id) on delete cascade,
   ingredient_id text not null references public.ingredients(id) on delete restrict,
-  owner_id uuid not null references auth.users(id) on delete cascade,
+  owner_id uuid references auth.users(id) on delete cascade,
   percentage numeric(10,6) not null check (percentage > 0 and percentage <= 100),
   display_order integer not null default 0 check (display_order >= 0),
   payload jsonb not null default '{}'::jsonb check (jsonb_typeof(payload) = 'object'),
-  primary key (formulation_id, ingredient_id),
-  constraint formulation_ingredients_owner_formulation_fkey foreign key (owner_id, formulation_id)
-    references public.formulations(owner_id, id) on delete cascade
+  primary key (formulation_id, ingredient_id)
 );
 
 create table if not exists public.ai_variants (
   id text primary key,
-  owner_id uuid not null references auth.users(id) on delete cascade,
-  source_formulation_id text not null,
+  owner_id uuid references auth.users(id) on delete cascade,
+  source_formulation_id text not null references public.formulations(id) on delete cascade,
   status text not null default 'generated',
   payload jsonb not null default '{}'::jsonb check (jsonb_typeof(payload) = 'object'),
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  constraint ai_variants_owner_formulation_fkey foreign key (owner_id, source_formulation_id)
-    references public.formulations(owner_id, id) on delete cascade
+  updated_at timestamptz not null default now()
 );
 
 create table if not exists public.compliance_records (
   id text primary key,
-  owner_id uuid not null references auth.users(id) on delete cascade,
-  formulation_id text not null unique,
+  owner_id uuid references auth.users(id) on delete cascade,
+  formulation_id text not null unique references public.formulations(id) on delete cascade,
   payload jsonb not null default '{}'::jsonb check (jsonb_typeof(payload) = 'object'),
-  checked_at timestamptz not null default now(),
-  constraint compliance_records_owner_formulation_fkey foreign key (owner_id, formulation_id)
-    references public.formulations(owner_id, id) on delete cascade
+  checked_at timestamptz not null default now()
 );
 
 create table if not exists public.batch_cost_calculations (
   id text primary key,
-  owner_id uuid not null references auth.users(id) on delete cascade,
-  formulation_id text not null,
+  owner_id uuid references auth.users(id) on delete cascade,
+  formulation_id text not null references public.formulations(id) on delete cascade,
   batch_size_liters numeric(14,4) not null check (batch_size_liters > 0),
   payload jsonb not null default '{}'::jsonb check (jsonb_typeof(payload) = 'object'),
-  calculated_at timestamptz not null default now(),
-  constraint batch_cost_calculations_owner_formulation_fkey foreign key (owner_id, formulation_id)
-    references public.formulations(owner_id, id) on delete cascade
+  calculated_at timestamptz not null default now()
 );
 
 create table if not exists public.pricing_history (
@@ -195,8 +185,8 @@ alter default privileges for role postgres in schema public
 alter default privileges for role postgres in schema public
   revoke execute on functions from anon, authenticated;
 
--- Server-only profile helper. Ordinary accounts are always created as
--- formulators; administrator access is established separately and explicitly.
+-- Server-only bootstrap helper. The advisory lock guarantees that exactly one
+-- first account receives the administrator role, even during concurrent signup.
 create or replace function public.ensure_profile(p_user_id uuid, p_display_name text default null)
 returns public.profiles
 language plpgsql
@@ -205,59 +195,16 @@ set search_path = ''
 as $$
 declare
   result public.profiles;
+  initial_role text;
 begin
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('beverageai-profile-bootstrap', 0));
+  initial_role := case when exists (select 1 from public.profiles) then 'formulator' else 'admin' end;
+
   insert into public.profiles (id, display_name, role, updated_at)
-  values (p_user_id, nullif(pg_catalog.btrim(p_display_name), ''), 'formulator', pg_catalog.now())
+  values (p_user_id, nullif(pg_catalog.btrim(p_display_name), ''), initial_role, pg_catalog.now())
   on conflict (id) do update
     set display_name = coalesce(excluded.display_name, profiles.display_name),
         updated_at = pg_catalog.now()
-  returning * into result;
-
-  return result;
-end;
-$$;
-
--- One-time bootstrap invoked only by the backend service role. It verifies the
--- configured email against auth.users and serializes concurrent attempts.
-create or replace function public.bootstrap_admin(p_user_id uuid, p_expected_email text)
-returns public.profiles
-language plpgsql
-security definer
-set search_path = ''
-as $$
-declare
-  result public.profiles;
-  existing_admin uuid;
-begin
-  if nullif(pg_catalog.btrim(p_expected_email), '') is null then
-    raise exception 'A bootstrap administrator email is required';
-  end if;
-
-  if not exists (
-    select 1
-    from auth.users
-    where id = p_user_id
-      and pg_catalog.lower(email) = pg_catalog.lower(pg_catalog.btrim(p_expected_email))
-  ) then
-    raise exception 'The authenticated user does not match the configured bootstrap administrator';
-  end if;
-
-  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('beverageai-admin-bootstrap', 0));
-
-  select id into existing_admin
-  from public.profiles
-  where role = 'admin'
-  order by created_at, id
-  limit 1;
-
-  if existing_admin is not null and existing_admin <> p_user_id then
-    raise exception 'An administrator has already been bootstrapped';
-  end if;
-
-  insert into public.profiles (id, role, updated_at)
-  values (p_user_id, 'admin', pg_catalog.now())
-  on conflict (id) do update
-    set role = 'admin', updated_at = pg_catalog.now()
   returning * into result;
 
   return result;
@@ -441,10 +388,8 @@ end;
 $$;
 
 revoke all on function public.ensure_profile(uuid, text) from public, anon, authenticated;
-revoke all on function public.bootstrap_admin(uuid, text) from public, anon, authenticated;
 revoke all on function public.sync_formulations(jsonb) from public, anon, authenticated;
 revoke all on function public.commit_request_changes(jsonb) from public, anon, authenticated;
 grant execute on function public.ensure_profile(uuid, text) to service_role;
-grant execute on function public.bootstrap_admin(uuid, text) to service_role;
 grant execute on function public.sync_formulations(jsonb) to service_role;
 grant execute on function public.commit_request_changes(jsonb) to service_role;

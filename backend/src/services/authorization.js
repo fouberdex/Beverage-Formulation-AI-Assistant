@@ -7,6 +7,12 @@ export const USER_ROLES = Object.freeze({
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export function authorizeApiRequest({ method, path, role }) {
+  // Administrative resources contain sensitive account data even when the
+  // operation is read-only, so this check must precede the safe-method rule.
+  if (path.startsWith('/api/v1/admin/') && role !== USER_ROLES.ADMIN) {
+    return { allowed: false, reason: 'Administrator access is required' };
+  }
+
   if (SAFE_METHODS.has(method)) return { allowed: true };
 
   // Every authenticated user may maintain their own account profile.
@@ -14,10 +20,6 @@ export function authorizeApiRequest({ method, path, role }) {
 
   if (role === USER_ROLES.VIEWER) {
     return { allowed: false, reason: 'This account has read-only access' };
-  }
-
-  if (path.startsWith('/api/v1/admin/') && role !== USER_ROLES.ADMIN) {
-    return { allowed: false, reason: 'Administrator access is required' };
   }
 
   const changesSharedIngredientData =

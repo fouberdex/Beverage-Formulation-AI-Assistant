@@ -1,0 +1,15 @@
+.git
+.github
+.agents
+.codex
+node_modules
+frontend/dist
+backend/data
+*.log
+.env
+.env.*
+!.env.example
+Dockerfile*
+compose*.yaml
+OPERATIONS.md
+SECURITY.md

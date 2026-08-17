@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  application:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.18.0
+          cache: npm
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: npm test
+      - run: npm run build
+      - run: git diff --exit-code
+
+  database:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.18.0
+          cache: npm
+      - run: npm ci
+      - run: npm run db:start
+      - run: npm run test:db
+      - run: npx supabase db advisors --local --type security --fail-on error
+      - name: Stop local Supabase
+        if: always()
+        run: npm run db:stop
+
+  container:
+    needs: application
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build production image
+        run: >-
+          docker build --tag beverageai-ci:${{ github.sha }}
+          --build-arg VITE_SUPABASE_URL=https://ci-placeholder.supabase.co
+          --build-arg VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_ci_placeholder
+          .
+      - name: Smoke-test production image
+        run: |
+          docker run --detach --name beverageai-ci --publish 127.0.0.1:3001:3001 \
+            --env STORAGE_MODE=supabase \
+            --env SUPABASE_URL=https://ci-placeholder.supabase.co \
+            --env SUPABASE_SECRET_KEY=sb_secret_ci_placeholder \
+            --env BOOTSTRAP_ADMIN_EMAIL=admin@example.com \
+            --env METRICS_TOKEN=ci-metrics-token-0000000000000000 \
+            --env CORS_ORIGINS=https://app.example.com \
+            beverageai-ci:${{ github.sha }}
+          for attempt in {1..20}; do
+            curl --fail --silent http://127.0.0.1:3001/health && exit 0
+            sleep 1
+          done
+          docker logs beverageai-ci
+          exit 1
+      - name: Remove smoke-test container
+        if: always()
+        run: docker rm --force beverageai-ci || true

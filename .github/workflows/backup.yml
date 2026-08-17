@@ -1,0 +1,56 @@
+name: Encrypted logical backup
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production-backup
+    env:
+      BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      BACKUP_ENCRYPTION_PASSPHRASE: ${{ secrets.BACKUP_ENCRYPTION_PASSPHRASE }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.18.0
+          cache: npm
+      - run: npm ci
+      - name: Validate backup secrets
+        run: |
+          test -n "$BACKUP_DATABASE_URL"
+          test "${#BACKUP_ENCRYPTION_PASSPHRASE}" -ge 32
+      - name: Create logical backup
+        run: |
+          mkdir -p backup/plain
+          npx supabase db dump --db-url "$BACKUP_DATABASE_URL" --file backup/plain/roles.sql --role-only
+          npx supabase db dump --db-url "$BACKUP_DATABASE_URL" --file backup/plain/schema.sql
+          npx supabase db dump --db-url "$BACKUP_DATABASE_URL" --file backup/plain/data.sql --use-copy --data-only \
+            --exclude storage.buckets_vectors --exclude storage.vector_indexes
+          tar -C backup/plain -czf - roles.sql schema.sql data.sql | \
+            openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:BACKUP_ENCRYPTION_PASSPHRASE \
+              -out backup/beverageai-${{ github.run_id }}.sql.tar.gz.enc
+          sha256sum backup/*.enc > backup/SHA256SUMS
+          rm -rf backup/plain
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: encrypted-database-backup-${{ github.run_id }}
+          path: |
+            backup/*.enc
+            backup/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove backup workspace
+        if: always()
+        run: rm -rf backup

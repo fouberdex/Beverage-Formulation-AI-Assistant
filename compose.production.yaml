@@ -1,0 +1,37 @@
+services:
+  app:
+    image: ${APP_IMAGE:-beverageai-dz:local}
+    build:
+      context: .
+      args:
+        VITE_API_BASE_URL: /api/v1
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:?Set VITE_SUPABASE_URL}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:?Set VITE_SUPABASE_PUBLISHABLE_KEY}
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3001
+      SERVE_FRONTEND: "true"
+      APP_VERSION: ${APP_VERSION:-local}
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${PUBLIC_PORT:-3001}:3001"
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    mem_limit: 1g
+    cpus: 1.0

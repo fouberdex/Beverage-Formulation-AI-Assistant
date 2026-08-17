@@ -18,11 +18,30 @@ test.after(async () => {
 });
 
 test('health endpoint identifies the active storage mode', async () => {
-  const response = await server.inject({ method: 'GET', url: '/health' });
+  const response = await server.inject({ method: 'GET', url: '/health', headers: { 'x-request-id': 'health-test' } });
   assert.equal(response.statusCode, 200);
   assert.equal(response.json().mode, 'memory');
   assert.equal(response.json().persistent, false);
+  assert.equal(response.headers['x-request-id'], 'health-test');
   assert.ok(response.headers['x-content-type-options']);
+});
+
+test('metrics are unavailable without a configured token and protected when enabled', async () => {
+  const unavailable = await server.inject({ method: 'GET', url: '/metrics' });
+  assert.equal(unavailable.statusCode, 404);
+
+  process.env.METRICS_TOKEN = 'metrics-test-token-that-is-long-enough';
+  const unauthorized = await server.inject({ method: 'GET', url: '/metrics' });
+  assert.equal(unauthorized.statusCode, 401);
+  const authorized = await server.inject({
+    method: 'GET',
+    url: '/metrics',
+    headers: { authorization: `Bearer ${process.env.METRICS_TOKEN}` },
+  });
+  delete process.env.METRICS_TOKEN;
+
+  assert.equal(authorized.statusCode, 200);
+  assert.match(authorized.body, /beverageai_http_requests_total/);
 });
 
 test('readiness and account identity endpoints are available', async () => {

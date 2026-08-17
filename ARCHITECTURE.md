@@ -1,6 +1,9 @@
 # BeverageAI DZ - Architecture Overview
 
-> This document describes the target PostgreSQL architecture. The executable development server currently uses in-memory mock storage; see `README.md` for the implemented runtime and setup instructions.
+> This document describes the target PostgreSQL architecture. The executable
+> server uses owner-filtered, request-scoped Supabase repositories in Supabase
+> mode and retains JSON/in-memory storage only for loopback development and
+> automated tests; see `README.md` for runtime setup.
 
 ## Target System Architecture
 
@@ -23,6 +26,8 @@
 - Full-text search support (pg_trgm)
 - Triggers for automatic calculations
 - Stored procedures for complex operations
+- Versioned Supabase migrations and rollback-only pgTAP RLS integration tests
+- Composite tenant foreign keys prevent cross-owner relationships
 
 ## Core Modules
 

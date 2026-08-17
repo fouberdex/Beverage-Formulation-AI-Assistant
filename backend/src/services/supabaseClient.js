@@ -27,12 +27,29 @@ export async function verifySupabaseAccessToken(accessToken) {
 
 export async function ensureUserProfile(user) {
   const displayName = user.user_metadata?.display_name || user.user_metadata?.full_name || null;
-  const { data, error } = await getSupabaseAdmin().rpc('ensure_profile', {
+  const client = getSupabaseAdmin();
+  const { data, error } = await client.rpc('ensure_profile', {
     p_user_id: user.id,
     p_display_name: displayName,
   });
   if (error) throw error;
-  return Array.isArray(data) ? data[0] : data;
+  let profile = Array.isArray(data) ? data[0] : data;
+
+  if (isBootstrapAdministrator(user)) {
+    const { data: bootstrapData, error: bootstrapError } = await client.rpc('bootstrap_admin', {
+      p_user_id: user.id,
+      p_expected_email: process.env.BOOTSTRAP_ADMIN_EMAIL.trim(),
+    });
+    if (bootstrapError) throw bootstrapError;
+    profile = Array.isArray(bootstrapData) ? bootstrapData[0] : bootstrapData;
+  }
+
+  return profile;
+}
+
+export function isBootstrapAdministrator(user, environment = process.env) {
+  const configuredEmail = environment.BOOTSTRAP_ADMIN_EMAIL?.trim().toLowerCase();
+  return Boolean(configuredEmail && user?.email?.trim().toLowerCase() === configuredEmail);
 }
 
 export async function getUserProfile(userId) {
@@ -107,15 +124,4 @@ export async function updateUserRole(userId, role) {
     .single();
   if (error) throw error;
   return data;
-}
-
-export async function recordAuditEvent({ ownerId, action, entityType, entityId, metadata }) {
-  const { error } = await getSupabaseAdmin().from('audit_logs').insert({
-    owner_id: ownerId || null,
-    action,
-    entity_type: entityType,
-    entity_id: entityId || null,
-    metadata: metadata || {},
-  });
-  if (error) throw error;
 }
