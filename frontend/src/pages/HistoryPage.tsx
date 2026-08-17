@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { accountAPI, targetGenerationAPI } from '../services/api';
 import { useAuth } from '../auth/AuthContext';
+import Pagination from '../components/Pagination';
+import StatusMessage from '../components/StatusMessage';
+import { getErrorMessage } from '../services/errors';
 
 export default function HistoryPage() {
   const { profile } = useAuth();
@@ -8,17 +11,25 @@ export default function HistoryPage() {
   const [events, setEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [runPage, setRunPage] = useState(1);
+  const [eventPage, setEventPage] = useState(1);
+  const [runTotal, setRunTotal] = useState(0);
+  const [eventTotal, setEventTotal] = useState(0);
+  const pageSize = 10;
 
   useEffect(() => {
+    setLoading(true); setError('');
     Promise.all([
-      targetGenerationAPI.getRuns({ limit: 50 }),
-      accountAPI.getAudit({ limit: 100 }),
+      targetGenerationAPI.getRuns({ limit: pageSize, offset: (runPage - 1) * pageSize }),
+      accountAPI.getAudit({ limit: pageSize, offset: (eventPage - 1) * pageSize }),
     ]).then(([runResponse, auditResponse]) => {
       setRuns(runResponse.data.data);
+      setRunTotal(runResponse.data.pagination.total);
       setEvents(auditResponse.data.data);
-    }).catch((cause: any) => setError(cause?.response?.data?.error || 'Unable to load history'))
+      setEventTotal(auditResponse.data.pagination.total);
+    }).catch(cause => setError(getErrorMessage(cause, 'Unable to load history.')))
       .finally(() => setLoading(false));
-  }, []);
+  }, [runPage, eventPage]);
 
   if (loading) return <div className="p-8 text-center text-gray-500">Loading history…</div>;
 
@@ -28,7 +39,7 @@ export default function HistoryPage() {
         <h1 className="text-3xl font-bold text-gray-900">History</h1>
         <p className="mt-1 text-sm text-gray-500">Your saved AI generation runs and API change log.</p>
       </div>
-      {error && <p className="rounded-lg bg-red-50 p-4 text-sm text-red-700">{error}</p>}
+      <StatusMessage error={error} />
 
       <section className="overflow-hidden rounded-lg bg-white shadow">
         <h2 className="border-b px-5 py-4 text-lg font-semibold">Target generation runs</h2>
@@ -42,6 +53,7 @@ export default function HistoryPage() {
             </div>)}
           </div>
         )}
+        <Pagination page={runPage} pageSize={pageSize} total={runTotal} onPageChange={setRunPage} label="Generation runs" />
       </section>
 
       <section className="overflow-hidden rounded-lg bg-white shadow">
@@ -51,7 +63,8 @@ export default function HistoryPage() {
         </div>
         {events.length === 0 ? <p className="p-5 text-sm text-gray-500">No recorded changes yet.</p> : (
           <div className="overflow-x-auto"><table className="min-w-full divide-y text-sm">
-            <thead className="bg-gray-50 text-left text-xs uppercase text-gray-500"><tr><th className="px-5 py-3">Time</th><th className="px-5 py-3">Action</th><th className="px-5 py-3">Entity</th><th className="px-5 py-3">Result</th></tr></thead>
+            <caption className="sr-only">Account change log</caption>
+            <thead className="bg-gray-50 text-left text-xs uppercase text-gray-500"><tr><th scope="col" className="px-5 py-3">Time</th><th scope="col" className="px-5 py-3">Action</th><th scope="col" className="px-5 py-3">Entity</th><th scope="col" className="px-5 py-3">Result</th></tr></thead>
             <tbody className="divide-y">{events.map(event => <tr key={event.id}>
               <td className="whitespace-nowrap px-5 py-3 text-gray-500">{new Date(event.created_at).toLocaleString()}</td>
               <td className="px-5 py-3 font-medium uppercase">{event.action}</td>
@@ -60,6 +73,7 @@ export default function HistoryPage() {
             </tr>)}</tbody>
           </table></div>
         )}
+        <Pagination page={eventPage} pageSize={pageSize} total={eventTotal} onPageChange={setEventPage} label="Change log" />
       </section>
     </div>
   );

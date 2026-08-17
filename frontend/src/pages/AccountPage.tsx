@@ -2,6 +2,8 @@ import { FormEvent, useEffect, useState } from 'react';
 import { KeyRound, Loader2, Save, UserRound } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
 import { accountAPI } from '../services/api';
+import StatusMessage from '../components/StatusMessage';
+import { getErrorMessage } from '../services/errors';
 
 export default function AccountPage() {
   const { profile, recoveryMode, session, updateDisplayName, updatePassword } = useAuth();
@@ -17,7 +19,7 @@ export default function AccountPage() {
   useEffect(() => {
     if (profile?.role !== 'admin') return;
     void accountAPI.getUsers().then(response => setUsers(response.data.data))
-      .catch((cause: any) => setError(cause?.response?.data?.error || 'Unable to load users'));
+      .catch(cause => setError(getErrorMessage(cause, 'Unable to load users.')));
   }, [profile?.role]);
 
   async function changeRole(userId: string, role: string) {
@@ -26,8 +28,8 @@ export default function AccountPage() {
       const response = await accountAPI.updateUserRole(userId, role);
       setUsers(current => current.map(user => user.id === userId ? { ...user, ...response.data.data } : user));
       setMessage('User role updated.');
-    } catch (cause: any) {
-      setError(cause?.response?.data?.error || 'Unable to update user role');
+    } catch (cause) {
+      setError(getErrorMessage(cause, 'Unable to update user role.'));
     }
   }
 
@@ -37,8 +39,8 @@ export default function AccountPage() {
     try {
       await updateDisplayName(displayName.trim());
       setMessage('Profile updated.');
-    } catch (cause: any) {
-      setError(cause?.response?.data?.error || cause?.message || 'Unable to update profile');
+    } catch (cause) {
+      setError(getErrorMessage(cause, 'Unable to update profile.'));
     } finally {
       setBusy(null);
     }
@@ -68,8 +70,7 @@ export default function AccountPage() {
       </div>
 
       {recoveryMode && <p className="rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm text-sky-800">Password recovery verified. Choose a new password below.</p>}
-      {error && <p className="rounded-lg bg-red-50 p-4 text-sm text-red-700">{error}</p>}
-      {message && <p className="rounded-lg bg-emerald-50 p-4 text-sm text-emerald-700">{message}</p>}
+      <StatusMessage error={error} message={message} />
 
       <form onSubmit={saveProfile} className="rounded-lg bg-white p-6 shadow">
         <div className="mb-5 flex items-center gap-3">
@@ -88,7 +89,7 @@ export default function AccountPage() {
             <input value={profile?.role || 'Loading…'} disabled className="mt-1 w-full capitalize rounded-md border border-gray-200 bg-gray-50 p-2.5 text-gray-500" />
           </label>
         </div>
-        <button disabled={busy !== null} className="mt-5 inline-flex items-center rounded-md bg-sky-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
+        <button disabled={busy !== null} className="mt-5 inline-flex items-center rounded-md bg-sky-700 px-4 py-2 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-60">
           {busy === 'profile' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />} Save profile
         </button>
       </form>
@@ -123,7 +124,7 @@ export default function AccountPage() {
             <div className="divide-y">{users.map(user => (
               <div key={user.id} className="grid items-center gap-3 px-6 py-4 sm:grid-cols-[1fr_12rem]">
                 <div><p className="font-medium text-gray-900">{user.display_name || user.email || 'Unnamed user'}</p><p className="text-xs text-gray-500">{user.email}</p></div>
-                <select value={user.role} onChange={event => void changeRole(user.id, event.target.value)}
+                <select aria-label={`Access role for ${user.display_name || user.email || 'user'}`} value={user.role} onChange={event => void changeRole(user.id, event.target.value)}
                   className="rounded-md border border-gray-300 p-2 text-sm capitalize">
                   <option value="admin">Administrator</option>
                   <option value="formulator">Formulator</option>

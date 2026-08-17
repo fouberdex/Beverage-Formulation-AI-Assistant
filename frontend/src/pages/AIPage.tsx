@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { aiAPI, formulationsAPI } from '../services/api';
 import { Formulation } from '../types';
 import { Sparkles, Loader, Info, CheckCircle, AlertTriangle, ShieldCheck } from 'lucide-react';
+import StatusMessage from '../components/StatusMessage';
+import { getErrorMessage } from '../services/errors';
 
 type AIStatus = {
   provider: string;
@@ -23,6 +25,7 @@ export default function AIPage() {
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState('');
   const [aiStatus, setAiStatus] = useState<AIStatus | null>(null);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     loadFormulations();
@@ -37,7 +40,7 @@ export default function AIPage() {
         setSelectedFormulationId(res.data.data[0].id);
       }
     } catch (error) {
-      console.error('Error loading formulations:', error);
+      setError(getErrorMessage(error, 'Unable to load formulations.'));
     } finally {
       setLoadingFormulations(false);
     }
@@ -45,11 +48,12 @@ export default function AIPage() {
 
   async function generateVariants() {
     if (!selectedFormulationId) {
-      alert('Please select a formulation first');
+      setError('Please select a formulation first.');
       return;
     }
 
     setLoading(true);
+    setError('');
     setVariants([]);
     setSuccessMessage('');
     setAiStatus(null);
@@ -63,8 +67,8 @@ export default function AIPage() {
       });
       setVariants(res.data.data);
       setAiStatus(res.data.ai || null);
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Error generating variants');
+    } catch (error) {
+      setError(getErrorMessage(error, 'Unable to generate variants.'));
     } finally {
       setLoading(false);
     }
@@ -77,8 +81,8 @@ export default function AIPage() {
     try {
       const response = await aiAPI.getVariants(selectedFormulationId, { limit: 50 });
       setVariants(response.data.data);
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Error loading saved variants');
+    } catch (error) {
+      setError(getErrorMessage(error, 'Unable to load saved variants.'));
     } finally {
       setLoading(false);
     }
@@ -109,8 +113,8 @@ export default function AIPage() {
       setVariants(variants.map(v => 
         v.id === variant.id ? { ...v, status: 'accepted' } : v
       ));
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Error creating formulation from variant');
+    } catch (error) {
+      setError(getErrorMessage(error, 'Unable to create a formulation from this variant.'));
     } finally {
       setAcceptingId(null);
     }
@@ -126,11 +130,12 @@ export default function AIPage() {
           Generate locally validated alternatives, then have Gemini review and rank them
         </p>
       </div>
+      <div className="mx-4 mb-4"><StatusMessage error={error} /></div>
 
       {/* Success Message */}
       {successMessage && (
-        <div className="mx-4 mb-4 bg-green-50 border border-green-200 rounded-lg p-4 flex items-center">
-          <CheckCircle className="h-5 w-5 text-green-600 mr-3" />
+        <div role="status" className="mx-4 mb-4 bg-green-50 border border-green-200 rounded-lg p-4 flex items-center">
+          <CheckCircle className="h-5 w-5 text-green-700 mr-3" />
           <span className="text-green-800 font-medium">{successMessage}</span>
           <a href="/formulations" className="ml-auto text-green-700 hover:text-green-900 text-sm font-medium">
             View Formulations →
@@ -273,7 +278,7 @@ export default function AIPage() {
             <button
               onClick={generateVariants}
               disabled={loading || !selectedFormulationId}
-              className="w-full px-4 py-3 bg-sky-600 text-white rounded-md hover:bg-sky-700 disabled:opacity-50 flex items-center justify-center font-medium"
+              className="w-full px-4 py-3 bg-sky-700 text-white rounded-md hover:bg-sky-800 disabled:opacity-50 flex items-center justify-center font-medium"
             >
               {loading ? (
                 <>
@@ -378,21 +383,21 @@ export default function AIPage() {
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-500">Cost Change:</span>
-                    <span className={variant.cost_difference_percent < 0 ? 'text-green-600 font-medium' : 'text-red-600 font-medium'}>
+                    <span className={variant.cost_difference_percent < 0 ? 'text-green-700 font-medium' : 'text-red-600 font-medium'}>
                       {variant.cost_difference_percent > 0 ? '+' : ''}
                       {variant.cost_difference_percent?.toFixed(1)}%
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-500">Calorie Change:</span>
-                    <span className={variant.calorie_difference_percent < 0 ? 'text-green-600 font-medium' : 'text-orange-600 font-medium'}>
+                    <span className={variant.calorie_difference_percent < 0 ? 'text-green-700 font-medium' : 'text-orange-700 font-medium'}>
                       {variant.calorie_difference_percent > 0 ? '+' : ''}
                       {variant.calorie_difference_percent?.toFixed(1)}%
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-500">Sugar Change:</span>
-                    <span className={variant.sugar_difference_percent < 0 ? 'text-green-600 font-medium' : 'text-orange-600 font-medium'}>
+                    <span className={variant.sugar_difference_percent < 0 ? 'text-green-700 font-medium' : 'text-orange-700 font-medium'}>
                       {variant.sugar_difference_percent > 0 ? '+' : ''}
                       {variant.sugar_difference_percent?.toFixed(1)}%
                     </span>
@@ -430,7 +435,7 @@ export default function AIPage() {
                   <button 
                     onClick={() => acceptVariant(variant)}
                     disabled={acceptingId === variant.id}
-                    className="mt-4 w-full px-4 py-2 bg-sky-600 text-white rounded-md hover:bg-sky-700 disabled:opacity-50 text-sm font-medium flex items-center justify-center"
+                    className="mt-4 w-full px-4 py-2 bg-sky-700 text-white rounded-md hover:bg-sky-800 disabled:opacity-50 text-sm font-medium flex items-center justify-center"
                   >
                     {acceptingId === variant.id ? (
                       <>

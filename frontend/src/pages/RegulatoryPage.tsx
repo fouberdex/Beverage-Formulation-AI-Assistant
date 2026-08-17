@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { regulatoryAPI, formulationsAPI } from '../services/api';
 import { Formulation } from '../types';
 import { Shield, CheckCircle, XCircle, FileText, Loader, Info } from 'lucide-react';
+import StatusMessage from '../components/StatusMessage';
+import { getErrorMessage } from '../services/errors';
 
 export default function RegulatoryPage() {
   const [formulations, setFormulations] = useState<Formulation[]>([]);
@@ -11,6 +13,7 @@ export default function RegulatoryPage() {
   const [compliance, setCompliance] = useState<any>(null);
   const [labels, setLabels] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<'compliance' | 'labels'>('compliance');
+  const [error, setError] = useState('');
 
   useEffect(() => {
     loadFormulations();
@@ -25,7 +28,7 @@ export default function RegulatoryPage() {
         setSelectedFormulationId(res.data.data[0].id);
       }
     } catch (error) {
-      console.error('Error loading formulations:', error);
+      setError(getErrorMessage(error, 'Unable to load formulations.'));
     } finally {
       setLoadingFormulations(false);
     }
@@ -35,12 +38,13 @@ export default function RegulatoryPage() {
     if (!selectedFormulationId) return;
 
     setLoading(true);
+    setError('');
     setCompliance(null);
     try {
       const res = await regulatoryAPI.checkCompliance(selectedFormulationId);
       setCompliance(res.data.data);
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Error checking compliance');
+    } catch (error) {
+      setError(getErrorMessage(error, 'Unable to check compliance.'));
     } finally {
       setLoading(false);
     }
@@ -50,13 +54,14 @@ export default function RegulatoryPage() {
     if (!selectedFormulationId) return;
 
     setLoading(true);
+    setError('');
     setLabels(null);
     try {
       const res = await regulatoryAPI.generateLabels(selectedFormulationId);
       setLabels(res.data.data);
       setActiveTab('labels');
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Error generating labels');
+    } catch (error) {
+      setError(getErrorMessage(error, 'Unable to generate labels.'));
     } finally {
       setLoading(false);
     }
@@ -72,11 +77,12 @@ export default function RegulatoryPage() {
           Local certification-data screening and draft label generation (AR/FR/EN)
         </p>
       </div>
+      <div className="mx-4 mb-4"><StatusMessage error={error} /></div>
 
       {/* Info Box */}
       <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6 mx-4">
         <div className="flex items-start">
-          <Info className="h-5 w-5 text-green-600 mr-3 mt-0.5 flex-shrink-0" />
+          <Info className="h-5 w-5 text-green-700 mr-3 mt-0.5 flex-shrink-0" />
           <div className="text-sm text-green-800">
             <p className="font-medium mb-1">Local screening includes:</p>
             <ul className="list-disc list-inside space-y-1">
@@ -151,7 +157,7 @@ export default function RegulatoryPage() {
               <button
                 onClick={checkCompliance}
                 disabled={loading || !selectedFormulationId}
-                className="flex-1 px-4 py-3 bg-sky-600 text-white rounded-md hover:bg-sky-700 disabled:opacity-50 flex items-center justify-center font-medium"
+                className="flex-1 px-4 py-3 bg-sky-700 text-white rounded-md hover:bg-sky-800 disabled:opacity-50 flex items-center justify-center font-medium"
               >
                 {loading && activeTab === 'compliance' ? (
                   <Loader className="h-5 w-5 mr-2 animate-spin" />
@@ -247,7 +253,7 @@ export default function RegulatoryPage() {
                 {(!compliance.violations || compliance.violations.length === 0) && (
                   <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                     <div className="flex items-center">
-                      <CheckCircle className="h-6 w-6 text-green-600 mr-3" />
+                      <CheckCircle className="h-6 w-6 text-green-700 mr-3" />
                       <div>
                         <h4 className="font-semibold text-green-900">Local screening checks passed</h4>
                         <p className="text-sm text-green-700">{compliance.compliance_notes}</p>
@@ -289,7 +295,7 @@ function ComplianceItem({ label, value }: { label: string; value: boolean }) {
     <div className={`flex items-center justify-between p-4 rounded-lg ${value ? 'bg-green-50' : 'bg-red-50'}`}>
       <span className="text-sm font-medium text-gray-700">{label}</span>
       {value ? (
-        <CheckCircle className="h-6 w-6 text-green-600" />
+        <CheckCircle className="h-6 w-6 text-green-700" />
       ) : (
         <XCircle className="h-6 w-6 text-red-600" />
       )}
@@ -336,7 +342,7 @@ function LabelCard({ title, language, data }: { title: string; language: string;
           )}
 
           {data.halal && (
-            <div className="mt-3 flex items-center text-green-600">
+            <div className="mt-3 flex items-center text-green-700">
               <CheckCircle className="h-4 w-4 mr-1" />
               <span className="text-sm font-medium">
                 {language === 'ar' ? 'حلال' : language === 'fr' ? 'Halal' : 'Halal Certified'}

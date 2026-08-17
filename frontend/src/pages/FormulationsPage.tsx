@@ -1,7 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { formulationsAPI, ingredientsAPI } from '../services/api';
 import { Formulation, Ingredient } from '../types';
 import { Plus, Search, X, Trash2, Archive, GitBranch } from 'lucide-react';
+import { useAuth } from '../auth/AuthContext';
+import { canManageFormulations } from '../auth/permissions';
+import Pagination from '../components/Pagination';
+import StatusMessage from '../components/StatusMessage';
+import { getErrorMessage } from '../services/errors';
 
 interface FormulationIngredientInput {
   ingredient_id: string;
@@ -9,6 +14,9 @@ interface FormulationIngredientInput {
 }
 
 export default function FormulationsPage() {
+  const { profile } = useAuth();
+  const canEdit = canManageFormulations(profile?.role);
+  const pageSize = 12;
   const [formulations, setFormulations] = useState<Formulation[]>([]);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [loading, setLoading] = useState(true);
@@ -16,6 +24,13 @@ export default function FormulationsPage() {
   const [showModal, setShowModal] = useState(false);
   const [selectedFormulation, setSelectedFormulation] = useState<Formulation | null>(null);
   const [versions, setVersions] = useState<Formulation[]>([]);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
 
   // Form state
   const [formName, setFormName] = useState('');
@@ -23,22 +38,40 @@ export default function FormulationsPage() {
   const [formBeverageType, setFormBeverageType] = useState('soft_drink');
   const [formIngredients, setFormIngredients] = useState<FormulationIngredientInput[]>([]);
 
-  useEffect(() => {
-    loadFormulations();
-    loadIngredients();
-  }, []);
+  useEffect(() => { void loadIngredients(); }, []);
 
   useEffect(() => {
-    loadFormulations();
-  }, [search]);
+    const timer = window.setTimeout(() => void loadFormulations(), 250);
+    return () => window.clearTimeout(timer);
+  }, [search, page]);
+
+  useEffect(() => { setPage(1); }, [search]);
+
+  useEffect(() => {
+    if (!showModal) return;
+    closeButtonRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeModal();
+      if (event.key !== 'Tab') return;
+      const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href]') || []);
+      if (focusable.length === 0) return;
+      const first = focusable[0]; const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [showModal]);
 
   async function loadFormulations() {
     setLoading(true);
+    setError('');
     try {
-      const res = await formulationsAPI.getAll({ search, limit: 50 });
+      const res = await formulationsAPI.getAll({ search, limit: pageSize, offset: (page - 1) * pageSize });
       setFormulations(res.data.data);
+      setTotal(res.data.pagination.total);
     } catch (error) {
-      console.error('Error loading formulations:', error);
+      setError(getErrorMessage(error, 'Unable to load formulations.'));
     } finally {
       setLoading(false);
     }
@@ -49,11 +82,13 @@ export default function FormulationsPage() {
       const res = await ingredientsAPI.getAll({ limit: 500 });
       setIngredients(res.data.data);
     } catch (error) {
-      console.error('Error loading ingredients:', error);
+      setError(getErrorMessage(error, 'Unable to load the ingredient choices.'));
     }
   }
 
   function openCreateModal() {
+    if (!canEdit) return;
+    triggerRef.current = document.activeElement as HTMLElement;
     setSelectedFormulation(null);
     setFormName('');
     setFormDescription('');
@@ -63,6 +98,7 @@ export default function FormulationsPage() {
   }
 
   async function openViewModal(formulation: Formulation) {
+    triggerRef.current = document.activeElement as HTMLElement;
     setSelectedFormulation(formulation);
     setFormName(formulation.name);
     setFormDescription(formulation.description || '');
@@ -80,6 +116,11 @@ export default function FormulationsPage() {
     } catch {
       setVersions([]);
     }
+  }
+
+  function closeModal() {
+    setShowModal(false);
+    window.setTimeout(() => triggerRef.current?.focus(), 0);
   }
 
   function addIngredientRow() {
@@ -102,12 +143,14 @@ export default function FormulationsPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!canEdit) return;
+    setError(''); setMessage('');
     
     // Filter out empty ingredient rows
     const validIngredients = formIngredients.filter(i => i.ingredient_id && i.percentage > 0);
     
     if (validIngredients.length === 0) {
-      alert('Please add at least one ingredient');
+      setError('Please add at least one ingredient.');
       return;
     }
 
@@ -130,11 +173,11 @@ export default function FormulationsPage() {
         });
       }
       
-      setShowModal(false);
-      loadFormulations();
+      closeModal();
+      setMessage(selectedFormulation ? 'Formulation updated.' : 'Formulation created.');
+      void loadFormulations();
     } catch (error) {
-      console.error('Error saving formulation:', error);
-      alert('Error saving formulation');
+      setError(getErrorMessage(error, 'Unable to save formulation.'));
     }
   }
 
@@ -142,10 +185,11 @@ export default function FormulationsPage() {
     if (!selectedFormulation || !window.confirm(`Archive ${selectedFormulation.name}?`)) return;
     try {
       await formulationsAPI.delete(selectedFormulation.id);
-      setShowModal(false);
+      closeModal();
+      setMessage(`${selectedFormulation.name} was archived.`);
       await loadFormulations();
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Error archiving formulation');
+    } catch (error) {
+      setError(getErrorMessage(error, 'Unable to archive formulation.'));
     }
   }
 
@@ -159,10 +203,11 @@ export default function FormulationsPage() {
         beverage_type: formBeverageType,
         ingredients: validIngredients,
       });
-      setShowModal(false);
+      closeModal();
+      setMessage('A new formulation version was created.');
       await loadFormulations();
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Error creating formulation version');
+    } catch (error) {
+      setError(getErrorMessage(error, 'Unable to create a formulation version.'));
     }
   }
 
@@ -174,23 +219,26 @@ export default function FormulationsPage() {
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Formulations</h1>
           <p className="mt-1 text-sm text-gray-500">
-            Create and manage beverage formulations
+            {canEdit ? 'Create and manage beverage formulations' : 'Review beverage formulations in read-only mode'}
           </p>
         </div>
-        <button
+        {canEdit && <button type="button"
           onClick={openCreateModal}
-          className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-sky-600 hover:bg-sky-700"
+          className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-sky-700 hover:bg-sky-800"
         >
           <Plus className="h-4 w-4 mr-2" />
           Create Formulation
-        </button>
+        </button>}
       </div>
+
+      <StatusMessage error={error} message={message} />
 
       {/* Search */}
       <div className="bg-white shadow rounded-lg p-4 mb-6">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
           <input
+            aria-label="Search formulations"
             type="text"
             placeholder="Search formulations..."
             value={search}
@@ -205,14 +253,14 @@ export default function FormulationsPage() {
         <div className="p-8 text-center text-gray-500">Loading formulations...</div>
       ) : formulations.length === 0 ? (
         <div className="bg-white rounded-lg shadow p-8 text-center">
-          <p className="text-gray-500 mb-4">No formulations yet. Create your first one!</p>
-          <button
+          <p className="text-gray-500 mb-4">{canEdit ? 'No formulations yet. Create your first one!' : 'No formulations found.'}</p>
+          {canEdit && <button type="button"
             onClick={openCreateModal}
-            className="inline-flex items-center px-4 py-2 bg-sky-600 text-white rounded-md hover:bg-sky-700"
+            className="inline-flex items-center px-4 py-2 bg-sky-700 text-white rounded-md hover:bg-sky-800"
           >
             <Plus className="h-4 w-4 mr-2" />
             Create Formulation
-          </button>
+          </button>}
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -225,18 +273,22 @@ export default function FormulationsPage() {
           ))}
         </div>
       )}
+      {!loading && <Pagination page={page} pageSize={pageSize} total={total} onPageChange={setPage} label="Formulations" />}
 
       {/* Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+          <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="formulation-dialog-title" className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6">
               <div className="flex justify-between items-center mb-6">
-                <h2 className="text-2xl font-bold text-gray-900">
-                  {selectedFormulation ? 'Edit Formulation' : 'Create New Formulation'}
+                <h2 id="formulation-dialog-title" className="text-2xl font-bold text-gray-900">
+                  {selectedFormulation ? (canEdit ? 'Edit Formulation' : 'Formulation Details') : 'Create New Formulation'}
                 </h2>
                 <button
-                  onClick={() => setShowModal(false)}
+                  ref={closeButtonRef}
+                  type="button"
+                  onClick={closeModal}
+                  aria-label="Close formulation details"
                   className="text-gray-400 hover:text-gray-600"
                 >
                   <X className="h-6 w-6" />
@@ -248,11 +300,13 @@ export default function FormulationsPage() {
                   {/* Basic Info */}
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                      <label htmlFor="formulation-name" className="block text-sm font-medium text-gray-700 mb-1">
                         Name *
                       </label>
                       <input
                         type="text"
+                        id="formulation-name"
+                        disabled={!canEdit}
                         value={formName}
                         onChange={(e) => setFormName(e.target.value)}
                         required
@@ -261,10 +315,12 @@ export default function FormulationsPage() {
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                      <label htmlFor="formulation-type" className="block text-sm font-medium text-gray-700 mb-1">
                         Beverage Type
                       </label>
                       <select
+                        id="formulation-type"
+                        disabled={!canEdit}
                         value={formBeverageType}
                         onChange={(e) => setFormBeverageType(e.target.value)}
                         className="w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2"
@@ -285,10 +341,12 @@ export default function FormulationsPage() {
                   )}
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <label htmlFor="formulation-description" className="block text-sm font-medium text-gray-700 mb-1">
                       Description
                     </label>
                     <textarea
+                      id="formulation-description"
+                      disabled={!canEdit}
                       value={formDescription}
                       onChange={(e) => setFormDescription(e.target.value)}
                       rows={2}
@@ -304,19 +362,19 @@ export default function FormulationsPage() {
                       <div className="flex items-center gap-4">
                         <span className={`text-sm font-medium ${
                           Math.abs(totalPercentage - 100) < 0.1 
-                            ? 'text-green-600' 
+                            ? 'text-green-700'
                             : 'text-red-600'
                         }`}>
                           Total: {totalPercentage.toFixed(2)}%
                         </span>
-                        <button
+                        {canEdit && <button
                           type="button"
                           onClick={addIngredientRow}
                           className="inline-flex items-center px-3 py-1 bg-sky-100 text-sky-700 rounded-md hover:bg-sky-200 text-sm"
                         >
                           <Plus className="h-4 w-4 mr-1" />
                           Add Ingredient
-                        </button>
+                        </button>}
                       </div>
                     </div>
 
@@ -333,6 +391,8 @@ export default function FormulationsPage() {
                         <div key={index} className="grid grid-cols-12 gap-2 items-center">
                           <div className="col-span-7">
                             <select
+                              aria-label={`Ingredient ${index + 1}`}
+                              disabled={!canEdit}
                               value={fi.ingredient_id}
                               onChange={(e) => updateIngredient(index, 'ingredient_id', e.target.value)}
                               className="w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2 text-sm"
@@ -347,6 +407,8 @@ export default function FormulationsPage() {
                           </div>
                           <div className="col-span-3">
                             <input
+                              aria-label={`Percentage for ingredient ${index + 1}`}
+                              disabled={!canEdit}
                               type="number"
                               value={fi.percentage || ''}
                               onChange={(e) => updateIngredient(index, 'percentage', e.target.value)}
@@ -358,13 +420,14 @@ export default function FormulationsPage() {
                             />
                           </div>
                           <div className="col-span-2 flex justify-center">
-                            <button
+                            {canEdit && <button
                               type="button"
                               onClick={() => removeIngredientRow(index)}
                               className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded"
+                              aria-label={`Remove ingredient row ${index + 1}`}
                             >
                               <Trash2 className="h-4 w-4" />
-                            </button>
+                            </button>}
                           </div>
                         </div>
                       ))}
@@ -380,7 +443,7 @@ export default function FormulationsPage() {
 
                 {/* Actions */}
                 <div className="mt-6 flex flex-wrap justify-end gap-3">
-                  {selectedFormulation && (
+                  {canEdit && selectedFormulation && (
                     <>
                       <button type="button" onClick={archiveSelected}
                         className="mr-auto inline-flex items-center px-4 py-2 border border-amber-300 rounded-md text-amber-800 hover:bg-amber-50">
@@ -394,17 +457,17 @@ export default function FormulationsPage() {
                   )}
                   <button
                     type="button"
-                    onClick={() => setShowModal(false)}
+                    onClick={closeModal}
                     className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
                   >
-                    Cancel
+                    Close
                   </button>
-                  <button
+                  {canEdit && <button
                     type="submit"
-                    className="px-4 py-2 bg-sky-600 text-white rounded-md hover:bg-sky-700"
+                    className="px-4 py-2 bg-sky-700 text-white rounded-md hover:bg-sky-800"
                   >
                     {selectedFormulation ? 'Update Formulation' : 'Create Formulation'}
-                  </button>
+                  </button>}
                 </div>
               </form>
             </div>
@@ -417,9 +480,9 @@ export default function FormulationsPage() {
 
 function FormulationCard({ formulation, onClick }: { formulation: Formulation; onClick: () => void }) {
   return (
-    <div
+    <button type="button"
       onClick={onClick}
-      className="bg-white shadow rounded-lg p-6 hover:shadow-md transition-shadow cursor-pointer"
+      className="w-full bg-white text-left shadow rounded-lg p-6 hover:shadow-md transition-shadow focus:outline-none focus:ring-2 focus:ring-sky-500"
     >
       <div className="flex justify-between items-start mb-4">
         <div>
@@ -452,7 +515,7 @@ function FormulationCard({ formulation, onClick }: { formulation: Formulation; o
           <span className="text-gray-500">Total %:</span>
           <span className={`font-medium ${
             Math.abs((formulation.total_percentage || 0) - 100) < 0.1 
-              ? 'text-green-600' 
+              ? 'text-green-700'
               : 'text-red-600'
           }`}>
             {(formulation.total_percentage || 0).toFixed(2)}%
@@ -473,6 +536,6 @@ function FormulationCard({ formulation, onClick }: { formulation: Formulation; o
           View Details →
         </span>
       </div>
-    </div>
+    </button>
   );
 }

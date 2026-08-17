@@ -11,6 +11,7 @@
     "dev": "concurrently \"npm run dev --workspace=backend\" \"npm run dev --workspace=frontend\"",
     "build": "npm run build --workspace=backend && npm run build --workspace=frontend",
     "test": "npm run test --workspace=backend",
+    "test:e2e": "node scripts/run-e2e.mjs",
     "db:start": "supabase start",
     "db:stop": "supabase stop",
     "db:reset": "supabase db reset --local",
@@ -19,6 +20,8 @@
     "install:all": "npm install && npm install --workspace=backend && npm install --workspace=frontend"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.62.1",
     "concurrently": "^8.2.2",
     "supabase": "2.114.0"
   }

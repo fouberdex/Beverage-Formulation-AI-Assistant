@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { targetGenerationAPI } from '../services/api';
 import { Target, Loader, Info, CheckCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import StatusMessage from '../components/StatusMessage';
+import { getErrorMessage } from '../services/errors';
 
 export default function TargetGenerationPage() {
   const [constraints, setConstraints] = useState({
@@ -18,6 +20,7 @@ export default function TargetGenerationPage() {
   const [savedIds, setSavedIds] = useState<string[]>([]);
   const [expandedScores, setExpandedScores] = useState<string[]>([]);
   const [successMessage, setSuccessMessage] = useState('');
+  const [error, setError] = useState('');
 
   function toggleScoreExpand(id: string) {
     setExpandedScores(prev => 
@@ -27,6 +30,7 @@ export default function TargetGenerationPage() {
 
   async function generate() {
     setLoading(true);
+    setError('');
     setResults(null);
     setSuccessMessage('');
     setSavedIds([]);
@@ -39,8 +43,8 @@ export default function TargetGenerationPage() {
         create_formulations: false,
       });
       setResults(res.data.data);
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Error generating formulations');
+    } catch (error) {
+      setError(getErrorMessage(error, 'Unable to generate formulations.'));
     } finally {
       setLoading(false);
     }
@@ -58,17 +62,17 @@ export default function TargetGenerationPage() {
       
       setSavedIds(prev => [...prev, candidate.id]);
       setSuccessMessage(`✓ Formulation "${res.data.data.name}" created successfully!`);
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Error saving formulation');
+    } catch (error) {
+      setError(getErrorMessage(error, 'Unable to save formulation.'));
     } finally {
       setSavingId(null);
     }
   }
 
   function getScoreColor(score: number): string {
-    if (score >= 90) return 'text-green-600';
-    if (score >= 75) return 'text-yellow-600';
-    if (score >= 60) return 'text-orange-600';
+    if (score >= 90) return 'text-green-700';
+    if (score >= 75) return 'text-yellow-700';
+    if (score >= 60) return 'text-orange-700';
     return 'text-red-600';
   }
 
@@ -81,6 +85,7 @@ export default function TargetGenerationPage() {
 
   return (
     <div>
+      <StatusMessage error={error} />
       <div className="px-4 py-5 sm:px-6">
         <h1 className="text-3xl font-bold text-gray-900">Target-Based Generation</h1>
         <p className="mt-1 text-sm text-gray-500">
@@ -91,7 +96,7 @@ export default function TargetGenerationPage() {
       {/* Success Message */}
       {successMessage && (
         <div className="mx-4 mb-4 bg-green-50 border border-green-200 rounded-lg p-4 flex items-center">
-          <CheckCircle className="h-5 w-5 text-green-600 mr-3" />
+          <CheckCircle className="h-5 w-5 text-green-700 mr-3" />
           <span className="text-green-800 font-medium">{successMessage}</span>
           <a href="/formulations" className="ml-auto text-green-700 hover:text-green-900 text-sm font-medium">
             View Formulations →
@@ -220,7 +225,7 @@ export default function TargetGenerationPage() {
         <button
           onClick={generate}
           disabled={loading}
-          className="mt-6 w-full px-4 py-3 bg-sky-600 text-white rounded-md hover:bg-sky-700 disabled:opacity-50 flex items-center justify-center font-medium"
+          className="mt-6 w-full px-4 py-3 bg-sky-700 text-white rounded-md hover:bg-sky-800 disabled:opacity-50 flex items-center justify-center font-medium"
         >
           {loading ? (
             <>
@@ -269,7 +274,7 @@ export default function TargetGenerationPage() {
                     <div>
                       <h3 className="text-xl font-semibold text-gray-900">
                         Candidate #{idx + 1}
-                        {idx === 0 && <span className="ml-2 text-sm text-green-600">(Best Match)</span>}
+                        {idx === 0 && <span className="ml-2 text-sm text-green-700">(Best Match)</span>}
                       </h3>
                       <p className="text-sm text-gray-500 mt-1">
                         {candidate.ingredients?.length || 0} ingredients • {candidate.beverage_type}
@@ -314,7 +319,7 @@ export default function TargetGenerationPage() {
                             <p className="text-xs text-purple-500">Sugar/100ml</p>
                           </div>
                           <div className="bg-green-50 p-2 rounded text-center">
-                            <p className="text-green-600 font-semibold">{candidate.calculated_values.cost_per_liter?.toFixed(2)}</p>
+                            <p className="text-green-700 font-semibold">{candidate.calculated_values.cost_per_liter?.toFixed(2)}</p>
                             <p className="text-xs text-green-500">DZD/L</p>
                           </div>
                         </div>
@@ -438,7 +443,7 @@ export default function TargetGenerationPage() {
                         <div className="bg-gray-50 p-3 rounded">
                           <div className="flex justify-between items-center mb-2">
                             <span className="font-medium text-gray-700">Regulatory Compliance</span>
-                            <span className={`font-semibold ${candidate.scores.regulatory.max_limits_ok ? 'text-green-600' : 'text-red-600'}`}>
+                            <span className={`font-semibold ${candidate.scores.regulatory.max_limits_ok ? 'text-green-700' : 'text-red-600'}`}>
                               {candidate.scores.regulatory.max_limits_ok ? 'Passed local screen' : 'Review required'}
                             </span>
                           </div>
@@ -474,7 +479,7 @@ export default function TargetGenerationPage() {
                     <button
                       onClick={() => saveAsFormulation(candidate, idx)}
                       disabled={savingId === candidate.id}
-                      className="w-full px-4 py-3 bg-sky-600 text-white rounded-md hover:bg-sky-700 disabled:opacity-50 font-medium flex items-center justify-center"
+                      className="w-full px-4 py-3 bg-sky-700 text-white rounded-md hover:bg-sky-800 disabled:opacity-50 font-medium flex items-center justify-center"
                     >
                       {savingId === candidate.id ? (
                         <>

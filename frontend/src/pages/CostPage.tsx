@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { costAPI, formulationsAPI } from '../services/api';
 import { Formulation } from '../types';
 import { DollarSign, TrendingUp, Calculator, Loader, Info } from 'lucide-react';
+import StatusMessage from '../components/StatusMessage';
+import { getErrorMessage } from '../services/errors';
 
 export default function CostPage() {
   const [formulations, setFormulations] = useState<Formulation[]>([]);
@@ -16,6 +18,7 @@ export default function CostPage() {
   const [comparisons, setComparisons] = useState<any[]>([]);
   const [roiData, setRoiData] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<'cost' | 'compare' | 'roi'>('cost');
+  const [error, setError] = useState('');
 
   useEffect(() => {
     loadFormulations();
@@ -30,7 +33,7 @@ export default function CostPage() {
         setSelectedFormulationId(res.data.data[0].id);
       }
     } catch (error) {
-      console.error('Error loading formulations:', error);
+      setError(getErrorMessage(error, 'Unable to load formulations.'));
     } finally {
       setLoadingFormulations(false);
     }
@@ -40,6 +43,7 @@ export default function CostPage() {
     if (!selectedFormulationId) return;
 
     setLoading(true);
+    setError('');
     setCostData(null);
     try {
       const res = await costAPI.calculateBatchCost(selectedFormulationId, {
@@ -49,8 +53,8 @@ export default function CostPage() {
       });
       setCostData(res.data.data);
       setActiveTab('cost');
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Error calculating cost');
+    } catch (error) {
+      setError(getErrorMessage(error, 'Unable to calculate cost.'));
     } finally {
       setLoading(false);
     }
@@ -60,13 +64,14 @@ export default function CostPage() {
     if (!selectedFormulationId) return;
 
     setLoading(true);
+    setError('');
     setComparisons([]);
     try {
       const res = await costAPI.compareBatchSizes(selectedFormulationId, [1, 10, 100, 1000, 10000]);
       setComparisons(res.data.data);
       setActiveTab('compare');
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Error comparing batch sizes');
+    } catch (error) {
+      setError(getErrorMessage(error, 'Unable to compare batch sizes.'));
     } finally {
       setLoading(false);
     }
@@ -74,11 +79,12 @@ export default function CostPage() {
 
   async function calculateROI() {
     if (!selectedFormulationId || !sellingPrice) {
-      alert('Please enter a selling price per liter');
+      setError('Please enter a selling price per liter.');
       return;
     }
 
     setLoading(true);
+    setError('');
     setRoiData(null);
     try {
       const res = await costAPI.calculateROI(selectedFormulationId, {
@@ -87,8 +93,8 @@ export default function CostPage() {
       });
       setRoiData(res.data.data);
       setActiveTab('roi');
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Error calculating ROI');
+    } catch (error) {
+      setError(getErrorMessage(error, 'Unable to calculate ROI.'));
     } finally {
       setLoading(false);
     }
@@ -104,6 +110,7 @@ export default function CostPage() {
           Batch costing (1L → 10,000L) with ROI estimation
         </p>
       </div>
+      <div className="mx-4 mb-4"><StatusMessage error={error} /></div>
 
       {/* Info Box */}
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 mx-4">
@@ -238,7 +245,7 @@ export default function CostPage() {
               <button
                 onClick={calculateCost}
                 disabled={loading || !selectedFormulationId}
-                className="px-4 py-3 bg-sky-600 text-white rounded-md hover:bg-sky-700 disabled:opacity-50 flex items-center justify-center font-medium"
+                className="px-4 py-3 bg-sky-700 text-white rounded-md hover:bg-sky-800 disabled:opacity-50 flex items-center justify-center font-medium"
               >
                 {loading && activeTab === 'cost' ? (
                   <Loader className="h-5 w-5 mr-2 animate-spin" />
@@ -362,7 +369,7 @@ export default function CostPage() {
                     </p>
                   </div>
                   <div className="bg-green-50 p-4 rounded-lg">
-                    <p className="text-green-600 text-sm">Est. Profit</p>
+                    <p className="text-green-700 text-sm">Est. Profit</p>
                     <p className="text-xl font-bold text-green-700">
                       {costData.breakdown?.estimated_profit?.toLocaleString(undefined, { maximumFractionDigits: 2 })} DZD
                     </p>
@@ -418,7 +425,7 @@ export default function CostPage() {
                             {comp.final_price_per_liter?.toFixed(2)} DZD
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap text-sm">
-                            <span className={`font-medium ${comp.roi_percent >= 25 ? 'text-green-600' : 'text-gray-600'}`}>
+                            <span className={`font-medium ${comp.roi_percent >= 25 ? 'text-green-700' : 'text-gray-600'}`}>
                               {comp.roi_percent?.toFixed(1)}%
                             </span>
                           </td>
@@ -467,7 +474,7 @@ export default function CostPage() {
                     </p>
                   </div>
                   <div className="bg-green-50 p-6 rounded-lg text-center">
-                    <p className="text-green-600 text-sm font-medium">Profit</p>
+                    <p className="text-green-700 text-sm font-medium">Profit</p>
                     <p className={`text-3xl font-bold ${roiData.profit >= 0 ? 'text-green-700' : 'text-red-700'}`}>
                       {roiData.profit?.toLocaleString(undefined, { maximumFractionDigits: 2 })} DZD
                     </p>

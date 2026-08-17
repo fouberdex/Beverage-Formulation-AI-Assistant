@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { compatibilityAPI, formulationsAPI } from '../services/api';
 import { Formulation } from '../types';
 import { AlertTriangle, CheckCircle, XCircle, Info, Shield } from 'lucide-react';
+import StatusMessage from '../components/StatusMessage';
+import { getErrorMessage } from '../services/errors';
 
 export default function CompatibilityPage() {
   const [formulations, setFormulations] = useState<Formulation[]>([]);
@@ -9,6 +11,7 @@ export default function CompatibilityPage() {
   const [loading, setLoading] = useState(false);
   const [loadingFormulations, setLoadingFormulations] = useState(true);
   const [result, setResult] = useState<any>(null);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     loadFormulations();
@@ -16,6 +19,7 @@ export default function CompatibilityPage() {
 
   async function loadFormulations() {
     setLoadingFormulations(true);
+    setError('');
     try {
       const res = await formulationsAPI.getAll({ limit: 100 });
       setFormulations(res.data.data);
@@ -23,7 +27,7 @@ export default function CompatibilityPage() {
         setSelectedFormulationId(res.data.data[0].id);
       }
     } catch (error) {
-      console.error('Error loading formulations:', error);
+      setError(getErrorMessage(error, 'Unable to load formulations.'));
     } finally {
       setLoadingFormulations(false);
     }
@@ -31,17 +35,18 @@ export default function CompatibilityPage() {
 
   async function evaluateCompatibility() {
     if (!selectedFormulationId) {
-      alert('Please select a formulation');
+      setError('Please select a formulation.');
       return;
     }
 
     setLoading(true);
+    setError('');
     setResult(null);
     try {
       const res = await compatibilityAPI.evaluateFormulation(selectedFormulationId);
       setResult(res.data.data);
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Error evaluating compatibility');
+    } catch (error) {
+      setError(getErrorMessage(error, 'Unable to evaluate compatibility.'));
     } finally {
       setLoading(false);
     }
@@ -57,6 +62,7 @@ export default function CompatibilityPage() {
           Evaluate formulation compatibility and identify potential risks
         </p>
       </div>
+      <div className="mx-4 mb-4"><StatusMessage error={error} /></div>
 
       {/* Info Box */}
       <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-6 mx-4">
@@ -88,10 +94,11 @@ export default function CompatibilityPage() {
         ) : (
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="compatibility-formulation" className="block text-sm font-medium text-gray-700 mb-2">
                 Select Formulation to Evaluate
               </label>
               <select
+                id="compatibility-formulation"
                 value={selectedFormulationId}
                 onChange={(e) => {
                   setSelectedFormulationId(e.target.value);
@@ -123,7 +130,7 @@ export default function CompatibilityPage() {
                     <span className="text-gray-500">Total %:</span>
                     <p className={`font-medium ${
                       Math.abs((selectedFormulation.total_percentage || 0) - 100) < 0.1 
-                        ? 'text-green-600' 
+                        ? 'text-green-700'
                         : 'text-red-600'
                     }`}>
                       {(selectedFormulation.total_percentage || 0).toFixed(2)}%
@@ -149,7 +156,7 @@ export default function CompatibilityPage() {
             <button
               onClick={evaluateCompatibility}
               disabled={loading || !selectedFormulationId}
-              className="w-full px-4 py-3 bg-sky-600 text-white rounded-md hover:bg-sky-700 disabled:opacity-50 flex items-center justify-center font-medium"
+              className="w-full px-4 py-3 bg-sky-700 text-white rounded-md hover:bg-sky-800 disabled:opacity-50 flex items-center justify-center font-medium"
             >
               {loading ? (
                 <>
@@ -186,9 +193,9 @@ export default function CompatibilityPage() {
                   </p>
                 </div>
                 <div className={`text-4xl font-bold ${
-                  result.overall_score >= 90 ? 'text-green-600' :
-                  result.overall_score >= 70 ? 'text-yellow-600' :
-                  result.overall_score >= 50 ? 'text-orange-600' :
+                  result.overall_score >= 90 ? 'text-green-700' :
+                  result.overall_score >= 70 ? 'text-yellow-700' :
+                  result.overall_score >= 50 ? 'text-orange-700' :
                   'text-red-600'
                 }`}>
                   {result.overall_score}/100
@@ -228,7 +235,7 @@ export default function CompatibilityPage() {
             {result.warnings && result.warnings.length > 0 && (
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                 <div className="flex items-center mb-3">
-                  <AlertTriangle className="h-5 w-5 text-yellow-600 mr-2" />
+                  <AlertTriangle className="h-5 w-5 text-yellow-700 mr-2" />
                   <h3 className="text-lg font-semibold text-yellow-900">Warnings ({result.warnings.length})</h3>
                 </div>
                 <ul className="space-y-2">
@@ -247,7 +254,7 @@ export default function CompatibilityPage() {
               (!result.warnings || result.warnings.length === 0) && (
                 <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                   <div className="flex items-center">
-                    <CheckCircle className="h-6 w-6 text-green-600 mr-3" />
+                    <CheckCircle className="h-6 w-6 text-green-700 mr-3" />
                     <div>
                       <h3 className="text-lg font-semibold text-green-900">All Clear!</h3>
                       <p className="text-sm text-green-700">No compatibility risks or warnings detected.</p>

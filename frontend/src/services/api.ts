@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { supabase } from './supabase';
+import { normalizeApiError } from './errors';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 const API_KEY = import.meta.env.VITE_API_KEY;
@@ -13,10 +14,23 @@ const api = axios.create({
 });
 
 api.interceptors.request.use(async (config) => {
+  if (import.meta.env.MODE === 'e2e') {
+    config.headers.Authorization = 'Bearer e2e-token';
+    return config;
+  }
   const { data } = await supabase.auth.getSession();
   if (data.session?.access_token) config.headers.Authorization = `Bearer ${data.session.access_token}`;
   return config;
 });
+
+api.interceptors.response.use(
+  response => response,
+  error => {
+    const normalized = normalizeApiError(error);
+    if (normalized.status === 401) window.dispatchEvent(new CustomEvent('beverageai:unauthorized'));
+    return Promise.reject(normalized);
+  },
+);
 
 // Ingredients API
 export const ingredientsAPI = {

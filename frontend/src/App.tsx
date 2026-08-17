@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react
 import { Home, Package, FlaskConical, Sparkles, Target, Shield, DollarSign, Menu, X, LogOut, UserRound, History } from 'lucide-react';
 import { useAuth } from './auth/AuthContext';
 import AuthPage from './pages/AuthPage';
+import { hasRole, WORKSPACE_ROLES, type UserRole } from './auth/permissions';
 
 // Lazy load pages to catch any import errors
 const Dashboard = React.lazy(() => import('./pages/Dashboard'));
@@ -18,37 +19,27 @@ const HistoryPage = React.lazy(() => import('./pages/HistoryPage'));
 
 function LoadingFallback() {
   return (
-    <div className="flex items-center justify-center min-h-screen">
+    <div role="status" aria-live="polite" className="flex items-center justify-center min-h-screen">
       <div className="text-lg text-gray-600">Loading...</div>
     </div>
   );
 }
 
-function ErrorBoundary({ children }: { children: React.ReactNode }) {
-  const [hasError, setHasError] = React.useState(false);
-  const [error, setError] = React.useState<Error | null>(null);
-
-  React.useEffect(() => {
-    const handleError = (event: ErrorEvent) => {
-      setHasError(true);
-      setError(new Error(event.message));
-    };
-    window.addEventListener('error', handleError);
-    return () => window.removeEventListener('error', handleError);
-  }, []);
-
-  if (hasError) {
-    return (
-      <div className="min-h-screen bg-red-50 flex items-center justify-center p-4">
-        <div className="bg-white p-6 rounded-lg shadow-lg max-w-lg">
-          <h1 className="text-xl font-bold text-red-600 mb-2">Something went wrong</h1>
-          <p className="text-gray-600">{error?.message || 'Unknown error'}</p>
-        </div>
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  componentDidCatch(error: Error, details: React.ErrorInfo) { console.error('Unhandled application error', error, details); }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return <div className="min-h-screen bg-red-50 flex items-center justify-center p-4">
+      <div role="alert" className="bg-white p-6 rounded-lg shadow-lg max-w-lg">
+        <h1 className="text-xl font-bold text-red-700 mb-2">Something went wrong</h1>
+        <p className="text-gray-600">The page could not be displayed. Your data has not been changed.</p>
+        <button type="button" onClick={() => this.setState({ error: null })}
+          className="mt-4 rounded-md bg-sky-700 px-4 py-2 text-sm font-medium text-white hover:bg-sky-800">Try again</button>
       </div>
-    );
+    </div>;
   }
-
-  return <>{children}</>;
 }
 
 const navItems = [
@@ -56,10 +47,10 @@ const navItems = [
   { to: '/ingredients', icon: Package, label: 'Ingredients' },
   { to: '/formulations', icon: FlaskConical, label: 'Formulations' },
   { to: '/compatibility', icon: Shield, label: 'Compatibility' },
-  { to: '/ai', icon: Sparkles, label: 'AI Engine' },
-  { to: '/target-generation', icon: Target, label: 'Target Gen' },
-  { to: '/regulatory', icon: Shield, label: 'Regulatory' },
-  { to: '/cost', icon: DollarSign, label: 'Cost & ROI' },
+  { to: '/ai', icon: Sparkles, label: 'AI Engine', roles: WORKSPACE_ROLES },
+  { to: '/target-generation', icon: Target, label: 'Target Gen', roles: WORKSPACE_ROLES },
+  { to: '/regulatory', icon: Shield, label: 'Regulatory', roles: WORKSPACE_ROLES },
+  { to: '/cost', icon: DollarSign, label: 'Cost & ROI', roles: WORKSPACE_ROLES },
   { to: '/history', icon: History, label: 'History' },
   { to: '/account', icon: UserRound, label: 'Account' },
 ];
@@ -67,35 +58,44 @@ const navItems = [
 function Navigation() {
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
   const location = useLocation();
-  const { session, signOut } = useAuth();
+  const { profile, session, signOut } = useAuth();
+  const visibleItems = navItems.filter(item => hasRole(profile?.role, item.roles));
+
+  React.useEffect(() => setMobileMenuOpen(false), [location.pathname]);
+  React.useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setMobileMenuOpen(false); };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, []);
 
   return (
-    <nav className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-50">
+    <nav aria-label="Primary navigation" className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4">
         <div className="flex justify-between h-14">
           <div className="flex items-center">
             <Link to="/" className="flex items-center">
-              <FlaskConical className="h-7 w-7 text-sky-600" />
+              <FlaskConical aria-hidden="true" className="h-7 w-7 text-sky-600" />
               <span className="ml-2 text-lg font-bold text-gray-900">BeverageAI DZ</span>
             </Link>
           </div>
 
           {/* Desktop Navigation */}
           <div className="hidden lg:flex lg:items-center lg:space-x-1">
-            {navItems.map((item) => {
+            {visibleItems.map((item) => {
               const Icon = item.icon;
               const isActive = location.pathname === item.to;
               return (
                 <Link
                   key={item.to}
                   to={item.to}
+                  aria-current={isActive ? 'page' : undefined}
                   className={`inline-flex items-center px-2 py-1.5 text-xs font-medium rounded-md transition-colors ${
                     isActive
                       ? 'bg-sky-50 text-sky-700'
                       : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
                   }`}
                 >
-                  <Icon className="h-3.5 w-3.5 mr-1" />
+                  <Icon aria-hidden="true" className="h-3.5 w-3.5 mr-1" />
                   {item.label}
                 </Link>
               );
@@ -103,28 +103,32 @@ function Navigation() {
             <span className="ml-2 max-w-36 truncate border-l pl-3 text-xs text-gray-500" title={session?.user.email}>
               {session?.user.email}
             </span>
-            <button type="button" onClick={() => void signOut()} title="Sign out"
+            <button type="button" onClick={() => void signOut()} aria-label="Sign out"
               className="ml-1 rounded-md p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-800">
-              <LogOut className="h-4 w-4" />
+              <LogOut aria-hidden="true" className="h-4 w-4" />
             </button>
           </div>
 
           {/* Mobile menu button */}
           <div className="lg:hidden flex items-center">
             <button
+              type="button"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              aria-expanded={mobileMenuOpen}
+              aria-controls="mobile-navigation"
+              aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
               className="p-2 rounded-md text-gray-500 hover:text-gray-700 hover:bg-gray-100"
             >
-              {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+              {mobileMenuOpen ? <X aria-hidden="true" className="h-5 w-5" /> : <Menu aria-hidden="true" className="h-5 w-5" />}
             </button>
           </div>
         </div>
 
         {/* Mobile Navigation */}
         {mobileMenuOpen && (
-          <div className="lg:hidden py-2 border-t">
+          <div id="mobile-navigation" className="lg:hidden py-2 border-t">
             <div className="grid grid-cols-2 gap-2">
-              {navItems.map((item) => {
+              {visibleItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = location.pathname === item.to;
                 return (
@@ -132,13 +136,14 @@ function Navigation() {
                     key={item.to}
                     to={item.to}
                     onClick={() => setMobileMenuOpen(false)}
+                    aria-current={isActive ? 'page' : undefined}
                     className={`flex items-center px-3 py-2 text-sm font-medium rounded-md ${
                       isActive
                         ? 'bg-sky-50 text-sky-700'
                         : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
                     }`}
                   >
-                    <Icon className="h-4 w-4 mr-2" />
+                    <Icon aria-hidden="true" className="h-4 w-4 mr-2" />
                     {item.label}
                   </Link>
                 );
@@ -146,13 +151,29 @@ function Navigation() {
             </div>
             <button type="button" onClick={() => void signOut()}
               className="mt-2 flex w-full items-center rounded-md px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50">
-              <LogOut className="mr-2 h-4 w-4" /> Sign out
+              <LogOut aria-hidden="true" className="mr-2 h-4 w-4" /> Sign out
             </button>
           </div>
         )}
       </div>
     </nav>
   );
+}
+
+function RouteFocus() {
+  const location = useLocation();
+  React.useEffect(() => { document.getElementById('main-content')?.focus(); }, [location.pathname]);
+  return null;
+}
+
+function RoleRoute({ roles, children }: { roles: readonly UserRole[]; children: React.ReactNode }) {
+  const { profile } = useAuth();
+  if (hasRole(profile?.role, roles)) return <>{children}</>;
+  return <section role="alert" className="mx-auto mt-12 max-w-xl rounded-lg border border-amber-200 bg-amber-50 p-6">
+    <h1 className="text-2xl font-bold text-gray-900">Access restricted</h1>
+    <p className="mt-2 text-gray-700">Your {profile?.role ?? 'current'} role cannot open this workspace.</p>
+    <Link to="/" className="mt-4 inline-block font-medium text-sky-700 underline">Return to dashboard</Link>
+  </section>;
 }
 
 function App() {
@@ -165,22 +186,25 @@ function App() {
     <ErrorBoundary>
       <Router>
         <div className="min-h-screen bg-gray-50">
+          <a href="#main-content" className="skip-link">Skip to main content</a>
           <Navigation />
+          <RouteFocus />
 
           {/* Main Content */}
-          <main className="max-w-7xl mx-auto py-4 px-4">
+          <main id="main-content" tabIndex={-1} className="max-w-7xl mx-auto py-4 px-4 outline-none">
             <React.Suspense fallback={<LoadingFallback />}>
               <Routes>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/ingredients" element={<IngredientsPage />} />
                 <Route path="/formulations" element={<FormulationsPage />} />
                 <Route path="/compatibility" element={<CompatibilityPage />} />
-                <Route path="/ai" element={<AIPage />} />
-                <Route path="/target-generation" element={<TargetGenerationPage />} />
-                <Route path="/regulatory" element={<RegulatoryPage />} />
-                <Route path="/cost" element={<CostPage />} />
+                <Route path="/ai" element={<RoleRoute roles={WORKSPACE_ROLES}><AIPage /></RoleRoute>} />
+                <Route path="/target-generation" element={<RoleRoute roles={WORKSPACE_ROLES}><TargetGenerationPage /></RoleRoute>} />
+                <Route path="/regulatory" element={<RoleRoute roles={WORKSPACE_ROLES}><RegulatoryPage /></RoleRoute>} />
+                <Route path="/cost" element={<RoleRoute roles={WORKSPACE_ROLES}><CostPage /></RoleRoute>} />
                 <Route path="/history" element={<HistoryPage />} />
                 <Route path="/account" element={<AccountPage />} />
+                <Route path="*" element={<section className="py-16 text-center"><h1 className="text-3xl font-bold">Page not found</h1><Link to="/" className="mt-4 inline-block text-sky-700 underline">Return home</Link></section>} />
               </Routes>
             </React.Suspense>
           </main>

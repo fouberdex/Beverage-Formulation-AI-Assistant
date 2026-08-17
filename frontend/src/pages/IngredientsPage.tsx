@@ -1,13 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { costAPI, ingredientsAPI } from '../services/api';
 import { Ingredient } from '../types';
 import { Plus, Search, Filter, X, Pencil, Archive } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
+import Pagination from '../components/Pagination';
+import StatusMessage from '../components/StatusMessage';
+import { getErrorMessage } from '../services/errors';
 
 export default function IngredientsPage() {
   const { profile } = useAuth();
   const canManageIngredients = profile?.role === 'admin';
-  const pageSize = 50;
+  const pageSize = 25;
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -17,6 +20,9 @@ export default function IngredientsPage() {
   const [selectedIngredient, setSelectedIngredient] = useState<Ingredient | null>(null);
   const [priceHistory, setPriceHistory] = useState<any[]>([]);
   const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
   const editorRef = useRef<HTMLDivElement>(null);
 
   // Form state for new ingredient
@@ -38,9 +44,13 @@ export default function IngredientsPage() {
   });
 
   useEffect(() => {
-    loadCategories();
-    loadIngredients();
-  }, [category, search]);
+    void loadCategories();
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadIngredients(), 250);
+    return () => window.clearTimeout(timer);
+  }, [category, search, page]);
 
   useEffect(() => {
     setPage(1);
@@ -49,13 +59,8 @@ export default function IngredientsPage() {
   useEffect(() => {
     if (!showModal) return;
     editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    editorRef.current?.focus();
   }, [showModal, selectedIngredient]);
-
-  const totalPages = Math.max(1, Math.ceil(ingredients.length / pageSize));
-  const visibleIngredients = useMemo(
-    () => ingredients.slice((page - 1) * pageSize, page * pageSize),
-    [ingredients, page]
-  );
 
   async function loadCategories() {
     try {
@@ -68,15 +73,18 @@ export default function IngredientsPage() {
 
   async function loadIngredients() {
     setLoading(true);
+    setError('');
     try {
       const res = await ingredientsAPI.getAll({
         search,
         category: category || undefined,
-        limit: 500,
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
       });
       setIngredients(res.data.data);
+      setTotal(res.data.pagination.total);
     } catch (error) {
-      console.error('Error loading ingredients:', error);
+      setError(getErrorMessage(error, 'Unable to load ingredients.'));
     } finally {
       setLoading(false);
     }
@@ -135,23 +143,25 @@ export default function IngredientsPage() {
     if (!window.confirm(`Archive ${ingredient.name}? This is allowed only when no active formulation uses it.`)) return;
     try {
       await ingredientsAPI.delete(ingredient.id);
+      setMessage(`${ingredient.name} was archived.`);
       await loadIngredients();
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Error archiving ingredient');
+    } catch (error) {
+      setError(getErrorMessage(error, 'Unable to archive ingredient.'));
     }
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setError(''); setMessage('');
     try {
       const payload = { ...formData, max_percentage: formData.max_percentage === '' ? undefined : formData.max_percentage };
       if (selectedIngredient) await ingredientsAPI.update(selectedIngredient.id, payload);
       else await ingredientsAPI.create(payload);
       setShowModal(false);
-      loadIngredients();
+      setMessage(selectedIngredient ? 'Ingredient updated.' : 'Ingredient created.');
+      void loadIngredients();
     } catch (error) {
-      console.error('Error creating ingredient:', error);
-      alert((error as any).response?.data?.error || 'Error saving ingredient');
+      setError(getErrorMessage(error, 'Unable to save ingredient.'));
     }
   }
 
@@ -161,13 +171,13 @@ export default function IngredientsPage() {
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Ingredients</h1>
           <p className="mt-1 text-sm text-gray-500">
-            {ingredients.length} beverage ingredients loaded · DZD/kg values are planning estimates until replaced with supplier quotes
+            {total} beverage ingredients · DZD/kg values are planning estimates until replaced with supplier quotes
           </p>
         </div>
         {canManageIngredients && (
           <button
             onClick={openAddModal}
-            className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-sky-600 hover:bg-sky-700"
+            className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-sky-700 hover:bg-sky-800"
           >
             <Plus className="h-4 w-4 mr-2" />
             Add Ingredient
@@ -175,10 +185,12 @@ export default function IngredientsPage() {
         )}
       </div>
 
+      <StatusMessage error={error} message={message} />
+
       {/* The editor is deliberately inline instead of an overlay. This keeps it
           usable in browsers where stacking contexts or modal backdrops fail. */}
       {showModal && (
-        <div ref={editorRef} className="mb-6 scroll-mt-20 rounded-lg border border-sky-200 bg-white shadow-xl">
+        <div ref={editorRef} role="region" aria-labelledby="ingredient-editor-title" tabIndex={-1} className="mb-6 scroll-mt-20 rounded-lg border border-sky-200 bg-white shadow-xl outline-none">
           <div className="p-6">
             <div className="mb-6 flex items-center justify-between">
               <h2 id="ingredient-editor-title" className="text-2xl font-bold text-gray-900">
@@ -212,6 +224,7 @@ export default function IngredientsPage() {
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
             <input
+              aria-label="Search ingredients"
               type="text"
               placeholder="Search ingredients..."
               value={search}
@@ -222,6 +235,7 @@ export default function IngredientsPage() {
           <div className="relative">
             <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
             <select
+              aria-label="Filter ingredients by category"
               value={category}
               onChange={(e) => setCategory(e.target.value)}
               className="pl-10 w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2"
@@ -246,31 +260,32 @@ export default function IngredientsPage() {
         ) : (
           <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
+            <caption className="sr-only">Ingredient catalog</caption>
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Code
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Name
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Category
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Price (DZD/kg)
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Calories
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Halal
                 </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {visibleIngredients.map((ingredient) => (
+              {ingredients.map((ingredient) => (
                 <tr key={ingredient.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                     {ingredient.code}
@@ -302,10 +317,10 @@ export default function IngredientsPage() {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right">
                     {canManageIngredients ? <>
-                      <button onClick={() => openEditModal(ingredient)} className="p-2 text-sky-600 hover:bg-sky-50 rounded" title="Edit">
+                      <button type="button" onClick={() => openEditModal(ingredient)} className="p-2 text-sky-600 hover:bg-sky-50 rounded" aria-label={`Edit ${ingredient.name}`}>
                         <Pencil className="h-4 w-4" />
                       </button>
-                      <button onClick={() => archiveIngredient(ingredient)} className="p-2 text-amber-700 hover:bg-amber-50 rounded" title="Archive">
+                      <button type="button" onClick={() => archiveIngredient(ingredient)} className="p-2 text-amber-700 hover:bg-amber-50 rounded" aria-label={`Archive ${ingredient.name}`}>
                         <Archive className="h-4 w-4" />
                       </button>
                     </> : <span className="text-xs text-gray-400">Read only</span>}
@@ -316,32 +331,7 @@ export default function IngredientsPage() {
           </table>
           </div>
         )}
-        {!loading && ingredients.length > 0 && (
-          <div className="flex flex-col gap-3 border-t border-gray-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-gray-600">
-              Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, ingredients.length)} of {ingredients.length}
-            </p>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setPage((current) => Math.max(1, current - 1))}
-                disabled={page === 1}
-                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Previous
-              </button>
-              <span className="text-sm text-gray-600">Page {page} of {totalPages}</span>
-              <button
-                type="button"
-                onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
-                disabled={page === totalPages}
-                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        )}
+        {!loading && <Pagination page={page} pageSize={pageSize} total={total} onPageChange={setPage} label="Ingredients" />}
       </div>
 
     </div>
@@ -389,6 +379,7 @@ function IngredientForm({
                         Code *
                       </label>
                       <input
+                        aria-label="Ingredient code"
                         type="text"
                         value={formData.code}
                         onChange={(e) => setFormData({ ...formData, code: e.target.value })}
@@ -401,6 +392,7 @@ function IngredientForm({
                         Category *
                       </label>
                       <select
+                        aria-label="Ingredient category"
                         value={formData.category}
                         onChange={(e) => setFormData({ ...formData, category: e.target.value })}
                         className="w-full rounded-md border p-2"
@@ -426,6 +418,7 @@ function IngredientForm({
                       Name (English) *
                     </label>
                     <input
+                      aria-label="Ingredient name in English"
                       type="text"
                       value={formData.name}
                       onChange={(e) => setFormData({ ...formData, name: e.target.value })}
@@ -441,6 +434,7 @@ function IngredientForm({
                         Name (Arabic)
                       </label>
                       <input
+                        aria-label="Ingredient name in Arabic"
                         type="text"
                         value={formData.name_ar}
                         onChange={(e) => setFormData({ ...formData, name_ar: e.target.value })}
@@ -453,6 +447,7 @@ function IngredientForm({
                         Name (French)
                       </label>
                       <input
+                        aria-label="Ingredient name in French"
                         type="text"
                         value={formData.name_fr}
                         onChange={(e) => setFormData({ ...formData, name_fr: e.target.value })}
@@ -467,6 +462,7 @@ function IngredientForm({
                         Price (DZD/kg) *
                       </label>
                       <input
+                        aria-label="Price in DZD per kilogram"
                         type="number"
                         value={formData.base_price_per_kg}
                         onChange={(e) => setFormData({ ...formData, base_price_per_kg: parseFloat(e.target.value) || 0 })}
@@ -480,6 +476,7 @@ function IngredientForm({
                         Calories/100g
                       </label>
                       <input
+                        aria-label="Calories per 100 grams"
                         type="number"
                         value={formData.calories_per_100g}
                         onChange={(e) => setFormData({ ...formData, calories_per_100g: parseFloat(e.target.value) || 0 })}
@@ -492,6 +489,7 @@ function IngredientForm({
                         Sugar (g/100g)
                       </label>
                       <input
+                        aria-label="Sugar in grams per 100 grams"
                         type="number"
                         value={formData.sugar_g}
                         onChange={(e) => setFormData({ ...formData, sugar_g: parseFloat(e.target.value) || 0 })}
@@ -504,14 +502,14 @@ function IngredientForm({
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Maximum Percentage</label>
-                      <input type="number" min="0.0001" max="100" step="0.0001"
+                      <input aria-label="Maximum percentage" type="number" min="0.0001" max="100" step="0.0001"
                         value={formData.max_percentage}
                         onChange={(e) => setFormData({ ...formData, max_percentage: e.target.value === '' ? '' : Number(e.target.value) })}
                         className="w-full rounded-md border p-2" placeholder="No configured limit" />
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Regulatory Status</label>
-                      <select value={formData.regulatory_status}
+                      <select aria-label="Regulatory status" value={formData.regulatory_status}
                         onChange={(e) => setFormData({ ...formData, regulatory_status: e.target.value })}
                         className="w-full rounded-md border p-2">
                         <option value="pending">Pending review</option>
@@ -581,7 +579,7 @@ function IngredientForm({
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-2 bg-sky-600 text-white rounded-md hover:bg-sky-700"
+                    className="px-4 py-2 bg-sky-700 text-white rounded-md hover:bg-sky-800"
                   >
                     {selectedIngredient ? 'Save Changes' : 'Add Ingredient'}
                   </button>

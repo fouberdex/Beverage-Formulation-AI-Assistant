@@ -25,14 +25,26 @@ type AuthContextValue = {
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+const e2eMode = import.meta.env.MODE === 'e2e';
+
+function e2eIdentity() {
+  const role = (window.localStorage.getItem('e2e-role') || 'viewer') as AppProfile['role'];
+  const user = { id: `e2e-${role}`, email: `${role}@example.test`, user_metadata: {} };
+  return {
+    session: { access_token: 'e2e-token', refresh_token: 'e2e-refresh', expires_in: 3600, token_type: 'bearer', user } as Session,
+    profile: { id: user.id, email: user.email, display_name: `E2E ${role}`, role } as AppProfile,
+  };
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
-  const [profile, setProfile] = useState<AppProfile | null>(null);
-  const [loading, setLoading] = useState(true);
+  const identity = e2eMode ? e2eIdentity() : null;
+  const [session, setSession] = useState<Session | null>(identity?.session ?? null);
+  const [profile, setProfile] = useState<AppProfile | null>(identity?.profile ?? null);
+  const [loading, setLoading] = useState(!e2eMode);
   const [recoveryMode, setRecoveryMode] = useState(false);
 
   useEffect(() => {
+    if (e2eMode) return;
     supabase.auth.getSession().then(({ data, error }) => {
       if (error) console.error('Unable to restore Supabase session:', error.message);
       setSession(data.session);
@@ -47,6 +59,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => listener.subscription.unsubscribe();
   }, []);
 
+  useEffect(() => {
+    const expireSession = () => {
+      if (e2eMode) { setSession(null); setProfile(null); return; }
+      void supabase.auth.signOut({ scope: 'local' });
+    };
+    window.addEventListener('beverageai:unauthorized', expireSession);
+    return () => window.removeEventListener('beverageai:unauthorized', expireSession);
+  }, []);
+
   async function refreshProfile() {
     if (!session) {
       setProfile(null);
@@ -57,8 +78,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
-    if (!session) return;
-    void refreshProfile().catch(error => console.error('Unable to load account profile:', error));
+    if (e2eMode) return;
+    if (!session) { setProfile(null); return; }
+    setLoading(true);
+    void refreshProfile()
+      .catch(error => console.error('Unable to load account profile:', error))
+      .finally(() => setLoading(false));
   }, [session?.access_token]);
 
   const value = useMemo<AuthContextValue>(() => ({
@@ -67,10 +92,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loading,
     recoveryMode,
     async signIn(email, password) {
+      if (e2eMode) { const next = e2eIdentity(); setSession(next.session); setProfile(next.profile); return; }
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
     },
     async signUp(email, password, displayName) {
+      if (e2eMode) { const next = e2eIdentity(); setSession(next.session); setProfile(next.profile); return true; }
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
@@ -83,21 +110,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return Boolean(data.session);
     },
     async signOut() {
+      if (e2eMode) { setSession(null); setProfile(null); return; }
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
     },
     async resetPassword(email) {
+      if (e2eMode) return;
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: `${window.location.origin}/account`,
       });
       if (error) throw error;
     },
     async updatePassword(password) {
+      if (e2eMode) { setRecoveryMode(false); return; }
       const { error } = await supabase.auth.updateUser({ password });
       if (error) throw error;
       setRecoveryMode(false);
     },
     async updateDisplayName(displayName) {
+      if (e2eMode) { setProfile(current => current ? { ...current, display_name: displayName } : current); return; }
       const response = await accountAPI.updateProfile(displayName);
       setProfile(current => current ? { ...current, ...response.data.data } : response.data.data);
       const { error } = await supabase.auth.updateUser({ data: { display_name: displayName } });
