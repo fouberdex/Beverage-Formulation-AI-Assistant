@@ -16,6 +16,11 @@ async function mockApi(page: Page, options: { formulationStatus?: number } = {})
     if (path === '/ingredients/meta/stats') return reply({ data: { total_ingredients: 42 } });
     if (path === '/ingredients/meta/categories') return reply({ data: ['base', 'flavor'] });
     if (path === '/ingredients') return reply({ data: [], pagination: { total: 0, limit: 25, offset: 0, has_more: false } });
+    if (path === '/ai/governance') return reply({ data: {
+      provider: { provider: 'google-gemini', model: 'test-model', configured: true },
+      privacy: { external_processing_enabled: false, include_formulation_name: false, prompt_or_response_content_stored: false },
+      quota: { daily_used: 0, daily_limit: 25, daily_remaining: 25, monthly_used: 0, monthly_limit: 250, monthly_remaining: 250 },
+    } });
     if (path === '/formulations' && options.formulationStatus) return reply({ error: 'Backend exploded' }, options.formulationStatus);
     if (path === '/formulations') {
       const limit = Number(url.searchParams.get('limit') || 12);
@@ -55,6 +60,19 @@ test('administrator sees privileged navigation and ingredient management', async
   await useRole(page, 'admin'); await mockApi(page); await page.goto('/ingredients');
   await expect(page.getByRole('link', { name: 'AI Engine' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Add Ingredient' })).toBeVisible();
+});
+
+test('AI provider processing requires explicit account consent', async ({ page }) => {
+  await useRole(page, 'viewer'); await mockApi(page); await page.goto('/account');
+  const consent = page.getByRole('checkbox', { name: /Allow external AI review/ });
+  await expect(consent).not.toBeChecked();
+  await expect(page.getByText(/does not store provider prompts or responses/i)).toBeVisible();
+  await consent.check();
+  const requestPromise = page.waitForRequest(request => request.url().includes('/api/v1/ai/preferences') && request.method() === 'PUT');
+  await page.getByRole('button', { name: 'Save AI privacy' }).click();
+  const request = await requestPromise;
+  expect(request.postDataJSON()).toEqual({ external_processing_enabled: true, include_formulation_name: false });
+  await expect(page.getByRole('status')).toContainText('AI privacy preferences updated');
 });
 
 test('formulations paginate using the API total', async ({ page }) => {

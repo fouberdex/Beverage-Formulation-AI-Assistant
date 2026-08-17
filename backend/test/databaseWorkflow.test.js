@@ -12,6 +12,7 @@ test('Supabase migrations form an ordered, complete database workflow', async ()
     'request_scoped_transactional_repository.sql',
     'controlled_admin_bootstrap.sql',
     'enforce_tenant_relational_integrity.sql',
+    'ai_governance.sql',
   ]);
 
   const bootstrap = await readFile(new URL(`migrations/${migrationNames[2]}`, supabaseDirectory), 'utf8');
@@ -21,6 +22,18 @@ test('Supabase migrations form an ordered, complete database workflow', async ()
   assert.match(bootstrap, /revoke all on function public\.bootstrap_admin\(uuid, text\) from public, anon, authenticated/);
   assert.match(bootstrap, /grant execute on function public\.bootstrap_admin\(uuid, text\) to service_role/);
   assert.doesNotMatch(bootstrap, /first account|case when exists/i);
+});
+
+test('AI governance migration enforces consent ownership and server-only atomic quotas', async () => {
+  const migrationNames = (await readdir(new URL('migrations/', supabaseDirectory))).sort();
+  const governance = await readFile(new URL(`migrations/${migrationNames.at(-1)}`, supabaseDirectory), 'utf8');
+  assert.match(governance, /create table public\.ai_preferences/);
+  assert.match(governance, /external_processing_enabled boolean not null default false/);
+  assert.match(governance, /create table public\.ai_usage_events/);
+  assert.match(governance, /pg_advisory_xact_lock/);
+  assert.match(governance, /enable row level security/g);
+  assert.match(governance, /revoke all on function public\.reserve_ai_quota[\s\S]*authenticated/);
+  assert.doesNotMatch(governance, /prompt(_content)?\s+(text|jsonb)|response(_content)?\s+(text|jsonb)/i);
 });
 
 test('Supabase seed data contains shared catalog rows only', async () => {
@@ -41,4 +54,15 @@ test('RLS integration suite exercises two tenants and cross-tenant denial', asyn
   assert.match(suite, /22222222-2222-4222-8222-222222222222/);
   assert.match(suite, /cannot insert rows owned by tenant B/);
   assert.match(suite, /cannot attach a child record to tenant B formulation/);
+});
+
+test('AI governance integration suite covers tenant isolation and quota enforcement', async () => {
+  const suite = await readFile(new URL('tests/database/003_ai_governance.test.sql', supabaseDirectory), 'utf8');
+
+  assert.match(suite, /33333333-3333-4333-8333-333333333333/);
+  assert.match(suite, /44444444-4444-4444-8444-444444444444/);
+  assert.match(suite, /tenant A sees only its AI preference/);
+  assert.match(suite, /authenticated cannot reserve provider quota directly/);
+  assert.match(suite, /AI_DAILY_QUOTA_EXCEEDED/);
+  assert.match(suite, /tenant B still sees only its own usage/);
 });

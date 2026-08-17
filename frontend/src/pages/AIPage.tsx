@@ -11,6 +11,7 @@ type AIStatus = {
   configured: boolean;
   used: boolean;
   reason?: string;
+  quota?: { daily_remaining: number; daily_limit: number; monthly_remaining: number; monthly_limit: number };
 };
 
 export default function AIPage() {
@@ -322,6 +323,7 @@ export default function AIPage() {
                       : 'Validated local generation used (no external AI review)'}
                   </p>
                   {!aiStatus.used && <p className="mt-1">{aiStatus.reason || 'Gemini review was unavailable'}</p>}
+                  {aiStatus.quota && <p className="mt-1">External reviews remaining: {aiStatus.quota.daily_remaining} today, {aiStatus.quota.monthly_remaining} this month.</p>}
                   <p className="mt-1">All ingredient percentages and displayed numerical changes were calculated by the backend.</p>
                 </div>
               </div>

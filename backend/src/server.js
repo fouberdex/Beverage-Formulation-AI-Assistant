@@ -13,6 +13,14 @@ import {
   reviewFormulationCandidates,
   reviewFormulationVariants,
 } from './services/geminiService.js';
+import {
+  AIQuotaError,
+  completeAIUsage,
+  getAIPreferences,
+  getAIQuotaStatus,
+  reserveAIQuota,
+  updateAIPreferences,
+} from './services/aiGovernance.js';
 
 import { generateId } from './data/mockData.js';
 import { getStorageConfiguration, initializePersistentStore } from './data/persistentStore.js';
@@ -234,6 +242,65 @@ server.get('/metrics', async (request, reply) => {
 
 const apiPrefix = '/api/v1';
 
+function publicAIGovernance({ preferences, quota }) {
+  return {
+    privacy: {
+      external_processing_enabled: preferences.external_processing_enabled,
+      include_formulation_name: preferences.include_formulation_name,
+      prompt_or_response_content_stored: false,
+    },
+    quota,
+  };
+}
+
+async function prepareExternalAI(request, operation) {
+  const configuration = getAIConfiguration();
+  const preferences = await getAIPreferences(request.user?.id);
+  const quota = await getAIQuotaStatus(request.user?.id);
+  const governance = publicAIGovernance({ preferences, quota });
+  if (!configuration.configured) {
+    return { allowed: false, configuration, preferences, governance, reason: 'GEMINI_API_KEY is not configured' };
+  }
+  if (!preferences.external_processing_enabled) {
+    return { allowed: false, configuration, preferences, governance, reason: 'External AI processing is disabled in privacy settings' };
+  }
+  try {
+    const reservation = await reserveAIQuota({
+      ownerId: request.user?.id,
+      requestId: request.id,
+      operation,
+      provider: configuration.provider,
+      model: configuration.model,
+    });
+    governance.quota = {
+      ...quota,
+      daily_used: reservation.daily_used,
+      daily_remaining: Math.max(0, quota.daily_limit - reservation.daily_used),
+      monthly_used: reservation.monthly_used,
+      monthly_remaining: Math.max(0, quota.monthly_limit - reservation.monthly_used),
+    };
+    return { allowed: true, configuration, preferences, governance, reservation };
+  } catch (error) {
+    if (error instanceof AIQuotaError) {
+      return { allowed: false, configuration, preferences, governance, reason: error.message, quota_code: error.code };
+    }
+    throw error;
+  }
+}
+
+async function finishExternalAI(request, decision, outcome, usage) {
+  try {
+    await completeAIUsage({
+      ownerId: request.user?.id,
+      eventId: decision.reservation?.event_id,
+      outcome,
+      usage,
+    });
+  } catch (error) {
+    request.log.error({ err: error }, 'Unable to finalize external AI usage accounting');
+  }
+}
+
 function isOwnedByRequest(request, item) {
   return Boolean(item) && (!item.owner_id || item.owner_id === request.user?.id);
 }
@@ -306,6 +373,29 @@ server.put(`${apiPrefix}/auth/profile`, async (request) => {
   const profile = await updateUserProfile(request.user.id, display_name);
   request.profile = profile;
   return { data: profile };
+});
+
+server.get(`${apiPrefix}/ai/governance`, async (request) => {
+  const [preferences, quota] = await Promise.all([
+    getAIPreferences(request.user?.id),
+    getAIQuotaStatus(request.user?.id),
+  ]);
+  return {
+    data: {
+      provider: getAIConfiguration(),
+      ...publicAIGovernance({ preferences, quota }),
+      disclosure: 'Ingredient names, percentages, calculated nutrition, cost, and local screening results are sent only when external processing is enabled. Prompts and responses are not retained by this application.',
+    },
+  };
+});
+
+server.put(`${apiPrefix}/ai/preferences`, async (request) => {
+  const preferences = z.object({
+    external_processing_enabled: z.boolean(),
+    include_formulation_name: z.boolean().default(false),
+  }).strict().parse(request.body || {});
+  const updated = await updateAIPreferences(request.user?.id, preferences);
+  return { data: updated };
 });
 
 server.get(`${apiPrefix}/audit`, async (request) => {
@@ -1306,31 +1396,44 @@ server.post(`${apiPrefix}/ai/formulations/:id/generate`, async (request, reply) 
     variants.push(variant);
   }
 
-  let ai = { ...getAIConfiguration(), used: false, reason: 'Gemini review was not attempted' };
-  try {
-    ai = await reviewFormulationVariants({
-      sourceFormulation: source,
-      variants,
-      generationType: generation_type,
-      constraints: { target_calories, target_sugar, target_cost_per_liter },
-    });
-    if (ai.used) {
-      const reviewsById = new Map(ai.reviews.map(review => [review.id, review]));
-      for (const variant of variants) {
-        const review = reviewsById.get(variant.id);
-        variant.confidence_score = review.confidence_score;
-        variant.explanation = review.explanation;
-        variant.warnings = [...new Set([...variant.warnings, ...review.warnings])];
-        variant.recommended = review.recommended;
+  const aiDecision = await prepareExternalAI(request, 'variant_review');
+  let ai = {
+    ...aiDecision.configuration,
+    used: false,
+    reason: aiDecision.reason,
+    quota_code: aiDecision.quota_code,
+    ...aiDecision.governance,
+  };
+  if (aiDecision.allowed) {
+    try {
+      ai = await reviewFormulationVariants({
+        sourceFormulation: source,
+        variants,
+        generationType: generation_type,
+        constraints: { target_calories, target_sugar, target_cost_per_liter },
+        privacy: aiDecision.preferences,
+      });
+      await finishExternalAI(request, aiDecision, 'succeeded', ai.usage);
+      if (ai.used) {
+        const reviewsById = new Map(ai.reviews.map(review => [review.id, review]));
+        for (const variant of variants) {
+          const review = reviewsById.get(variant.id);
+          variant.confidence_score = review.confidence_score;
+          variant.explanation = review.explanation;
+          variant.warnings = [...new Set([...variant.warnings, ...review.warnings])];
+          variant.recommended = review.recommended;
+        }
       }
+      ai = { ...ai, ...aiDecision.governance };
+    } catch (error) {
+      await finishExternalAI(request, aiDecision, 'failed');
+      request.log.warn({ err: error }, 'Gemini variant review failed; using validated local results');
+      ai = { ...getAIConfiguration(), used: false, reason: describeGeminiFailure(error), ...aiDecision.governance };
     }
-  } catch (error) {
-    request.log.warn({ err: error }, 'Gemini variant review failed; using validated local results');
-    ai = { ...getAIConfiguration(), used: false, reason: describeGeminiFailure(error) };
   }
 
   variants.forEach(variant => request.store.aiVariants.push(variant));
-  const { reviews: _reviews, ...publicAI } = ai;
+  const { reviews: _reviews, usage: _usage, ...publicAI } = ai;
   return reply.code(201).send({ data: variants, count: variants.length, ai: publicAI });
 });
 
@@ -1648,49 +1751,58 @@ server.post(`${apiPrefix}/target-generation/generate`, async (request, reply) =>
     });
   }
 
-  let ai = { ...getAIConfiguration(), used: false };
-  try {
-    const reviewResult = await reviewFormulationCandidates({
-      candidates,
-      constraints: { target_calories, target_sugar, target_cost_per_liter, beverage_type },
-    });
-    ai = {
-      provider: reviewResult.provider,
-      model: reviewResult.model,
-      configured: reviewResult.configured,
-      used: reviewResult.used,
-      reason: reviewResult.reason,
-    };
+  const aiDecision = await prepareExternalAI(request, 'target_review');
+  let ai = {
+    ...aiDecision.configuration,
+    used: false,
+    reason: aiDecision.reason,
+    quota_code: aiDecision.quota_code,
+    ...aiDecision.governance,
+  };
+  if (aiDecision.allowed) {
+    try {
+      const reviewResult = await reviewFormulationCandidates({
+        candidates,
+        constraints: { target_calories, target_sugar, target_cost_per_liter, beverage_type },
+        privacy: aiDecision.preferences,
+      });
+      await finishExternalAI(request, aiDecision, 'succeeded', reviewResult.usage);
+      ai = {
+        provider: reviewResult.provider,
+        model: reviewResult.model,
+        configured: reviewResult.configured,
+        used: reviewResult.used,
+        schema_version: reviewResult.schema_version,
+        ...aiDecision.governance,
+      };
 
-    if (reviewResult.used) {
-      const reviewsById = new Map(reviewResult.reviews.map(review => [review.id, review]));
-      for (const candidate of candidates) {
-        const review = reviewsById.get(candidate.id);
-        candidate.scores.compatibility = review.compatibility;
-        candidate.scores.sensory = review.sensory;
-        candidate.scores.stability = review.stability;
-        candidate.ai_explanation = review.explanation;
-        candidate.ai_warnings = review.warnings;
+      if (reviewResult.used) {
+        const reviewsById = new Map(reviewResult.reviews.map(review => [review.id, review]));
+        for (const candidate of candidates) {
+          const review = reviewsById.get(candidate.id);
+          candidate.scores.compatibility = review.compatibility;
+          candidate.scores.sensory = review.sensory;
+          candidate.scores.stability = review.stability;
+          candidate.ai_explanation = review.explanation;
+          candidate.ai_warnings = review.warnings;
 
-        const sensoryAverage = Object.values(review.sensory).reduce((sum, value) => sum + value, 0) / 4;
-        const targetMatchAverage = (
-          candidate.scores.calorie_match + candidate.scores.sugar_match + candidate.scores.cost_match
-        ) / 3;
-        candidate.overall_score = (
-          targetMatchAverage * 0.4 +
-          review.compatibility * 0.25 +
-          sensoryAverage * 0.25 +
-          ((review.stability.ph_stability + review.stability.color_stability) / 2) * 0.1
-        );
+          const sensoryAverage = Object.values(review.sensory).reduce((sum, value) => sum + value, 0) / 4;
+          const targetMatchAverage = (
+            candidate.scores.calorie_match + candidate.scores.sugar_match + candidate.scores.cost_match
+          ) / 3;
+          candidate.overall_score = (
+            targetMatchAverage * 0.4 +
+            review.compatibility * 0.25 +
+            sensoryAverage * 0.25 +
+            ((review.stability.ph_stability + review.stability.color_stability) / 2) * 0.1
+          );
+        }
       }
+    } catch (error) {
+      await finishExternalAI(request, aiDecision, 'failed');
+      request.log.warn({ err: error }, 'Gemini review failed; returning validated local candidates');
+      ai = { ...getAIConfiguration(), used: false, reason: describeGeminiFailure(error), ...aiDecision.governance };
     }
-  } catch (error) {
-    request.log.warn({ err: error }, 'Gemini review failed; returning validated local candidates');
-    ai = {
-      ...getAIConfiguration(),
-      used: false,
-      reason: error.name === 'AbortError' ? 'Gemini request timed out' : 'Gemini review was unavailable',
-    };
   }
   
   // Sort by overall score

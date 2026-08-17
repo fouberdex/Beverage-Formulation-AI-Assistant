@@ -94,6 +94,13 @@ export function validateRuntimeConfiguration(environment = process.env) {
   }
   validateNumericLimit(environment, 'BODY_LIMIT_BYTES', 1024, 10 * 1024 * 1024, errors);
   validateNumericLimit(environment, 'REQUEST_TIMEOUT_MS', 1000, 120000, errors);
+  validateNumericLimit(environment, 'GEMINI_TIMEOUT_MS', 1000, 120000, errors);
+  validateNumericLimit(environment, 'AI_DAILY_REQUEST_LIMIT', 1, 10000, errors);
+  validateNumericLimit(environment, 'AI_MONTHLY_REQUEST_LIMIT', 1, 100000, errors);
+  if (environment.AI_DAILY_REQUEST_LIMIT && environment.AI_MONTHLY_REQUEST_LIMIT &&
+      Number(environment.AI_DAILY_REQUEST_LIMIT) > Number(environment.AI_MONTHLY_REQUEST_LIMIT)) {
+    errors.push('AI_DAILY_REQUEST_LIMIT cannot exceed AI_MONTHLY_REQUEST_LIMIT');
+  }
 
   if (errors.length > 0) {
     throw new Error(`Unsafe runtime configuration:\n- ${errors.join('\n- ')}`);

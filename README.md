@@ -33,7 +33,7 @@ The application uses Supabase Postgres for durable storage and Supabase Auth for
 - Administrator bootstrap is tied to one explicitly configured Auth email; signup order never grants privileges.
 - Formulations, generated variants, compliance results, and calculations are owner-scoped.
 - Formulation version creation and history are supported. This is application-level versioning, not Git-style branching or enterprise document control.
-- Organization workspaces, team invitations, billing tenants, quotas, and enterprise SSO are not implemented, so the app does not claim full enterprise multi-tenancy.
+- Organization workspaces, team invitations, billing tenants, and enterprise SSO are not implemented, so the app does not claim full enterprise multi-tenancy. Per-account external-AI request quotas are implemented; they are operational safeguards, not billing plans.
 
 ## Stack
 
@@ -79,12 +79,13 @@ Important backend settings:
 - `BOOTSTRAP_ADMIN_EMAIL` is required in production and identifies the Auth account permitted to claim the initial administrator role.
 - `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` configure browser authentication.
 - Setting `API_KEY` requires clients to send the same value in `x-api-key`. Set `VITE_API_KEY` for the frontend when using this option.
+- `AI_DAILY_REQUEST_LIMIT` and `AI_MONTHLY_REQUEST_LIMIT` default to 25 and 250 external provider calls per account. The daily limit cannot exceed the monthly limit.
 
 The unauthenticated JSON-file fallback can bind only to a loopback host. It is
 rejected when `NODE_ENV=production`; do not use it for shared or deployed
 environments. `PERSIST_DATA=false` is also rejected in production.
 
-### Free AI review
+### Optional AI review
 
 Target-based predictive formulation and the AI Recommendation Engine support the Google Gemini API. The default model is `gemini-2.5-flash-lite`; model availability, free-tier limits, and data-use terms are controlled by Google and can change.
 
@@ -93,9 +94,11 @@ Target-based predictive formulation and the AI Recommendation Engine support the
 3. Set `GEMINI_API_KEY` in `backend/.env`.
 4. Restart the backend.
 
-When configured, target generation and recommendation endpoints send validated candidate summaries to Gemini for conservative review. Ingredient percentages, nutrition, cost, request validation, and configured maximum limits remain server-controlled. Every response states whether Gemini was actually used.
+Provider configuration alone does not send data. Each account must opt in under **Account → AI privacy and quota**. Ingredient names, percentages, calculated nutrition, cost, and local screening results are then sent for conservative review. Formulation names remain redacted unless separately enabled. Ingredient percentages, nutrition, cost, request validation, and configured maximum limits remain server-controlled. Every response states whether Gemini was actually used and reports remaining request quota.
 
-If the key is missing, invalid, rate-limited, or the request times out, generation continues with the local fallback. Free-tier prompts may be used by Google to improve its products; do not send confidential formulation data without reviewing the provider's current data-use and pricing terms.
+Provider requests use a strict JSON response schema and are validated again with Zod before they can affect results. The application persists provider, model, outcome, and token counts for quota enforcement, but does not persist prompts or provider responses. Failed provider attempts count because they can consume provider capacity. Quota exhaustion, disabled consent, provider errors, and timeouts all fall back to deterministic local generation.
+
+If the key is missing, invalid, rate-limited, or the request times out, generation continues with the local fallback. Provider retention, training, regional processing, and pricing terms are external controls and may change; review the current provider terms before enabling confidential formulation processing.
 
 Do not treat a value embedded through `VITE_API_KEY` as a secret; browser users can inspect it. Production deployments should replace this development API-key option with user authentication and server-side authorization.
 

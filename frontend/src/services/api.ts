@@ -71,6 +71,9 @@ export const compatibilityAPI = {
 
 // AI API
 export const aiAPI = {
+  getGovernance: () => api.get('/ai/governance'),
+  updatePreferences: (data: { external_processing_enabled: boolean; include_formulation_name: boolean }) =>
+    api.put('/ai/preferences', data),
   generateVariants: (formulationId: string, options: any) =>
     api.post(`/ai/formulations/${formulationId}/generate`, options),
   getVariants: (formulationId: string, filters?: any) =>

@@ -54,6 +54,21 @@ test('readiness and account identity endpoints are available', async () => {
   assert.equal(identity.json().data.role, 'admin');
 });
 
+test('AI governance is opt-in and exposes quota metadata without prompt storage', async () => {
+  const initial = await server.inject({ method: 'GET', url: '/api/v1/ai/governance' });
+  assert.equal(initial.statusCode, 200);
+  assert.equal(initial.json().data.privacy.external_processing_enabled, false);
+  assert.equal(initial.json().data.privacy.prompt_or_response_content_stored, false);
+  assert.equal(initial.json().data.quota.daily_used, 0);
+
+  const updated = await server.inject({
+    method: 'PUT', url: '/api/v1/ai/preferences',
+    payload: { external_processing_enabled: true, include_formulation_name: false },
+  });
+  assert.equal(updated.statusCode, 200);
+  assert.equal(updated.json().data.external_processing_enabled, true);
+});
+
 test('target generation history is exposed only through the history endpoints', async () => {
   const generated = await server.inject({
     method: 'POST', url: '/api/v1/target-generation/generate', payload: { target_sugar: 8, count: 1 },
@@ -354,7 +369,7 @@ test('Gemini recommendation reviews reject malformed or incomplete output', asyn
   });
 
   try {
-    await assert.rejects(() => reviewFormulationVariants(input, fakeFetch), /every item exactly once/);
+    await assert.rejects(() => reviewFormulationVariants(input, fakeFetch), /at least 1 element|every item exactly once/);
   } finally {
     delete process.env.GEMINI_API_KEY;
   }

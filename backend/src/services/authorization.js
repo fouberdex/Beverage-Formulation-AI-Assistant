@@ -16,7 +16,7 @@ export function authorizeApiRequest({ method, path, role }) {
   if (SAFE_METHODS.has(method)) return { allowed: true };
 
   // Every authenticated user may maintain their own account profile.
-  if (path === '/api/v1/auth/profile') return { allowed: true };
+  if (path === '/api/v1/auth/profile' || path === '/api/v1/ai/preferences') return { allowed: true };
 
   if (role === USER_ROLES.VIEWER) {
     return { allowed: false, reason: 'This account has read-only access' };

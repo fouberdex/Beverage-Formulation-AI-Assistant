@@ -72,8 +72,11 @@ Recommended initial alerts:
 - Supabase CPU, memory, connection, or disk utilization above 80%.
 - Backup workflow failure or no successful backup within 26 hours.
 - Repeated authentication failures, rate-limit spikes, or unexpected administrator changes.
+- External-AI quota exhaustion spikes, provider failure outcomes, or sudden token-volume changes.
 
 Logs and metrics must inherit the tenant restrictions of production data. Do not log request bodies, access tokens, AI prompts containing proprietary formulations, or full database records.
+
+AI usage events contain only tenant ID, request ID, operation, provider, model, outcome, and token counts. They never contain prompt or response content. Review retention requirements for these metadata rows and provider-side retention separately. Users can disable future external processing at any time; deterministic local generation remains available.
 
 ## Incident response
 

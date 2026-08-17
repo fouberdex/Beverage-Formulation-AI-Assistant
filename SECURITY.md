@@ -13,5 +13,7 @@ Do not open a public issue for a suspected vulnerability. Report it privately to
 - Review Dependabot updates and respond immediately to critical vulnerabilities.
 - Rotate secrets after staff changes, suspected exposure, or provider incidents.
 - Review Supabase Auth redirect URLs, RLS policies, advisors, audit logs, and administrator accounts before each production launch.
+- Keep external AI processing opt-in, review provider data-use terms, and never add prompts or model responses to logs, audit metadata, or usage tables.
+- Treat AI quota reservation and completion functions as server-only interfaces; authenticated browser roles must never receive execute permission.
 
 Supported production releases are the currently deployed immutable image and the immediately previous release during rollback. Security fixes should be released as a new image and migration set; production files must not be patched manually.

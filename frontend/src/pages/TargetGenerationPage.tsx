@@ -256,6 +256,7 @@ export default function TargetGenerationPage() {
             {!results.ai?.used && results.ai?.reason && (
               <p className="mt-1 text-sm">{results.ai.reason}</p>
             )}
+            {results.ai?.quota && <p className="mt-1 text-sm">External reviews remaining: {results.ai.quota.daily_remaining} today, {results.ai.quota.monthly_remaining} this month.</p>}
             {results.ai?.used && (
               <p className="mt-1 text-sm">
                 Ingredient percentages were generated and validated locally; AI only reviewed scores and explanations.

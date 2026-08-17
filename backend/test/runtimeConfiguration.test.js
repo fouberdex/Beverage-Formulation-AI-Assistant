@@ -108,3 +108,11 @@ test('production validates operational security controls', () => {
   );
   assert.doesNotThrow(() => validateRuntimeConfiguration({ ...base, TRUST_PROXY: '10.0.0.0/8' }));
 });
+
+test('AI provider quotas and timeouts reject unsafe values', () => {
+  assert.throws(() => validateRuntimeConfiguration({ AI_DAILY_REQUEST_LIMIT: '0' }), /AI_DAILY_REQUEST_LIMIT/);
+  assert.throws(() => validateRuntimeConfiguration({ AI_MONTHLY_REQUEST_LIMIT: 'nope' }), /AI_MONTHLY_REQUEST_LIMIT/);
+  assert.throws(() => validateRuntimeConfiguration({ AI_DAILY_REQUEST_LIMIT: '30', AI_MONTHLY_REQUEST_LIMIT: '20' }), /cannot exceed/);
+  assert.throws(() => validateRuntimeConfiguration({ GEMINI_TIMEOUT_MS: '999999' }), /GEMINI_TIMEOUT_MS/);
+  assert.doesNotThrow(() => validateRuntimeConfiguration({ AI_DAILY_REQUEST_LIMIT: '25', AI_MONTHLY_REQUEST_LIMIT: '250', GEMINI_TIMEOUT_MS: '30000' }));
+});

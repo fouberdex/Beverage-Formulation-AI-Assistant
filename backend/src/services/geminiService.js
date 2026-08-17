@@ -3,6 +3,39 @@ import { z } from 'zod';
 const DEFAULT_MODEL = 'gemini-2.5-flash-lite';
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+const scoreSchema = { type: 'number', minimum: 0, maximum: 100 };
+const reviewJsonSchema = {
+  type: 'object', additionalProperties: false, required: ['reviews'],
+  properties: { reviews: { type: 'array', minItems: 1, maxItems: 10, items: {
+    type: 'object', additionalProperties: false,
+    required: ['id', 'compatibility', 'sensory', 'stability', 'explanation', 'warnings'],
+    properties: {
+      id: { type: 'string' }, compatibility: scoreSchema,
+      sensory: { type: 'object', additionalProperties: false,
+        required: ['taste_balance', 'sweetness_level', 'acidity_balance', 'flavor_intensity'],
+        properties: { taste_balance: scoreSchema, sweetness_level: scoreSchema, acidity_balance: scoreSchema, flavor_intensity: scoreSchema } },
+      stability: { type: 'object', additionalProperties: false,
+        required: ['ph_stability', 'color_stability', 'shelf_life_months'],
+        properties: { ph_stability: scoreSchema, color_stability: scoreSchema, shelf_life_months: { type: 'integer', minimum: 1, maximum: 36 } } },
+      explanation: { type: 'string', minLength: 1, maxLength: 1200 },
+      warnings: { type: 'array', maxItems: 8, items: { type: 'string', minLength: 1, maxLength: 300 } },
+    },
+  } } },
+};
+const variantReviewJsonSchema = {
+  type: 'object', additionalProperties: false, required: ['reviews'],
+  properties: { reviews: { type: 'array', minItems: 1, maxItems: 10, items: {
+    type: 'object', additionalProperties: false,
+    required: ['id', 'confidence_score', 'explanation', 'warnings', 'recommended'],
+    properties: {
+      id: { type: 'string' }, confidence_score: scoreSchema,
+      explanation: { type: 'string', minLength: 1, maxLength: 1200 },
+      warnings: { type: 'array', maxItems: 8, items: { type: 'string', minLength: 1, maxLength: 300 } },
+      recommended: { type: 'boolean' },
+    },
+  } } },
+};
+
 const reviewSchema = z.object({
   reviews: z.array(z.object({
     id: z.string(),
@@ -19,19 +52,30 @@ const reviewSchema = z.object({
       shelf_life_months: z.number().int().min(1).max(36),
     }),
     explanation: z.string().trim().min(1).max(1200),
-    warnings: z.array(z.string().trim().min(1).max(300)).max(8).default([]),
-  })).max(10),
-});
+    warnings: z.array(z.string().trim().min(1).max(300)).max(8),
+  }).strict()).min(1).max(10),
+}).strict();
 
 const variantReviewSchema = z.object({
   reviews: z.array(z.object({
     id: z.string(),
     confidence_score: z.number().finite().min(0).max(100),
     explanation: z.string().trim().min(1).max(1200),
-    warnings: z.array(z.string().trim().min(1).max(300)).max(8).default([]),
+    warnings: z.array(z.string().trim().min(1).max(300)).max(8),
     recommended: z.boolean(),
-  })).max(10),
-});
+  }).strict()).min(1).max(10),
+}).strict();
+
+const providerEnvelopeSchema = z.object({
+  candidates: z.array(z.object({
+    content: z.object({ parts: z.array(z.object({ text: z.string().optional() }).passthrough()).min(1) }).passthrough(),
+  }).passthrough()).min(1),
+  usageMetadata: z.object({
+    promptTokenCount: z.number().int().nonnegative().optional(),
+    candidatesTokenCount: z.number().int().nonnegative().optional(),
+    totalTokenCount: z.number().int().nonnegative().optional(),
+  }).passthrough().optional(),
+}).passthrough();
 
 export function getAIConfiguration() {
   return {
@@ -48,7 +92,7 @@ function extractResponseText(payload) {
     .trim();
 }
 
-async function requestStructuredReview({ prompt, schema, expectedIds }, fetchImplementation) {
+async function requestStructuredReview({ prompt, schema, jsonSchema, expectedIds }, fetchImplementation) {
   const configuration = getAIConfiguration();
   if (!configuration.configured) {
     return { ...configuration, used: false, reviews: [], reason: 'GEMINI_API_KEY is not configured' };
@@ -70,7 +114,9 @@ async function requestStructuredReview({ prompt, schema, expectedIds }, fetchImp
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         generationConfig: {
           responseMimeType: 'application/json',
+          responseJsonSchema: jsonSchema,
           temperature: 0.2,
+          maxOutputTokens: 4096,
         },
       }),
       signal: controller.signal,
@@ -81,7 +127,7 @@ async function requestStructuredReview({ prompt, schema, expectedIds }, fetchImp
       throw new Error(`Gemini request failed with HTTP ${response.status}: ${errorBody.slice(0, 300)}`);
     }
 
-    const payload = await response.json();
+    const payload = providerEnvelopeSchema.parse(await response.json());
     const text = extractResponseText(payload);
     if (!text) throw new Error('Gemini returned no text');
 
@@ -94,7 +140,17 @@ async function requestStructuredReview({ prompt, schema, expectedIds }, fetchImp
       throw new Error('Gemini did not review every item exactly once');
     }
 
-    return { ...configuration, used: true, reviews: uniqueReviews };
+    return {
+      ...configuration,
+      used: true,
+      reviews: uniqueReviews,
+      schema_version: '1.0',
+      usage: {
+        prompt_tokens: payload.usageMetadata?.promptTokenCount,
+        candidate_tokens: payload.usageMetadata?.candidatesTokenCount,
+        total_tokens: payload.usageMetadata?.totalTokenCount,
+      },
+    };
   } finally {
     clearTimeout(timeout);
   }
@@ -110,7 +166,7 @@ export function describeGeminiFailure(error) {
   return 'Gemini review was unavailable';
 }
 
-export async function reviewFormulationCandidates({ candidates, constraints }, fetchImplementation = fetch) {
+export async function reviewFormulationCandidates({ candidates, constraints, privacy = {} }, fetchImplementation = fetch) {
   const candidatePayload = candidates.map(candidate => ({
     id: candidate.id,
     beverage_type: candidate.beverage_type,
@@ -141,12 +197,13 @@ export async function reviewFormulationCandidates({ candidates, constraints }, f
   return requestStructuredReview({
     prompt,
     schema: reviewSchema,
+    jsonSchema: reviewJsonSchema,
     expectedIds: candidates.map(candidate => candidate.id),
   }, fetchImplementation);
 }
 
 export async function reviewFormulationVariants(
-  { sourceFormulation, variants, generationType, constraints = {} },
+  { sourceFormulation, variants, generationType, constraints = {}, privacy = {} },
   fetchImplementation = fetch,
 ) {
   const variantPayload = variants.map(variant => ({
@@ -175,7 +232,7 @@ export async function reviewFormulationVariants(
     `Generation type: ${generationType}`,
     `Requested constraints: ${JSON.stringify(constraints)}`,
     `Source formulation: ${JSON.stringify({
-      name: sourceFormulation.name,
+      name: privacy.include_formulation_name ? sourceFormulation.name : '[redacted]',
       beverage_type: sourceFormulation.beverage_type,
     })}`,
     `Variants: ${JSON.stringify(variantPayload)}`,
@@ -184,6 +241,7 @@ export async function reviewFormulationVariants(
   return requestStructuredReview({
     prompt,
     schema: variantReviewSchema,
+    jsonSchema: variantReviewJsonSchema,
     expectedIds: variants.map(variant => variant.id),
   }, fetchImplementation);
 }
