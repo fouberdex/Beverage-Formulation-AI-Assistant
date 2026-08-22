@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM node:22.18.0-alpine3.22 AS build
+FROM node:26.3.0-alpine3.22 AS build
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -18,7 +18,7 @@ ENV VITE_API_BASE_URL=$VITE_API_BASE_URL \
     VITE_SUPABASE_PUBLISHABLE_KEY=$VITE_SUPABASE_PUBLISHABLE_KEY
 RUN npm run build && npm prune --omit=dev
 
-FROM node:22.18.0-alpine3.22 AS runtime
+FROM node:26.3.0-alpine3.22 AS runtime
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3001 \
