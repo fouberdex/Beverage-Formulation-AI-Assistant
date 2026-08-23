@@ -502,7 +502,7 @@ server.get(`${apiPrefix}/ingredients`, async (request) => {
   const { category, search } = request.query;
   const { limit, offset } = paginationSchema.parse(request.query);
   
-  let filtered = [...request.store.ingredients].filter(i => i.is_active);
+  let filtered = [...request.store.ingredients].filter(i => i.is_active !== false);
   
   if (category) {
     filtered = filtered.filter(i => i.category === category);
@@ -552,7 +552,7 @@ server.get(`${apiPrefix}/ingredients/meta/categories`, async (request) => {
 server.get(`${apiPrefix}/ingredients/meta/stats`, async (request) => {
   return {
     data: {
-      total_ingredients: request.store.ingredients.filter(i => i.is_active).length,
+      total_ingredients: request.store.ingredients.filter(i => i.is_active !== false).length,
       total_categories: request.store.categories.length,
       categories: request.store.categories,
     },
@@ -859,6 +859,79 @@ server.get(`${apiPrefix}/formulations/:id/cost`, async (request, reply) => {
 });
 
 // ============================================================================
+// LABORATORY RESULTS & CONSENTED LEARNING FEEDBACK
+// ============================================================================
+
+const optionalMeasurement = z.coerce.number().finite().nonnegative().optional();
+const sensoryScore = z.coerce.number().finite().min(0).max(10).optional();
+const laboratoryResultSchema = z.object({
+  batch_code: z.string().trim().max(100).optional(),
+  tested_at: z.coerce.date().default(() => new Date()),
+  measurements: z.object({
+    ph: z.coerce.number().finite().min(0).max(14).optional(),
+    brix: optionalMeasurement,
+    titratable_acidity: optionalMeasurement,
+    viscosity: optionalMeasurement,
+    density: optionalMeasurement,
+    turbidity: optionalMeasurement,
+    stability_score: z.coerce.number().finite().min(0).max(100).optional(),
+  }).default({}),
+  sensory: z.object({
+    appearance: sensoryScore, aroma: sensoryScore, taste: sensoryScore,
+    mouthfeel: sensoryScore, overall_acceptance: sensoryScore,
+  }).default({}),
+  notes: z.string().trim().max(4000).optional(),
+  include_in_ai_learning: z.boolean().default(false),
+});
+
+server.get(`${apiPrefix}/formulations/:id/laboratory-results`, async (request, reply) => {
+  if (!findAccessibleFormulation(request, request.params.id)) return reply.code(404).send({ error: 'Formulation not found' });
+  const data = request.store.laboratoryResults
+    .filter(item => item.formulation_id === request.params.id && isOwnedByRequest(request, item))
+    .sort((a, b) => new Date(b.tested_at) - new Date(a.tested_at));
+  return { data };
+});
+
+server.post(`${apiPrefix}/formulations/:id/laboratory-results`, async (request, reply) => {
+  const formulation = findAccessibleFormulation(request, request.params.id);
+  if (!formulation) return reply.code(404).send({ error: 'Formulation not found' });
+  const input = laboratoryResultSchema.parse(request.body);
+  const now = new Date().toISOString();
+  const result = {
+    id: generateId(), owner_id: request.user?.id, formulation_id: formulation.id,
+    batch_code: input.batch_code || null, tested_at: input.tested_at.toISOString(),
+    measurements: input.measurements, sensory: input.sensory, notes: input.notes || null,
+    include_in_ai_learning: input.include_in_ai_learning, created_at: now,
+  };
+  request.store.laboratoryResults.push(result);
+  if (input.include_in_ai_learning) {
+    request.store.aiLearningExamples.push({
+      id: generateId(), owner_id: request.user?.id, laboratory_result_id: result.id,
+      formulation_id: formulation.id,
+      input: { beverage_type: formulation.beverage_type, ingredients: formulation.ingredients || [] },
+      outcome: { measurements: result.measurements, sensory: result.sensory },
+      status: 'approved_for_local_learning', created_at: now,
+    });
+  }
+  return reply.code(201).send({ data: result, learning: {
+    included: input.include_in_ai_learning,
+    message: input.include_in_ai_learning
+      ? 'Saved as a local learning example for future recommendation calibration. It is not sent to an external AI provider.'
+      : 'Saved for formulation quality tracking only.',
+  } });
+});
+
+server.get(`${apiPrefix}/ai/learning-feedback/summary`, async (request) => {
+  const examples = request.store.aiLearningExamples.filter(item => isOwnedByRequest(request, item));
+  return { data: {
+    approved_examples: examples.length,
+    last_added_at: examples.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0]?.created_at || null,
+    mode: 'local_calibration_queue',
+    external_processing: false,
+  } };
+});
+
+// ============================================================================
 // COMPATIBILITY ROUTES
 // ============================================================================
 
@@ -1079,6 +1152,19 @@ server.get(`${apiPrefix}/compatibility/formulations/:id`, async (request, reply)
         description: `${ing.name} has restricted status. Special approval may be required.`,
       });
       overallScore -= 10;
+    }
+  }
+
+  // Practical process alerts, independent of an ingredient's declared legal maximum.
+  const highConcentrationCategories = { flavor: 2, colorant: 0.5, emulsifier: 1, stabilizer: 1.5, acidulant: 1.5 };
+  for (const item of ingredientDetails) {
+    const guide = highConcentrationCategories[item.details.category];
+    if (guide && item.percentage > guide) {
+      warnings.push({
+        type: 'concentration', severity: item.percentage > guide * 2 ? 'high' : 'medium',
+        description: `${item.details.name} at ${item.percentage.toFixed(2)}% is above the typical ${item.details.category} process guide of ${guide}%. Confirm with bench and sensory testing.`,
+      });
+      overallScore -= 3;
     }
   }
 
@@ -1351,6 +1437,23 @@ server.post(`${apiPrefix}/ai/formulations/:id/generate`, async (request, reply) 
   const variants = [];
   const sourceIngredients = source.ingredients || [];
   const sourceTotals = processFormulationIngredients(request, sourceIngredients);
+  const consentedOutcomes = request.store.aiLearningExamples.filter(item =>
+    item.formulation_id === source.id && isOwnedByRequest(request, item)
+  );
+  const sourceResultIds = new Set(consentedOutcomes.map(item => item.laboratory_result_id));
+  const sourceLabResults = request.store.laboratoryResults.filter(item => sourceResultIds.has(item.id));
+  const acceptedScores = sourceLabResults
+    .map(item => item.sensory?.overall_acceptance)
+    .filter(Number.isFinite);
+  const stabilityScores = sourceLabResults
+    .map(item => item.measurements?.stability_score)
+    .filter(Number.isFinite);
+  // Use only consented, measured outcomes to calibrate local confidence. This
+  // keeps generated amounts governed by the same safety/limit checks.
+  const measuredQuality = acceptedScores.length || stabilityScores.length
+    ? ((acceptedScores.reduce((sum, score) => sum + score, 0) / Math.max(1, acceptedScores.length)) * 10 * 0.6) +
+      ((stabilityScores.reduce((sum, score) => sum + score, 0) / Math.max(1, stabilityScores.length)) * 0.4)
+    : null;
 
   for (let i = 0; i < count; i++) {
     const variantIngredients = generateVariantIngredients(request, sourceIngredients, generation_type, {
@@ -1364,6 +1467,7 @@ server.post(`${apiPrefix}/ai/formulations/:id/generate`, async (request, reply) 
     const localConfidence = Math.max(0, Math.min(
       assessment.compatibility_score,
       assessment.regulatory.passes_local_checks ? 88 : 50,
+      measuredQuality === null ? 100 : measuredQuality,
     ));
     const variant = {
       id: generateId(),
@@ -1374,7 +1478,7 @@ server.post(`${apiPrefix}/ai/formulations/:id/generate`, async (request, reply) 
       variant_ingredients: totals.ingredients,
       confidence_score: localConfidence,
       explanation: generation_type === 'optimization' 
-        ? `Locally generated cost-oriented variant ${i + 1}; calculated values and ingredient limits have been checked.`
+        ? `Locally generated cost-oriented variant ${i + 1}; calculated values and ingredient limits have been checked.${measuredQuality === null ? '' : ' Confidence is calibrated against consented laboratory outcomes.'}`
         : generation_type === 'alternative'
         ? `Locally generated alternative ${i + 1} with a broader change in ingredient proportions.`
         : `Locally generated constraint-oriented variant ${i + 1}; no explicit targets were supplied.`,
@@ -1434,7 +1538,10 @@ server.post(`${apiPrefix}/ai/formulations/:id/generate`, async (request, reply) 
 
   variants.forEach(variant => request.store.aiVariants.push(variant));
   const { reviews: _reviews, usage: _usage, ...publicAI } = ai;
-  return reply.code(201).send({ data: variants, count: variants.length, ai: publicAI });
+  return reply.code(201).send({ data: variants, count: variants.length, ai: publicAI, learning: {
+    consented_outcomes_used: sourceLabResults.length,
+    calibration_applied: measuredQuality !== null,
+  } });
 });
 
 server.get(`${apiPrefix}/ai/formulations/:id/variants`, async (request, reply) => {

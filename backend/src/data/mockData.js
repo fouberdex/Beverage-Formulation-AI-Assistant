@@ -316,6 +316,10 @@ export const pricingHistory = [];
 // Persisted target-generation request/result history
 export const targetGenerationRuns = [];
 
+// Laboratory measurements and consented local-learning examples.
+export const laboratoryResults = [];
+export const aiLearningExamples = [];
+
 // Categories
 export const categories = [...new Set(mockIngredients.map(i => i.category))];
 

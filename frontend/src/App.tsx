@@ -1,6 +1,6 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { Home, Package, FlaskConical, Sparkles, Target, Shield, DollarSign, Menu, X, LogOut, UserRound, History } from 'lucide-react';
+import { Home, Package, FlaskConical, Sparkles, Target, Shield, DollarSign, Menu, X, LogOut, UserRound, History, ClipboardCheck } from 'lucide-react';
 import { useAuth } from './auth/AuthContext';
 import AuthPage from './pages/AuthPage';
 import { hasRole, WORKSPACE_ROLES, type UserRole } from './auth/permissions';
@@ -16,6 +16,7 @@ const RegulatoryPage = React.lazy(() => import('./pages/RegulatoryPage'));
 const CostPage = React.lazy(() => import('./pages/CostPage'));
 const AccountPage = React.lazy(() => import('./pages/AccountPage'));
 const HistoryPage = React.lazy(() => import('./pages/HistoryPage'));
+const LaboratoryResultsPage = React.lazy(() => import('./pages/LaboratoryResultsPage'));
 
 function LoadingFallback() {
   return (
@@ -46,6 +47,7 @@ const navItems = [
   { to: '/', icon: Home, label: 'Dashboard' },
   { to: '/ingredients', icon: Package, label: 'Ingredients' },
   { to: '/formulations', icon: FlaskConical, label: 'Formulations' },
+  { to: '/laboratory-results', icon: ClipboardCheck, label: 'Lab Results', roles: WORKSPACE_ROLES },
   { to: '/compatibility', icon: Shield, label: 'Compatibility' },
   { to: '/ai', icon: Sparkles, label: 'AI Engine', roles: WORKSPACE_ROLES },
   { to: '/target-generation', icon: Target, label: 'Target Gen', roles: WORKSPACE_ROLES },
@@ -197,6 +199,7 @@ function App() {
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/ingredients" element={<IngredientsPage />} />
                 <Route path="/formulations" element={<FormulationsPage />} />
+                <Route path="/laboratory-results" element={<RoleRoute roles={WORKSPACE_ROLES}><LaboratoryResultsPage /></RoleRoute>} />
                 <Route path="/compatibility" element={<CompatibilityPage />} />
                 <Route path="/ai" element={<RoleRoute roles={WORKSPACE_ROLES}><AIPage /></RoleRoute>} />
                 <Route path="/target-generation" element={<RoleRoute roles={WORKSPACE_ROLES}><TargetGenerationPage /></RoleRoute>} />

@@ -13,6 +13,7 @@ test('Supabase migrations form an ordered, complete database workflow', async ()
     'controlled_admin_bootstrap.sql',
     'enforce_tenant_relational_integrity.sql',
     'ai_governance.sql',
+    'laboratory_results_feedback.sql',
   ]);
 
   const bootstrap = await readFile(new URL(`migrations/${migrationNames[2]}`, supabaseDirectory), 'utf8');
@@ -26,7 +27,7 @@ test('Supabase migrations form an ordered, complete database workflow', async ()
 
 test('AI governance migration enforces consent ownership and server-only atomic quotas', async () => {
   const migrationNames = (await readdir(new URL('migrations/', supabaseDirectory))).sort();
-  const governance = await readFile(new URL(`migrations/${migrationNames.at(-1)}`, supabaseDirectory), 'utf8');
+  const governance = await readFile(new URL(`migrations/${migrationNames.find(name => name.endsWith('_ai_governance.sql'))}`, supabaseDirectory), 'utf8');
   assert.match(governance, /create table public\.ai_preferences/);
   assert.match(governance, /external_processing_enabled boolean not null default false/);
   assert.match(governance, /create table public\.ai_usage_events/);
@@ -34,6 +35,16 @@ test('AI governance migration enforces consent ownership and server-only atomic 
   assert.match(governance, /enable row level security/g);
   assert.match(governance, /revoke all on function public\.reserve_ai_quota[\s\S]*authenticated/);
   assert.doesNotMatch(governance, /prompt(_content)?\s+(text|jsonb)|response(_content)?\s+(text|jsonb)/i);
+});
+
+test('laboratory feedback migration keeps results tenant-isolated and consented learning local', async () => {
+  const migrationNames = (await readdir(new URL('migrations/', supabaseDirectory))).sort();
+  const laboratory = await readFile(new URL(`migrations/${migrationNames.find(name => name.endsWith('_laboratory_results_feedback.sql'))}`, supabaseDirectory), 'utf8');
+  assert.match(laboratory, /create table public\.laboratory_results/);
+  assert.match(laboratory, /create table public\.ai_learning_examples/);
+  assert.match(laboratory, /enable row level security/g);
+  assert.match(laboratory, /foreign key \(owner_id, formulation_id\)/);
+  assert.match(laboratory, /commit_laboratory_feedback/);
 });
 
 test('Supabase seed data contains shared catalog rows only', async () => {

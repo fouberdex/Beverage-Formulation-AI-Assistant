@@ -153,6 +153,18 @@ export interface TargetGenerationConstraints {
   count?: number;
 }
 
+export interface LaboratoryResult {
+  id: string;
+  formulation_id: string;
+  batch_code?: string;
+  tested_at: string;
+  measurements: { ph?: number; brix?: number; titratable_acidity?: number; viscosity?: number; density?: number; turbidity?: number; stability_score?: number };
+  sensory: { appearance?: number; aroma?: number; taste?: number; mouthfeel?: number; overall_acceptance?: number };
+  notes?: string;
+  include_in_ai_learning: boolean;
+  created_at: string;
+}
+
 
 
 

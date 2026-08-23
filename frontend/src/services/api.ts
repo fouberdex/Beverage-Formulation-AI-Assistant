@@ -57,6 +57,12 @@ export const formulationsAPI = {
   getNutrition: (id: string) => api.get(`/formulations/${id}/nutrition`),
   getCost: (id: string, batchSize = 1) => 
     api.get(`/formulations/${id}/cost`, { params: { batch_size: batchSize } }),
+  getLaboratoryResults: (id: string) => api.get(`/formulations/${id}/laboratory-results`),
+  addLaboratoryResult: (id: string, data: any) => api.post(`/formulations/${id}/laboratory-results`, data),
+};
+
+export const laboratoryAPI = {
+  getLearningSummary: () => api.get('/ai/learning-feedback/summary'),
 };
 
 // Compatibility API

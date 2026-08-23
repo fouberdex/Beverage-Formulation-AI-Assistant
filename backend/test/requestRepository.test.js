@@ -17,6 +17,8 @@ function emptyStore() {
     batchCostCalculations: [],
     pricingHistory: [],
     targetGenerationRuns: [],
+    laboratoryResults: [],
+    aiLearningExamples: [],
   };
 }
 
@@ -79,7 +81,7 @@ function createFakeClient(tables) {
 
 test('Supabase request stores contain only the authenticated owner records', async () => {
   const client = createFakeClient({
-    ingredients: [{ payload: { id: 'water', name: 'Water', category: 'base' } }],
+    ingredients: [{ id: 'water', code: 'WATER', name: 'Water', category: 'base', is_active: true, payload: { id: 'water', name: 'Water', category: 'base' } }],
     formulations: [
       { owner_id: 'owner-1', payload: { id: 'form-1', name: 'One' } },
       { owner_id: 'owner-2', payload: { id: 'form-2', name: 'Two' } },
@@ -94,6 +96,12 @@ test('Supabase request stores contain only the authenticated owner records', asy
   assert.deepEqual(second.formulations.map(item => item.id), ['form-2']);
   assert.notEqual(first.formulations, second.formulations);
   assert.deepEqual(first.ingredients.map(item => item.id), ['water']);
+});
+
+test('Supabase request stores fall back to the bundled catalog when the shared table is empty', async () => {
+  const store = await loadRequestStore('owner-1', { mode: 'supabase', client: createFakeClient({}) });
+  assert.ok(store.ingredients.length > 300);
+  assert.equal(store.using_bundled_ingredient_catalog, true);
 });
 
 test('Supabase commits send one change-only transaction', async () => {

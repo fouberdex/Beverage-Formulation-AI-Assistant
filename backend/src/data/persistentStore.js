@@ -10,6 +10,8 @@ import {
   ingredients,
   pricingHistory,
   targetGenerationRuns,
+  laboratoryResults,
+  aiLearningExamples,
 } from './mockData.js';
 import { isSupabaseConfigured } from '../services/supabaseClient.js';
 
@@ -23,6 +25,8 @@ const collections = {
   batchCostCalculations,
   pricingHistory,
   targetGenerationRuns,
+  laboratoryResults,
+  aiLearningExamples,
 };
 
 let dataFile = defaultDataFile;
