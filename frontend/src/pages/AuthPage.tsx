@@ -29,7 +29,12 @@ export default function AuthPage() {
         if (!signedIn) setMessage('Account created. Check your email to confirm the account, then sign in.');
       }
     } catch (submissionError: any) {
-      setError(submissionError?.message || 'Authentication failed');
+      const errorMessage = submissionError?.message || 'Authentication failed';
+      const networkFailure = submissionError?.name === 'AuthRetryableFetchError'
+        || /failed to fetch|fetch failed|networkerror|load failed/i.test(errorMessage);
+      setError(networkFailure
+        ? 'Cannot reach the sign-in service. Check your internet connection and try again. If this continues, ask the workspace administrator to check that the Supabase project is running and its URL is correct.'
+        : errorMessage);
     } finally {
       setBusy(false);
     }

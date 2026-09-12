@@ -14,6 +14,7 @@ test('Supabase migrations form an ordered, complete database workflow', async ()
     'enforce_tenant_relational_integrity.sql',
     'ai_governance.sql',
     'laboratory_results_feedback.sql',
+    'sensory_studies_and_responses.sql',
   ]);
 
   const bootstrap = await readFile(new URL(`migrations/${migrationNames[2]}`, supabaseDirectory), 'utf8');
@@ -47,6 +48,18 @@ test('laboratory feedback migration keeps results tenant-isolated and consented 
   assert.match(laboratory, /commit_laboratory_feedback/);
 });
 
+test('sensory migration isolates studies and responses and keeps writes server-controlled', async () => {
+  const migrationNames = (await readdir(new URL('migrations/', supabaseDirectory))).sort();
+  const sensory = await readFile(new URL(`migrations/${migrationNames.find(name => name.endsWith('_sensory_studies_and_responses.sql'))}`, supabaseDirectory), 'utf8');
+  assert.match(sensory, /create table public\.sensory_studies/);
+  assert.match(sensory, /create table public\.sensory_responses/);
+  assert.match(sensory, /unique \(owner_id, study_id, panelist_code\)/);
+  assert.match(sensory, /foreign key \(owner_id, study_id\)/);
+  assert.match(sensory, /enable row level security/g);
+  assert.match(sensory, /grant select on public\.sensory_studies, public\.sensory_responses to authenticated/);
+  assert.match(sensory, /revoke all on function public\.commit_sensory_data\(jsonb\) from public, anon, authenticated/);
+});
+
 test('Supabase seed data contains shared catalog rows only', async () => {
   const seed = await readFile(new URL('seed.sql', supabaseDirectory), 'utf8');
   const insertedTables = [...seed.matchAll(/insert\s+into\s+([\w.]+)/gi)].map(match => match[1].toLowerCase());
@@ -76,4 +89,13 @@ test('AI governance integration suite covers tenant isolation and quota enforcem
   assert.match(suite, /authenticated cannot reserve provider quota directly/);
   assert.match(suite, /AI_DAILY_QUOTA_EXCEEDED/);
   assert.match(suite, /tenant B still sees only its own usage/);
+});
+
+test('sensory RLS integration suite covers study, response, RPC and relational isolation', async () => {
+  const suite = await readFile(new URL('tests/database/004_sensory_rls.test.sql', supabaseDirectory), 'utf8');
+  assert.match(suite, /tenant A sees only its sensory study/);
+  assert.match(suite, /authenticated clients cannot bypass the server study workflow/);
+  assert.match(suite, /authenticated cannot execute sensory commit RPC/);
+  assert.match(suite, /composite foreign key rejects a response attached across owners/);
+  assert.match(suite, /panelist code is unique within an owned study/);
 });

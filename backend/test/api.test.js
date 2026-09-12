@@ -141,6 +141,100 @@ test('new formulation nutrition and cost use consistent units', async () => {
   assert.equal(formulation.total_cost_per_liter, 16.5);
 });
 
+test('sensory analytics summarize only accessible formulation laboratory results', async () => {
+  for (const [index, taste] of [6, 8].entries()) {
+    const saved = await server.inject({
+      method: 'POST',
+      url: '/api/v1/formulations/form-001/laboratory-results',
+      payload: {
+        batch_code: `ANALYTICS-${index + 1}`,
+        tested_at: `2026-08-${20 + index}T00:00:00.000Z`,
+        sensory: { appearance: 7, aroma: 7, taste, mouthfeel: 7, overall_acceptance: taste },
+      },
+    });
+    assert.equal(saved.statusCode, 201);
+  }
+
+  const response = await server.inject({
+    method: 'GET',
+    url: '/api/v1/formulations/form-001/sensory-analytics',
+  });
+  assert.equal(response.statusCode, 200);
+  const analysis = response.json().data;
+  assert.equal(analysis.coverage.result_count, 2);
+  assert.equal(analysis.coverage.completion_percent, 100);
+  assert.equal(analysis.attributes.find(attribute => attribute.key === 'taste').mean, 7);
+  assert.equal(analysis.ranked_batches[0].batch_code, 'ANALYTICS-2');
+  assert.equal(analysis.methodology.observation_unit, 'laboratory_result');
+
+  const missing = await server.inject({
+    method: 'GET',
+    url: '/api/v1/formulations/not-real/sensory-analytics',
+  });
+  assert.equal(missing.statusCode, 404);
+});
+
+test('sensory workspace persists study design, individual responses and advanced analysis', async () => {
+  const created = await server.inject({
+    method: 'POST', url: '/api/v1/sensory/studies', payload: {
+      name: 'Control versus reduced sugar',
+      objective: 'Determine whether reduced sugar preserves sweetness and overall liking.',
+      test_type: 'combined', panel_type: 'consumer', planned_panelists: 30,
+      scale_min: 0, scale_max: 10, status: 'active',
+      attributes: [
+        { key: 'sweetness', label: 'Sweetness', category: 'taste' },
+        { key: 'overall_liking', label: 'Overall liking', category: 'overall' },
+      ],
+      samples: [
+        { formulation_id: 'form-001', sample_code: 'CTRL', blind_code: '314', label: 'Control' },
+        { formulation_id: 'form-002', sample_code: 'CAND', blind_code: '729', label: 'Candidate' },
+      ],
+      protocol: { randomize_order: true, serving_temperature_c: 6, serving_volume_ml: 60 },
+    },
+  });
+  assert.equal(created.statusCode, 201);
+  const study = created.json().data;
+  assert.equal(study.samples.length, 2);
+  assert.notEqual(study.samples[0].id, study.samples[1].id);
+
+  const responsePayload = {
+    panelist_code: 'PANEL-001', segment: 'Frequent buyer',
+    demographics: { age_range: '25–34', consumption_frequency: 'Weekly' },
+    session: { duration_seconds: 240, serving_order: study.samples.map(sample => sample.id) },
+    samples: study.samples.map((sample, index) => ({
+      sample_id: sample.id,
+      scores: { sweetness: index === 0 ? 8 : 6, overall_liking: index === 0 ? 9 : 7 },
+      jar: { sweetness: index === 0 ? 0 : -1 },
+      purchase_intent: index === 0 ? 5 : 4,
+      preference_rank: index + 1,
+    })),
+  };
+  const invalidOrder = await server.inject({
+    method: 'POST', url: `/api/v1/sensory/studies/${study.id}/responses`,
+    payload: { ...responsePayload, panelist_code: 'PANEL-BAD-ORDER', session: { duration_seconds: 240, serving_order: [study.samples[0].id, study.samples[0].id] } },
+  });
+  assert.equal(invalidOrder.statusCode, 400);
+  assert.match(invalidOrder.json().error, /serving order/i);
+
+  const response = await server.inject({ method: 'POST', url: `/api/v1/sensory/studies/${study.id}/responses`, payload: responsePayload });
+  assert.equal(response.statusCode, 201);
+
+  const duplicate = await server.inject({ method: 'POST', url: `/api/v1/sensory/studies/${study.id}/responses`, payload: responsePayload });
+  assert.equal(duplicate.statusCode, 409);
+
+  const analyticsResponse = await server.inject({ method: 'GET', url: `/api/v1/sensory/studies/${study.id}/analytics` });
+  assert.equal(analyticsResponse.statusCode, 200);
+  const analysis = analyticsResponse.json().data;
+  assert.equal(analysis.coverage.response_count, 1);
+  assert.equal(analysis.coverage.evaluation_count, 2);
+  assert.equal(analysis.ranking[0].sample_id, study.samples[0].id);
+  assert.ok(analysis.warnings.some(warning => warning.code === 'small_panel'));
+
+  const listed = await server.inject({ method: 'GET', url: '/api/v1/sensory/studies' });
+  assert.equal(listed.statusCode, 200);
+  assert.equal(listed.json().data.find(item => item.id === study.id).response_count, 1);
+});
+
 test('target generation uses ingredient sugar data', async () => {
   const response = await server.inject({
     method: 'POST',

@@ -24,6 +24,7 @@ The application uses Supabase Postgres for durable storage and Supabase Auth for
 ### Product features
 
 - Gemini can review locally generated recommendation candidates; validated local generation remains available if Gemini is unavailable.
+- A dedicated Sensory workspace supports controlled study design, blinded and randomized sample presentation, individual panel responses, sensory profiles, confidence intervals, exploratory ANOVA, correlations, segment analysis, JAR penalty analysis, commercial-intent measures, and response-quality diagnostics.
 - Algerian regulatory checks and multilingual labels are draft screening tools, not legal certification.
 - Cost, ROI, batch-cost, ingredient pricing history, target-generation history, and audit history are implemented.
 
@@ -126,6 +127,7 @@ The API is available under `/api/v1` and covers:
 - `/compatibility`
 - `/ai`
 - `/target-generation`
+- `/sensory/studies`
 - `/regulatory`
 - `/cost`
 

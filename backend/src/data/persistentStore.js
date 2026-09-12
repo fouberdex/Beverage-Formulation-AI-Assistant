@@ -12,6 +12,8 @@ import {
   targetGenerationRuns,
   laboratoryResults,
   aiLearningExamples,
+  sensoryStudies,
+  sensoryResponses,
 } from './mockData.js';
 import { isSupabaseConfigured } from '../services/supabaseClient.js';
 
@@ -27,6 +29,8 @@ const collections = {
   targetGenerationRuns,
   laboratoryResults,
   aiLearningExamples,
+  sensoryStudies,
+  sensoryResponses,
 };
 
 let dataFile = defaultDataFile;

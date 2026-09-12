@@ -1,0 +1,70 @@
+scope:
+  domain: "boissons gazeuses et boissons sans alcool"
+  themes:
+    beverage_domain:
+      - "beverage"
+    preservatives_stability:
+      - "beverage preservative"
+      - "beverage stability"
+      - "soft drink"
+    sweeteners:
+      - "beverage sweetener"
+      - "sugar substitute beverage"
+      - "stevia beverage"
+    carbonation:
+      - "carbonated beverage"
+      - "beverage carbonation"
+      - "carbon dioxide beverage"
+    flavors:
+      - "beverage flavor"
+      - "beverage aroma"
+      - "soft drink flavor"
+  languages: ["en", "fr"]
+  date_from: "2010-01-01"
+  date_to: "2026-12-31"
+  patents:
+    include_description: false
+    countries: ["US", "EP", "WO", "CN", "JP", "KR", "CA", "AU"]
+    ipc_prefixes: ["A23L2", "A23L27", "A23L29"]
+    cpc_prefixes: ["A23L2", "A23L27", "A23L29"]
+
+ingestion:
+  enabled_sources: ["patents", "semantic_scholar"]
+  pilot_limit_total: 20000
+  per_source_limit:
+    patents: 10000
+    openalex: 0
+    semantic_scholar: 10000
+    pubmed: 0
+  request_timeout_seconds: 60
+  requests_per_second: 0.8
+  output_dir: "data/raw"
+  manifest_dir: "data/manifests"
+
+preprocessing:
+  input_dir: "data/raw"
+  output_file: "data/processed/chunks/chunks-20k.jsonl"
+  chunk_size_words: 420
+  chunk_overlap_words: 60
+  minimum_chunk_words: 25
+
+indexing:
+  qdrant_url: "http://localhost:6333"
+  collection_name: "beverage_innovation_20k"
+  dense_model: "BAAI/bge-m3"
+  sparse_model: "Qdrant/bm25"
+  batch_size: 16
+  dense_vector_name: "dense"
+  sparse_vector_name: "sparse"
+
+retrieval:
+  dense_candidates: 50
+  sparse_candidates: 50
+  top_k: 10
+
+generation:
+  provider: "ollama"
+  model: "qwen2.5:14b-instruct"
+  base_url: "http://localhost:11434"
+  temperature: 0.1
+  timeout_seconds: 180

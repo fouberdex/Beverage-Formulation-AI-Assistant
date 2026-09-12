@@ -319,6 +319,8 @@ export const targetGenerationRuns = [];
 // Laboratory measurements and consented local-learning examples.
 export const laboratoryResults = [];
 export const aiLearningExamples = [];
+export const sensoryStudies = [];
+export const sensoryResponses = [];
 
 // Categories
 export const categories = [...new Set(mockIngredients.map(i => i.category))];

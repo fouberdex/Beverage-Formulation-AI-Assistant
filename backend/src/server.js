@@ -36,6 +36,8 @@ import {
   verifySupabaseAccessToken,
 } from './services/supabaseClient.js';
 import { authorizeApiRequest, USER_ROLES } from './services/authorization.js';
+import { analyzeSensoryResults } from './services/sensoryAnalytics.js';
+import { analyzeSensoryStudy } from './services/sensoryStudyAnalytics.js';
 import { validateRuntimeConfiguration } from './services/runtimeConfiguration.js';
 import {
   createRequestId,
@@ -892,6 +894,13 @@ server.get(`${apiPrefix}/formulations/:id/laboratory-results`, async (request, r
   return { data };
 });
 
+server.get(`${apiPrefix}/formulations/:id/sensory-analytics`, async (request, reply) => {
+  if (!findAccessibleFormulation(request, request.params.id)) return reply.code(404).send({ error: 'Formulation not found' });
+  const results = request.store.laboratoryResults
+    .filter(item => item.formulation_id === request.params.id && isOwnedByRequest(request, item));
+  return { data: analyzeSensoryResults(results) };
+});
+
 server.post(`${apiPrefix}/formulations/:id/laboratory-results`, async (request, reply) => {
   const formulation = findAccessibleFormulation(request, request.params.id);
   if (!formulation) return reply.code(404).send({ error: 'Formulation not found' });
@@ -929,6 +938,189 @@ server.get(`${apiPrefix}/ai/learning-feedback/summary`, async (request) => {
     mode: 'local_calibration_queue',
     external_processing: false,
   } };
+});
+
+// ============================================================================
+// SENSORY STUDIES, INDIVIDUAL PANEL RESPONSES & ANALYTICS
+// ============================================================================
+
+const sensoryAttributeSchema = z.object({
+  key: z.string().trim().regex(/^[a-z][a-z0-9_]{1,49}$/),
+  label: z.string().trim().min(2).max(80),
+  category: z.enum(['appearance', 'aroma', 'taste', 'mouthfeel', 'aftertaste', 'overall', 'custom']),
+});
+const sensorySampleSchema = z.object({
+  formulation_id: z.string().trim().min(1).optional(),
+  sample_code: z.string().trim().min(1).max(50),
+  blind_code: z.string().trim().min(1).max(20),
+  label: z.string().trim().min(2).max(100),
+  batch_code: z.string().trim().max(100).optional(),
+});
+const sensoryStudySchema = z.object({
+  name: z.string().trim().min(3).max(150),
+  objective: z.string().trim().min(10).max(2000),
+  test_type: z.enum(['hedonic', 'descriptive', 'preference', 'jar', 'combined']),
+  panel_type: z.enum(['trained', 'expert', 'consumer', 'internal']),
+  planned_panelists: z.coerce.number().int().min(1).max(5000),
+  scale_min: z.coerce.number().finite().min(0).max(8).default(0),
+  scale_max: z.coerce.number().finite().min(2).max(10).default(10),
+  status: z.enum(['draft', 'active', 'completed']).default('draft'),
+  attributes: z.array(sensoryAttributeSchema).min(2).max(20),
+  samples: z.array(sensorySampleSchema).min(1).max(12),
+  protocol: z.object({
+    randomize_order: z.boolean().default(true),
+    serving_temperature_c: z.coerce.number().finite().min(-10).max(100).optional(),
+    serving_volume_ml: z.coerce.number().finite().positive().max(2000).optional(),
+    palate_cleanser: z.string().trim().max(200).optional(),
+    environment: z.string().trim().max(300).optional(),
+    instructions: z.string().trim().max(3000).optional(),
+  }).default({ randomize_order: true }),
+}).superRefine((study, context) => {
+  if (study.scale_max <= study.scale_min) context.addIssue({ code: z.ZodIssueCode.custom, path: ['scale_max'], message: 'Maximum scale value must exceed the minimum' });
+  const attributeKeys = study.attributes.map(attribute => attribute.key);
+  if (new Set(attributeKeys).size !== attributeKeys.length) context.addIssue({ code: z.ZodIssueCode.custom, path: ['attributes'], message: 'Attribute keys must be unique' });
+  const sampleCodes = study.samples.map(sample => sample.sample_code.toLowerCase());
+  if (new Set(sampleCodes).size !== sampleCodes.length) context.addIssue({ code: z.ZodIssueCode.custom, path: ['samples'], message: 'Sample codes must be unique' });
+  const blindCodes = study.samples.map(sample => sample.blind_code.toLowerCase());
+  if (new Set(blindCodes).size !== blindCodes.length) context.addIssue({ code: z.ZodIssueCode.custom, path: ['samples'], message: 'Blind codes must be unique' });
+});
+const sensoryResponseSchema = z.object({
+  panelist_code: z.string().trim().min(1).max(80),
+  segment: z.string().trim().max(100).optional(),
+  demographics: z.object({
+    age_range: z.string().trim().max(40).optional(),
+    gender: z.string().trim().max(40).optional(),
+    consumption_frequency: z.string().trim().max(80).optional(),
+  }).default({}),
+  session: z.object({
+    location: z.string().trim().max(120).optional(),
+    duration_seconds: z.coerce.number().int().positive().max(86400).optional(),
+    serving_order: z.array(z.string().trim().min(1)).max(12).optional(),
+    completed_at: z.coerce.date().default(() => new Date()),
+  }).default({}),
+  samples: z.array(z.object({
+    sample_id: z.string().trim().min(1),
+    scores: z.record(z.string(), z.coerce.number().finite()),
+    jar: z.record(z.string(), z.coerce.number().int().min(-2).max(2)).default({}),
+    purchase_intent: z.coerce.number().int().min(1).max(5).optional(),
+    preference_rank: z.coerce.number().int().min(1).max(12).optional(),
+    comment: z.string().trim().max(2000).optional(),
+  })).min(1).max(12),
+});
+
+function findSensoryStudy(request, id) {
+  return request.store.sensoryStudies.find(study => study.id === id && isOwnedByRequest(request, study));
+}
+
+function requireSensoryPersistence(request, reply) {
+  if (request.store.featureAvailability?.sensory !== false) return true;
+  reply.code(503).send({
+    error: 'Sensory storage is not installed. Apply the pending Supabase sensory migration before creating studies.',
+    code: 'SENSORY_MIGRATION_REQUIRED',
+  });
+  return false;
+}
+
+server.get(`${apiPrefix}/sensory/studies`, async (request, reply) => {
+  if (!requireSensoryPersistence(request, reply)) return reply;
+  return { data: request.store.sensoryStudies.filter(study => isOwnedByRequest(request, study)).map(study => ({
+    ...study,
+    response_count: request.store.sensoryResponses.filter(response => response.study_id === study.id && isOwnedByRequest(request, response)).length,
+  })).sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at)),
+  };
+});
+
+server.post(`${apiPrefix}/sensory/studies`, async (request, reply) => {
+  if (!requireSensoryPersistence(request, reply)) return reply;
+  const input = sensoryStudySchema.parse(request.body);
+  for (const sample of input.samples) {
+    if (sample.formulation_id && !findAccessibleFormulation(request, sample.formulation_id)) {
+      return reply.code(400).send({ error: `Sample formulation ${sample.formulation_id} is unavailable` });
+    }
+  }
+  const now = new Date().toISOString();
+  const study = {
+    ...input,
+    id: generateId(),
+    owner_id: request.user?.id,
+    attributes: input.attributes.map(attribute => ({ ...attribute })),
+    samples: input.samples.map(sample => ({ ...sample, id: generateId() })),
+    created_at: now,
+    updated_at: now,
+  };
+  request.store.sensoryStudies.push(study);
+  return reply.code(201).send({ data: study });
+});
+
+server.get(`${apiPrefix}/sensory/studies/:id`, async (request, reply) => {
+  if (!requireSensoryPersistence(request, reply)) return reply;
+  const study = findSensoryStudy(request, request.params.id);
+  if (!study) return reply.code(404).send({ error: 'Sensory study not found' });
+  return { data: study };
+});
+
+server.put(`${apiPrefix}/sensory/studies/:id/status`, async (request, reply) => {
+  if (!requireSensoryPersistence(request, reply)) return reply;
+  const study = findSensoryStudy(request, request.params.id);
+  if (!study) return reply.code(404).send({ error: 'Sensory study not found' });
+  const input = z.object({ status: z.enum(['draft', 'active', 'completed', 'archived']) }).parse(request.body);
+  study.status = input.status;
+  study.updated_at = new Date().toISOString();
+  return { data: study };
+});
+
+server.get(`${apiPrefix}/sensory/studies/:id/responses`, async (request, reply) => {
+  if (!requireSensoryPersistence(request, reply)) return reply;
+  if (!findSensoryStudy(request, request.params.id)) return reply.code(404).send({ error: 'Sensory study not found' });
+  return { data: request.store.sensoryResponses.filter(response => response.study_id === request.params.id && isOwnedByRequest(request, response)).sort((a, b) => new Date(b.session.completed_at) - new Date(a.session.completed_at)) };
+});
+
+server.post(`${apiPrefix}/sensory/studies/:id/responses`, async (request, reply) => {
+  if (!requireSensoryPersistence(request, reply)) return reply;
+  const study = findSensoryStudy(request, request.params.id);
+  if (!study) return reply.code(404).send({ error: 'Sensory study not found' });
+  if (study.status === 'completed' || study.status === 'archived') return reply.code(409).send({ error: 'This study is closed to new responses' });
+  const input = sensoryResponseSchema.parse(request.body);
+  if (request.store.sensoryResponses.some(response => response.study_id === study.id && isOwnedByRequest(request, response) && response.panelist_code.toLowerCase() === input.panelist_code.toLowerCase())) {
+    return reply.code(409).send({ error: 'This panelist code already has a response in the study' });
+  }
+  const sampleIds = new Set(study.samples.map(sample => sample.id));
+  const attributeKeys = new Set(study.attributes.map(attribute => attribute.key));
+  const submittedSampleIds = input.samples.map(sample => sample.sample_id);
+  if (new Set(submittedSampleIds).size !== submittedSampleIds.length || submittedSampleIds.some(id => !sampleIds.has(id))) {
+    return reply.code(400).send({ error: 'Responses contain duplicate or unknown study samples' });
+  }
+  if (input.session.serving_order) {
+    const servingOrder = input.session.serving_order;
+    if (servingOrder.length !== submittedSampleIds.length || new Set(servingOrder).size !== servingOrder.length || servingOrder.some(id => !submittedSampleIds.includes(id))) {
+      return reply.code(400).send({ error: 'Serving order must contain each submitted sample exactly once' });
+    }
+  }
+  for (const sample of input.samples) {
+    const unknownAttribute = Object.keys(sample.scores).find(key => !attributeKeys.has(key));
+    const outOfRange = Object.entries(sample.scores).find(([, value]) => value < study.scale_min || value > study.scale_max);
+    if (unknownAttribute) return reply.code(400).send({ error: `Unknown sensory attribute: ${unknownAttribute}` });
+    if (outOfRange) return reply.code(400).send({ error: `${outOfRange[0]} must be between ${study.scale_min} and ${study.scale_max}` });
+  }
+  const response = {
+    ...input,
+    id: generateId(),
+    owner_id: request.user?.id,
+    study_id: study.id,
+    session: { ...input.session, completed_at: input.session.completed_at.toISOString() },
+    created_at: new Date().toISOString(),
+  };
+  request.store.sensoryResponses.push(response);
+  study.updated_at = response.created_at;
+  return reply.code(201).send({ data: response });
+});
+
+server.get(`${apiPrefix}/sensory/studies/:id/analytics`, async (request, reply) => {
+  if (!requireSensoryPersistence(request, reply)) return reply;
+  const study = findSensoryStudy(request, request.params.id);
+  if (!study) return reply.code(404).send({ error: 'Sensory study not found' });
+  const responses = request.store.sensoryResponses.filter(response => response.study_id === study.id && isOwnedByRequest(request, response));
+  return { data: analyzeSensoryStudy(study, responses) };
 });
 
 // ============================================================================

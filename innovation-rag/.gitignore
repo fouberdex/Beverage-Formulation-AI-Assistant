@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.coverage
+data/raw/**/*.jsonl
+data/processed/**/*.jsonl
+data/manifests/*.json
+data/precomputed/**/*
+!data/**/.gitkeep

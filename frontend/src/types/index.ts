@@ -165,6 +165,147 @@ export interface LaboratoryResult {
   created_at: string;
 }
 
+export interface SensoryAttributeAnalytics {
+  key: string;
+  label: string;
+  count: number;
+  missing: number;
+  mean: number | null;
+  median: number | null;
+  standard_deviation: number | null;
+  minimum: number | null;
+  maximum: number | null;
+  confidence_interval_95: { lower: number; upper: number } | null;
+  distribution: Array<{ label: string; count: number }>;
+  outliers: Array<{
+    result_id: string;
+    batch_code?: string | null;
+    tested_at: string;
+    value: number;
+    reason: string;
+  }>;
+}
+
+export interface SensoryAnalytics {
+  methodology: {
+    observation_unit: string;
+    score_range: { minimum: number; maximum: number };
+    confidence_interval: string;
+    standard_deviation: string;
+    outlier_rule: string;
+    composite_score: string;
+  };
+  coverage: {
+    result_count: number;
+    observed_scores: number;
+    expected_scores: number;
+    completion_percent: number;
+  };
+  attributes: SensoryAttributeAnalytics[];
+  ranked_batches: Array<{
+    result_id: string;
+    batch_code?: string | null;
+    tested_at: string;
+    composite_score: number;
+    completed_attributes: number;
+    total_attributes: number;
+    scores: Record<string, number | null>;
+  }>;
+  trend: Array<{
+    result_id: string;
+    batch_code?: string | null;
+    tested_at: string;
+    composite_score: number;
+    completed_attributes: number;
+    total_attributes: number;
+    scores: Record<string, number | null>;
+  }>;
+  warnings: Array<{ code: string; message: string }>;
+}
+
+export interface SensoryStudyAttribute {
+  key: string;
+  label: string;
+  category: 'appearance' | 'aroma' | 'taste' | 'mouthfeel' | 'aftertaste' | 'overall' | 'custom';
+}
+
+export interface SensoryStudySample {
+  id: string;
+  formulation_id?: string;
+  sample_code: string;
+  blind_code: string;
+  label: string;
+  batch_code?: string;
+}
+
+export interface SensoryStudy {
+  id: string;
+  name: string;
+  objective: string;
+  test_type: 'hedonic' | 'descriptive' | 'preference' | 'jar' | 'combined';
+  panel_type: 'trained' | 'expert' | 'consumer' | 'internal';
+  planned_panelists: number;
+  scale_min: number;
+  scale_max: number;
+  status: 'draft' | 'active' | 'completed' | 'archived';
+  attributes: SensoryStudyAttribute[];
+  samples: SensoryStudySample[];
+  protocol: {
+    randomize_order: boolean;
+    serving_temperature_c?: number;
+    serving_volume_ml?: number;
+    palate_cleanser?: string;
+    environment?: string;
+    instructions?: string;
+  };
+  response_count?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SensoryStudyAnalytics {
+  generated_at: string;
+  coverage: {
+    response_count: number;
+    evaluation_count: number;
+    expected_evaluations: number;
+    score_completion_percent: number;
+    segment_count: number;
+  };
+  overall_attribute_key: string;
+  samples: Array<{
+    sample_id: string;
+    sample_code: string;
+    blind_code: string;
+    label: string;
+    response_count: number;
+    overall: SensoryAttributeAnalytics;
+    purchase_intent: SensoryAttributeAnalytics;
+    preference_rank: SensoryAttributeAnalytics;
+    attributes: SensoryAttributeAnalytics[];
+  }>;
+  ranking: SensoryStudyAnalytics['samples'];
+  anova: Array<{
+    attribute_key: string;
+    attribute_label: string;
+    result: null | {
+      f_statistic: number | null;
+      infinite_f: boolean;
+      p_value: number | null;
+      df_between: number;
+      df_within: number;
+      eta_squared: number;
+      significant_at_0_05: boolean;
+    };
+  }>;
+  correlations: Array<{ row: string; column: string; value: number | null; count: number }>;
+  jar_penalty: Array<{ sample_id: string; dimension: string; direction: string; count: number; percent: number; mean_drop: number | null; actionable: boolean }>;
+  segments: Array<{ segment: string; sample_id: string; count: number; mean: number | null }>;
+  quality: { flags: Array<{ type: string; panelist_code: string; sample_id?: string; message: string }>; outliers: Array<Record<string, any>> };
+  warnings: Array<{ code: string; message: string }>;
+  methodology: Record<string, string>;
+}
+
 
 
 

@@ -12,6 +12,8 @@ const COLLECTION_NAMES = [
   'targetGenerationRuns',
   'laboratoryResults',
   'aiLearningExamples',
+  'sensoryStudies',
+  'sensoryResponses',
 ];
 
 function unpackPayload(row, ownershipColumn = 'owner_id') {
@@ -44,6 +46,15 @@ async function fetchOptionalCollection(queryFactory) {
   }
 }
 
+async function fetchFeatureCollection(queryFactory) {
+  try {
+    return { rows: await fetchAll(queryFactory), available: true };
+  } catch (error) {
+    if (error?.code === 'PGRST205') return { rows: [], available: false };
+    throw error;
+  }
+}
+
 export function snapshotCollections(store) {
   return Object.fromEntries(COLLECTION_NAMES.map(name => [
     name,
@@ -67,12 +78,12 @@ export function buildChangeSet(store, auditEvent = null) {
 export async function loadRequestStore(ownerId, options = {}) {
   const mode = options.mode || getStorageConfiguration().mode;
   if (mode !== 'supabase') {
-    return { ...getLocalCollections(), snapshot: null };
+    return { ...getLocalCollections(), featureAvailability: { sensory: true }, snapshot: null };
   }
   if (!ownerId) throw new Error('An authenticated owner is required for Supabase data access');
 
   const client = options.client || getSupabaseAdmin();
-  const [ingredientRows, formulationRows, variantRows, complianceRows, batchRows, pricingRows, targetRows, laboratoryRows, learningRows] = await Promise.all([
+  const [ingredientRows, formulationRows, variantRows, complianceRows, batchRows, pricingRows, targetRows, laboratoryRows, learningRows, sensoryStudyRows, sensoryResponseRows] = await Promise.all([
     fetchAll(() => client.from('ingredients').select('id,code,name,category,is_active,payload')),
     fetchAll(() => client.from('formulations').select('payload,owner_id').eq('owner_id', ownerId)),
     fetchAll(() => client.from('ai_variants').select('payload,owner_id').eq('owner_id', ownerId)),
@@ -82,6 +93,8 @@ export async function loadRequestStore(ownerId, options = {}) {
     fetchAll(() => client.from('target_generation_runs').select('id,owner_id,constraints,candidates,ai_metadata,created_at').eq('owner_id', ownerId)),
     fetchOptionalCollection(() => client.from('laboratory_results').select('payload,owner_id').eq('owner_id', ownerId)),
     fetchOptionalCollection(() => client.from('ai_learning_examples').select('payload,owner_id').eq('owner_id', ownerId)),
+    fetchFeatureCollection(() => client.from('sensory_studies').select('payload,owner_id').eq('owner_id', ownerId)),
+    fetchFeatureCollection(() => client.from('sensory_responses').select('payload,owner_id').eq('owner_id', ownerId)),
   ]);
 
   // A newly connected Supabase project can have no shared catalog rows until
@@ -113,6 +126,9 @@ export async function loadRequestStore(ownerId, options = {}) {
     })),
     laboratoryResults: laboratoryRows.map(row => unpackPayload(row)),
     aiLearningExamples: learningRows.map(row => unpackPayload(row)),
+    sensoryStudies: sensoryStudyRows.rows.map(row => unpackPayload(row)),
+    sensoryResponses: sensoryResponseRows.rows.map(row => unpackPayload(row)),
+    featureAvailability: { sensory: sensoryStudyRows.available && sensoryResponseRows.available },
   };
   store.using_bundled_ingredient_catalog = storedIngredients.length === 0;
   store.categories = [...new Set(store.ingredients.map(item => item.category))];
