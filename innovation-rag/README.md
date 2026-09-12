@@ -210,6 +210,32 @@ numéro de publication ; pour un article, le DOI est préféré puis le titre.
 
 Si aucun passage pertinent n'est retrouvé, le LLM n'est pas appelé.
 
+### Génération GPU et reranking (Colab ou RunPod)
+
+Le notebook `notebooks/beverage_rag_gpu_server_colab_runpod.ipynb` déploie une passerelle
+authentifiée comprenant :
+
+- Qwen2.5 7B ou 14B Instruct AWQ 4-bit servi par vLLM ;
+- BGE-reranker-v2-m3 ;
+- une API OpenAI-compatible sous `/v1` et une route `/rerank` ;
+- un tunnel HTTPS temporaire pour relier l'application locale au GPU.
+
+Exécuter toutes les cellules, garder la dernière cellule active, puis reporter les deux
+valeurs produites dans `.env` sans les publier :
+
+```dotenv
+VLLM_BASE_URL=https://adresse-temporaire.trycloudflare.com/v1
+RERANKER_BASE_URL=https://adresse-temporaire.trycloudflare.com
+VLLM_API_KEY=valeur-secrète
+RERANKER_API_KEY=valeur-secrète
+```
+
+Utiliser ensuite `config/beverages-20k-gpu.yaml`. Ce profil active la décomposition de la
+question, plusieurs recherches hybrides, leur fusion RRF, le reranking cross-encoder et le
+format de réponse R&D fondé sur les preuves. L'URL temporaire change à chaque redémarrage du
+notebook. Pour une démonstration planifiée, préférer RunPod avec au moins 24 Go de VRAM pour
+le profil 14B ; le profil 7B est plus tolérant sur un GPU de 16 Go.
+
 ## 5. Démonstration Streamlit
 
 ```powershell

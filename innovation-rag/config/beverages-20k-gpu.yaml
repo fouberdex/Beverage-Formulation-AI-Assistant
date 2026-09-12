@@ -1,24 +1,11 @@
 scope:
   domain: "boissons gazeuses et boissons sans alcool"
   themes:
-    beverage_domain:
-      - "beverage"
-    preservatives_stability:
-      - "beverage preservative"
-      - "beverage stability"
-      - "soft drink"
-    sweeteners:
-      - "beverage sweetener"
-      - "sugar substitute beverage"
-      - "stevia beverage"
-    carbonation:
-      - "carbonated beverage"
-      - "beverage carbonation"
-      - "carbon dioxide beverage"
-    flavors:
-      - "beverage flavor"
-      - "beverage aroma"
-      - "soft drink flavor"
+    beverage_domain: ["beverage"]
+    preservatives_stability: ["beverage preservative", "beverage stability", "soft drink"]
+    sweeteners: ["beverage sweetener", "sugar substitute beverage", "stevia beverage"]
+    carbonation: ["carbonated beverage", "beverage carbonation", "carbon dioxide beverage"]
+    flavors: ["beverage flavor", "beverage aroma", "soft drink flavor"]
   languages: ["en", "fr"]
   date_from: "2010-01-01"
   date_to: "2026-12-31"
@@ -58,29 +45,29 @@ indexing:
   sparse_vector_name: "sparse"
 
 retrieval:
-  dense_candidates: 50
-  sparse_candidates: 50
-  top_k: 6
-  multi_query_enabled: false
-  source_balancing_enabled: false
+  dense_candidates: 60
+  sparse_candidates: 60
+  top_k: 10
+  multi_query_enabled: true
+  source_balancing_enabled: true
   max_subqueries: 6
-  candidates_per_query: 12
+  candidates_per_query: 15
   rrf_k: 60
 
 reranking:
-  enabled: false
-  provider: "local"
+  enabled: true
+  provider: "http"
   model: "BAAI/bge-reranker-v2-m3"
   base_url: "http://localhost:8000"
   candidate_pool_size: 40
-  top_n: 10
-  timeout_seconds: 180
+  top_n: 12
+  timeout_seconds: 300
 
 generation:
-  provider: "ollama"
-  model: "qwen2.5:3b-instruct"
-  base_url: "http://localhost:11434"
+  provider: "vllm"
+  model: "beverage-qwen"
+  base_url: "http://localhost:8000/v1"
   temperature: 0.1
   timeout_seconds: 600
-  max_output_tokens: 900
-  quality_gate_enabled: false
+  max_output_tokens: 1400
+  quality_gate_enabled: true

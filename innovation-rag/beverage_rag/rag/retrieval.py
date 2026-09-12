@@ -18,9 +18,11 @@ class HybridRetriever:
         source: str | None = None,
         date_from: date | None = None,
         date_to: date | None = None,
+        top_k: int | None = None,
     ) -> list[RetrievedChunk]:
         return self.store.search(
             question,
+            top_k=top_k,
             source=source,
             date_from=date_from,
             date_to=date_to,
@@ -43,3 +45,25 @@ class HybridRetriever:
             for item in results
         ]
 
+
+def reciprocal_rank_fusion(
+    ranked_lists: list[list[RetrievedChunk]], rrf_k: int = 60
+) -> list[RetrievedChunk]:
+    """Fuse independently retrieved subqueries without trusting incomparable raw scores."""
+    by_chunk: dict[str, RetrievedChunk] = {}
+    fused_scores: dict[str, float] = {}
+    for ranked in ranked_lists:
+        for rank, item in enumerate(ranked, start=1):
+            chunk_id = item.chunk.id
+            by_chunk.setdefault(chunk_id, item)
+            fused_scores[chunk_id] = fused_scores.get(chunk_id, 0.0) + 1.0 / (
+                rrf_k + rank
+            )
+    return sorted(
+        (
+            RetrievedChunk(chunk=by_chunk[chunk_id].chunk, score=score)
+            for chunk_id, score in fused_scores.items()
+        ),
+        key=lambda item: item.score,
+        reverse=True,
+    )

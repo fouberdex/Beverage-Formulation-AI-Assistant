@@ -1,6 +1,7 @@
 .venv/
 __pycache__/
 .pytest_cache/
+.test-tmp/
 .coverage
 data/raw/**/*.jsonl
 data/processed/**/*.jsonl

@@ -76,6 +76,21 @@ class RetrievalSettings(BaseModel):
     dense_candidates: int = Field(default=30, gt=0)
     sparse_candidates: int = Field(default=30, gt=0)
     top_k: int = Field(default=8, gt=0)
+    multi_query_enabled: bool = False
+    source_balancing_enabled: bool = False
+    max_subqueries: int = Field(default=6, ge=1, le=12)
+    candidates_per_query: int = Field(default=12, ge=1)
+    rrf_k: int = Field(default=60, ge=1)
+
+
+class RerankingSettings(BaseModel):
+    enabled: bool = False
+    provider: Literal["local", "http"] = "local"
+    model: str = "BAAI/bge-reranker-v2-m3"
+    base_url: str = "http://localhost:8000"
+    candidate_pool_size: int = Field(default=40, gt=0)
+    top_n: int = Field(default=10, gt=0)
+    timeout_seconds: float = Field(default=180, gt=0)
 
 
 class GenerationSettings(BaseModel):
@@ -84,6 +99,8 @@ class GenerationSettings(BaseModel):
     base_url: str
     temperature: float = Field(default=0.1, ge=0, le=2)
     timeout_seconds: float = Field(default=120, gt=0)
+    max_output_tokens: int = Field(default=1200, ge=128, le=8192)
+    quality_gate_enabled: bool = False
 
 
 class Settings(BaseModel):
@@ -92,6 +109,7 @@ class Settings(BaseModel):
     preprocessing: PreprocessingSettings
     indexing: IndexingSettings
     retrieval: RetrievalSettings
+    reranking: RerankingSettings = Field(default_factory=RerankingSettings)
     generation: GenerationSettings
     config_path: Path = Field(exclude=True)
     root_dir: Path = Field(exclude=True)
@@ -113,5 +131,8 @@ class Settings(BaseModel):
         settings.generation.base_url = os.getenv(
             "OLLAMA_BASE_URL" if settings.generation.provider == "ollama" else "VLLM_BASE_URL",
             settings.generation.base_url,
+        )
+        settings.reranking.base_url = os.getenv(
+            "RERANKER_BASE_URL", settings.reranking.base_url
         )
         return settings
