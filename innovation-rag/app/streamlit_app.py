@@ -14,6 +14,12 @@ st.set_page_config(page_title="Veille innovation BeverageDzAI", layout="wide")
 st.title("Veille Brevets & Publications")
 st.caption("Recherche hybride dans des sources publiques indexées localement")
 
+
+@st.cache_resource(show_spinner=False)
+def load_pipeline(config_file: str) -> RagPipeline:
+    settings = Settings.load(config_file)
+    return RagPipeline(settings)
+
 config_path = st.sidebar.text_input(
     "Configuration", str(MODULE_ROOT / "config" / "beverages-20k.yaml")
 )
@@ -28,8 +34,8 @@ question = st.text_area(
 if st.button("Rechercher", type="primary", disabled=not question.strip()):
     try:
         with st.spinner("Recherche et génération locales…"):
-            settings = Settings.load(config_path)
-            result = RagPipeline(settings).ask(
+            pipeline = load_pipeline(config_path)
+            result = pipeline.ask(
                 question, source=None if source == "Toutes" else source
             )
         st.subheader("Réponse")
