@@ -60,11 +60,11 @@ indexing:
 retrieval:
   dense_candidates: 50
   sparse_candidates: 50
-  top_k: 10
+  top_k: 6
 
 generation:
   provider: "ollama"
   model: "qwen2.5:3b-instruct"
   base_url: "http://localhost:11434"
   temperature: 0.1
-  timeout_seconds: 180
+  timeout_seconds: 600

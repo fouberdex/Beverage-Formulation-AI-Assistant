@@ -33,7 +33,11 @@ class LocalGenerator:
                 json={
                     "model": self.settings.model,
                     "stream": False,
-                    "options": {"temperature": self.settings.temperature},
+                    "options": {
+                        "temperature": self.settings.temperature,
+                        "num_ctx": 8192,
+                        "num_predict": 512,
+                    },
                     "messages": [
                         {"role": "system", "content": SYSTEM_PROMPT},
                         {"role": "user", "content": user_prompt},
@@ -62,4 +66,3 @@ class LocalGenerator:
             )
             response.raise_for_status()
             return response.json()["choices"][0]["message"]["content"].strip()
-
