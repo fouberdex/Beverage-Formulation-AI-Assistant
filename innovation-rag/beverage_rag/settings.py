@@ -89,6 +89,7 @@ class RerankingSettings(BaseModel):
     model: str = "BAAI/bge-reranker-v2-m3"
     base_url: str = "http://localhost:8000"
     candidate_pool_size: int = Field(default=40, gt=0)
+    request_batch_size: int = Field(default=8, gt=0)
     top_n: int = Field(default=10, gt=0)
     timeout_seconds: float = Field(default=180, gt=0)
 

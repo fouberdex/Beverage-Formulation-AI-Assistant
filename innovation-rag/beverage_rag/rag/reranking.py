@@ -31,31 +31,36 @@ class Reranker:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         url = self.settings.base_url.rstrip("/") + "/rerank"
-        with httpx.Client(timeout=self.settings.timeout_seconds, headers=headers) as client:
-            response = client.post(
-                url,
-                json={
-                    "model": self.settings.model,
-                    "query": question,
-                    "documents": [item.chunk.text for item in candidates],
-                    "top_n": min(self.settings.top_n, len(candidates)),
-                },
-            )
-            response.raise_for_status()
         ranked: list[RetrievedChunk] = []
-        for result in response.json()["results"]:
-            index = int(result["index"])
-            if index < 0 or index >= len(candidates):
-                continue
-            ranked.append(
-                RetrievedChunk(
-                    chunk=candidates[index].chunk,
-                    score=float(result["relevance_score"]),
+        with httpx.Client(timeout=self.settings.timeout_seconds, headers=headers) as client:
+            batch_size = self.settings.request_batch_size
+            for offset in range(0, len(candidates), batch_size):
+                batch = candidates[offset : offset + batch_size]
+                response = client.post(
+                    url,
+                    json={
+                        "model": self.settings.model,
+                        "query": question,
+                        "documents": [item.chunk.text for item in batch],
+                        # All batch scores are needed for the final global ranking.
+                        "top_n": len(batch),
+                    },
                 )
-            )
+                response.raise_for_status()
+                for result in response.json()["results"]:
+                    index = int(result["index"])
+                    if index < 0 or index >= len(batch):
+                        continue
+                    ranked.append(
+                        RetrievedChunk(
+                            chunk=batch[index].chunk,
+                            score=float(result["relevance_score"]),
+                        )
+                    )
         if not ranked:
             raise RuntimeError("The reranker returned no valid result")
-        return ranked
+        ranked.sort(key=lambda item: item.score, reverse=True)
+        return ranked[: self.settings.top_n]
 
     def _rerank_local(
         self, question: str, candidates: list[RetrievedChunk]

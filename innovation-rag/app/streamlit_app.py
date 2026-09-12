@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import streamlit as st
@@ -20,9 +21,11 @@ def load_pipeline(config_file: str) -> RagPipeline:
     settings = Settings.load(config_file)
     return RagPipeline(settings)
 
-config_path = st.sidebar.text_input(
-    "Configuration", str(MODULE_ROOT / "config" / "beverages-20k.yaml")
+default_config = os.getenv(
+    "BEVERAGE_RAG_CONFIG",
+    str(MODULE_ROOT / "config" / "beverages-20k.yaml"),
 )
+config_path = st.sidebar.text_input("Configuration", default_config)
 source = st.sidebar.selectbox(
     "Source", ["Toutes", "google_patents_bigquery", "openalex", "semantic_scholar", "pubmed"]
 )

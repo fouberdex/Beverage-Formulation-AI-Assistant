@@ -60,6 +60,7 @@ reranking:
   model: "BAAI/bge-reranker-v2-m3"
   base_url: "http://localhost:8000"
   candidate_pool_size: 40
+  request_batch_size: 6
   top_n: 12
   timeout_seconds: 300
 
