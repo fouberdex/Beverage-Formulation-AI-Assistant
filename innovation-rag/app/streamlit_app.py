@@ -15,7 +15,7 @@ st.title("Veille Brevets & Publications")
 st.caption("Recherche hybride dans des sources publiques indexées localement")
 
 config_path = st.sidebar.text_input(
-    "Configuration", str(MODULE_ROOT / "config" / "soda.yaml")
+    "Configuration", str(MODULE_ROOT / "config" / "beverages-20k.yaml")
 )
 source = st.sidebar.selectbox(
     "Source", ["Toutes", "google_patents_bigquery", "openalex", "semantic_scholar", "pubmed"]
@@ -44,4 +44,3 @@ if st.button("Rechercher", type="primary", disabled=not question.strip()):
                     st.link_button("Ouvrir la source publique", item.url)
     except Exception as exc:
         st.error(str(exc))
-
