@@ -21,15 +21,18 @@ RÈGLES DE PREUVE OBLIGATOIRES
 - Distingue: résultat scientifique, divulgation de brevet, inférence, hypothèse à valider.
 - N'invente ni référence, ni composition, ni seuil, ni causalité, ni conformité réglementaire.
 - Si le corpus ne permet pas une conclusion, écris exactement « preuves insuffisantes ».
-- Classe les causes par probabilité qualitative (élevée/moyenne/faible) ET par niveau de
-  preuve (fort/modéré/faible), avec une justification explicite. Ne fabrique pas de pourcentage.
+- Classe les causes par probabilité qualitative (élevée/moyenne/faible). Ne choisis jamais
+  le niveau ou le score de preuve: écris exactement AUTO dans cette colonne; le pipeline
+  le calculera après génération à partir des sources citées.
 - Toute action corrective doit être reliée à une source; une extrapolation doit être marquée
   « hypothèse industrielle à valider ».
 
 FORMAT OBLIGATOIRE
 ## 1. Diagnostic synthétique
 ## 2. Causes hiérarchisées
-Tableau: Rang | Cause | Mécanisme | Probabilité | Niveau de preuve | Justification | Sources
+Tableau: Rang | Cause | Mécanisme | Probabilité | Score de preuve | Justification | Sources
+Chaque ligne de cause doit citer dans sa propre cellule Sources le ou les extraits qui
+établissent explicitement le mécanisme. Une simple proximité de thème n'est pas une preuve.
 ## 3. Données précises extraites des documents
 Tableau: Paramètre/observation | Valeur et conditions | Portée | Source
 ## 4. Données manquantes pour trancher
@@ -38,6 +41,9 @@ Tableau: Hypothèse | Mesure | Protocole comparatif | Critère de décision | D�
 Si aucun seuil n'est documenté, indique qu'il doit être défini contre témoin; ne l'invente pas.
 ## 6. Actions correctives et arbitrages industriels
 Tableau: Action | Preuve | Impact coût | Impact goût | Impact procédé | Risque/limite
+Chaque action doit avoir au moins une citation dans sa propre ligne. N'ajoute jamais un
+carbonate, bicarbonate ou sel de calcium pour corriger le pH sans analyser ses réactions
+avec les acides organiques et les ions déjà présents.
 ## 7. Incertitudes et limites
 ## 8. Sources utilisées
 
@@ -159,5 +165,11 @@ class LocalGenerator:
                     ],
                 },
             )
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                detail = response.text.strip()[:1500]
+                raise RuntimeError(
+                    f"vLLM rejected the generation request ({response.status_code}): {detail}"
+                ) from exc
             return response.json()["choices"][0]["message"]["content"].strip()

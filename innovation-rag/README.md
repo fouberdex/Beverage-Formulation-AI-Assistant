@@ -236,6 +236,26 @@ format de réponse R&D fondé sur les preuves. L'URL temporaire change à chaque
 notebook. Pour une démonstration planifiée, préférer RunPod avec au moins 24 Go de VRAM pour
 le profil 14B ; le profil 7B est plus tolérant sur un GPU de 16 Go.
 
+### Contrôles déterministes de preuve et de sécurité
+
+Le profil GPU charge également `config/evidence-policy.yaml` et
+`config/chemistry-rules.yaml` :
+
+- un mécanisme n'est validé que par une règle canonique reliant les entités, le phénomène
+  et le contexte boisson dans une même fenêtre textuelle ;
+- le score de preuve et le niveau Fort/Modéré sont calculés après génération à partir du
+  reranker et du nombre de documents indépendants ;
+- les causes sous le niveau Modéré sont retirées du diagnostic et déplacées vers les
+  données manquantes ;
+- une lacune de retrieval déclenche au plus un élargissement par synonymes, puis une
+  réponse explicite sans recommandation si elle persiste ;
+- les actions incompatibles avec la matrice chimique sont retirées ou accompagnées d'un
+  avertissement avant affichage.
+
+Les seuils présents dans `config/evidence-policy.yaml` sont initiaux. Le protocole de
+validation, les questions de référence et le script de sélection sont décrits dans
+`docs/evidence-threshold-calibration.md` et `eval/evidence-questions.yaml`.
+
 ## 5. Démonstration Streamlit
 
 ```powershell

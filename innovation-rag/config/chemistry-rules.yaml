@@ -1,0 +1,68 @@
+version: 1
+enabled: true
+
+protective_terms: ["avoid", "remove", "reduce", "limit", "exclude", "éviter", "retirer", "supprimer", "réduire", "limiter", "ne pas ajouter"]
+
+rules:
+  - id: calcium_citrate_precipitation
+    severity: block
+    action_groups:
+      - ["add", "increase", "incorporate", "dose", "ajouter", "augmenter", "incorporer", "doser"]
+      - ["calcium carbonate", "carbonate de calcium", "calcium bicarbonate", "bicarbonate de calcium"]
+    context_any: ["citric acid", "acide citrique", "citrate"]
+    warning: >-
+      Action écartée : en présence d’acide citrique/citrate, l’ajout d’une source de
+      calcium peut favoriser la formation de citrate de calcium peu soluble et aggraver
+      le dépôt ou la turbidité.
+
+  - id: divalent_cation_anion_precipitation
+    severity: block
+    action_groups:
+      - ["add", "increase", "incorporate", "dose", "ajouter", "augmenter", "incorporer", "doser"]
+      - ["calcium", "ca2+", "ca²+", "magnesium", "magnésium", "mg2+", "mg²+"]
+    context_any: ["phosphate", "phosphoric acid", "acide phosphorique", "oxalate", "oxalic acid", "acide oxalique"]
+    warning: >-
+      Action écartée : les cations Ca²⁺/Mg²⁺ peuvent former des sels peu solubles avec
+      les phosphates ou oxalates et augmenter le risque de précipitation.
+
+  - id: bicarbonate_acid_gas_release
+    severity: warn
+    action_groups:
+      - ["add", "increase", "incorporate", "dose", "ajouter", "augmenter", "incorporer", "doser"]
+      - ["carbonate", "bicarbonate"]
+    context_any: ["citric acid", "acide citrique", "phosphoric acid", "acide phosphorique", "malic acid", "acide malique", "acidic beverage", "boisson acide"]
+    warning: >-
+      Avertissement : carbonate/bicarbonate et acide réagissent avec dégagement de CO₂,
+      modification du pouvoir tampon et risque de surpression ou de moussage ; valider
+      la stœchiométrie et le procédé avant tout essai conditionné.
+
+  - id: tannin_protein_flocculation
+    severity: warn
+    action_groups:
+      - ["add", "increase", "incorporate", "dose", "ajouter", "augmenter", "incorporer", "doser"]
+      - ["tannin", "tanin", "polyphenol", "polyphénol", "tea extract", "extrait de thé"]
+    context_any: ["protein", "protéine", "whey", "lactosérum", "casein", "caséine"]
+    warning: >-
+      Avertissement : les tanins/polyphénols peuvent complexer les protéines et provoquer
+      trouble ou floculation ; vérifier pH, ratio polyphénol/protéine et stabilité colloïdale.
+
+  - id: calcium_low_methoxyl_pectin_gelation
+    severity: warn
+    action_groups:
+      - ["add", "increase", "incorporate", "dose", "ajouter", "augmenter", "incorporer", "doser"]
+      - ["calcium", "ca2+", "ca²+"]
+    context_any: ["low methoxyl pectin", "low-methoxyl pectin", "pectine faiblement méthoxylée", "lm pectin"]
+    warning: >-
+      Avertissement : Ca²⁺ peut réticuler une pectine faiblement méthoxylée et provoquer
+      gélification, agrégation ou augmentation de la turbidité.
+
+  - id: benzoate_ascorbate_benzene
+    severity: warn
+    action_groups:
+      - ["add", "increase", "incorporate", "dose", "ajouter", "augmenter", "incorporer", "doser"]
+      - ["benzoate", "benzoic acid", "acide benzoïque"]
+    context_any: ["ascorbic acid", "acide ascorbique", "vitamin c", "vitamine c"]
+    warning: >-
+      Avertissement critique : l’association benzoate–ascorbate peut former du benzène
+      dans certaines conditions favorisées par les métaux, la lumière et la chaleur ;
+      une évaluation analytique et réglementaire est requise.

@@ -51,6 +51,7 @@ class BigQueryPatentsConnector(SourceConnector):
         WITH selected AS (
           SELECT
             publication_number,
+            family_id,
             country_code,
             publication_date,
             title_localized,
@@ -71,6 +72,7 @@ class BigQueryPatentsConnector(SourceConnector):
         )
         SELECT
           publication_number,
+          family_id,
           country_code,
           publication_date,
           (SELECT x.text FROM UNNEST(title_localized) x
@@ -181,5 +183,8 @@ class BigQueryPatentsConnector(SourceConnector):
                 cpc_classes=list(row.cpc_codes or []),
                 keywords=scope.keywords,
                 sections=sections,
-                metadata={"dataset": "patents-public-data.patents.publications"},
+                metadata={
+                    "dataset": "patents-public-data.patents.publications",
+                    "family_id": str(row.family_id) if row.family_id is not None else None,
+                },
             )

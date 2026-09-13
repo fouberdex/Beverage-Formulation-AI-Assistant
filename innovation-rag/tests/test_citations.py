@@ -60,6 +60,16 @@ def test_context_and_reference_labels_match() -> None:
     assert [item.citation_id for item in references] == ["S1", "S2"]
 
 
+def test_context_respects_generation_character_budget() -> None:
+    results = [result(f"doc-{index}", f"US-{index}") for index in range(10)]
+
+    context = build_context(results, max_chars=500)
+
+    assert len(context) <= 520
+    assert "[S1]" in context
+    assert "[S10]" not in context
+
+
 def test_rag_pipeline_returns_structured_grounded_answer() -> None:
     evidence = [result("doc-a", "US-A")]
 

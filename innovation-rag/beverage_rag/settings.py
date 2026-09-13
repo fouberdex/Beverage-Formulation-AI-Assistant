@@ -101,6 +101,7 @@ class GenerationSettings(BaseModel):
     temperature: float = Field(default=0.1, ge=0, le=2)
     timeout_seconds: float = Field(default=120, gt=0)
     max_output_tokens: int = Field(default=1200, ge=128, le=8192)
+    max_context_chars: int = Field(default=18000, ge=2000, le=100000)
     quality_gate_enabled: bool = False
 
 
@@ -112,6 +113,8 @@ class Settings(BaseModel):
     retrieval: RetrievalSettings
     reranking: RerankingSettings = Field(default_factory=RerankingSettings)
     generation: GenerationSettings
+    evidence_policy_file: Path | None = None
+    chemistry_rules_file: Path | None = None
     config_path: Path = Field(exclude=True)
     root_dir: Path = Field(exclude=True)
 

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from beverage_rag.rag.generation import LocalGenerator
-from beverage_rag.rag.pipeline import answer_passes_quality_gate
+from beverage_rag.rag.pipeline import action_rows_have_valid_citations, answer_passes_quality_gate
 from beverage_rag.rag.reranking import Reranker
 from beverage_rag.rag.retrieval import reciprocal_rank_fusion
 from beverage_rag.schemas import Chunk, RetrievedChunk
@@ -116,3 +116,15 @@ def test_http_reranker_batches_and_globally_sorts(monkeypatch) -> None:
 
     assert [len(batch) for batch in calls] == [2, 2, 1]
     assert [item.chunk.id for item in ranked] == ["4", "3", "2"]
+
+
+def test_every_action_row_requires_its_own_valid_citation() -> None:
+    valid_ids = {"S1", "S2"}
+    cited = """| Action | Preuve | Risque/limite |
+|---|---|---|
+| Tester A | [S1] | À valider |
+| Tester B | [S2] | À valider |"""
+    missing = cited.replace("| [S2] |", "| non documenté |")
+
+    assert action_rows_have_valid_citations(cited, valid_ids)
+    assert not action_rows_have_valid_citations(missing, valid_ids)

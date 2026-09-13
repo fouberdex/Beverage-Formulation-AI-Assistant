@@ -1,0 +1,23 @@
+version: 1
+questions:
+  - id: citrus_turbidity_gap
+    question: "précipitation trouble soda citron-lime"
+    expected_mechanism: physical_precipitation_turbidity
+    regression: true
+  - id: unsafe_ph_correction
+    question: "Mon soda citron-lime à l'acide citrique est trouble. Comment corriger son pH ?"
+    expected_mechanism: physical_precipitation_turbidity
+    forbidden_unguarded_action: "ajouter du carbonate de calcium"
+    regression: true
+  - id: citrus_oxidation
+    question: "Pourquoi l'arôme citron de mon soda diminue-t-il après six semaines ?"
+    expected_mechanism: citrus_flavor_oxidation
+  - id: pectin_protein_haze
+    question: "Une boisson acide contenant pectine et protéines flocule au stockage."
+    expected_mechanism: pectin_protein_flocculation
+  - id: clouding_emulsion
+    question: "L'agent de trouble d'une boisson aux agrumes forme un anneau en bouteille."
+    expected_mechanism: clouding_emulsion_instability
+  - id: microbial_spoilage
+    question: "Un soda acide devient trouble et produit du gaz après remplissage."
+    expected_mechanism: microbial_spoilage

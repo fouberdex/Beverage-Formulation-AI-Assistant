@@ -1,0 +1,106 @@
+version: 1
+enabled: true
+
+# Scores emitted by the configured single-label CrossEncoder are explicitly
+# normalized to [0, 1] by the GPU gateway. These initial values must be calibrated
+# against the labelled evaluation set before a production demonstration.
+relevance:
+  gap_max_score: 0.55
+  supporting_source_min_score: 0.60
+  maximum_retrieval_attempts: 2
+
+proof:
+  reranker_weight: 0.80
+  source_weight: 0.20
+  single_source_credit: 0.60
+  strong:
+    minimum_calculated_score: 80
+    minimum_best_reranker_score: 0.75
+    minimum_independent_sources: 2
+  moderate:
+    minimum_calculated_score: 60
+    minimum_best_reranker_score: 0.60
+    minimum_independent_sources: 1
+
+display:
+  remove_unsupported_causes: true
+
+fallback:
+  maximum_generation_attempts: 2
+  retrieval_failure_message: >-
+    Aucune source pertinente trouvée sur « {mechanism} » dans le corpus actuel.
+  quality_failure_message: >-
+    La réponse générée n’a pas satisfait les contrôles de preuve après deux tentatives.
+    Aucune recommandation technique n’est fournie.
+  no_safe_action_message: >-
+    Aucune action corrective à la fois sûre et suffisamment documentée n’a été identifiée
+    dans le corpus actuel.
+
+# High-precision canonical relation rules. Matching is performed in one sentence
+# or in two adjacent sentences: ingredient lists alone do not establish a mechanism.
+mechanisms:
+  calcium_citrate_precipitation:
+    label: "précipitation de citrate de calcium"
+    aliases: ["calcium citrate precipitation", "précipitation de citrate de calcium", "citrate de calcium"]
+    entity_groups:
+      - ["calcium", "ca2+", "ca²+", "carbonate de calcium", "calcium carbonate"]
+      - ["citrate", "citric acid", "acide citrique"]
+    outcomes: ["precipitation", "precipitate", "precipitated", "précipitation", "précipité", "insoluble", "sediment", "dépôt", "turbidity", "turbidité", "trouble"]
+    context: ["soda", "soft drink", "carbonated beverage", "boisson gazeuse", "citrus beverage", "lemon", "lime", "citron"]
+    search_queries:
+      - "calcium citrate precipitation acidic carbonated beverage"
+      - "calcium citric acid insoluble salt beverage turbidity"
+
+  pectin_protein_flocculation:
+    label: "interaction pectine-protéine et floculation"
+    aliases: ["pectin protein", "pectine protéine", "protein pectin", "flocculation protéique"]
+    entity_groups:
+      - ["pectin", "pectine"]
+      - ["protein", "protéine", "whey", "caséin", "casein"]
+    outcomes: ["aggregation", "agrégation", "flocculation", "floc", "precipitation", "précipitation", "haze", "turbidity", "turbidité", "trouble", "feathering"]
+    context: ["beverage", "boisson", "drink", "soda", "juice", "jus"]
+    search_queries:
+      - "pectin protein interaction flocculation acidic beverage"
+      - "pectin protein haze precipitation beverage"
+
+  clouding_emulsion_instability:
+    label: "instabilité de l’émulsion ou de l’agent de trouble"
+    aliases: ["clouding agent", "agent de trouble", "beverage emulsion", "émulsion d'agrumes", "citrus emulsion"]
+    entity_groups:
+      - ["clouding agent", "cloudifier", "agent de trouble", "emulsion", "émulsion", "citrus oil", "huile d'agrume"]
+    outcomes: ["instability", "unstable", "destabilization", "instabilité", "separation", "séparation", "creaming", "ringing", "sediment", "dépôt", "haze", "turbidity", "turbidité", "trouble"]
+    context: ["beverage", "boisson", "drink", "soda", "soft drink", "carbonated", "citrus", "lemon", "lime", "citron"]
+    search_queries:
+      - "citrus beverage emulsion instability sediment"
+      - "clouding agent instability carbonated soft drink"
+
+  physical_precipitation_turbidity:
+    label: "précipitation ou turbidité physique"
+    aliases: ["precipitation", "précipitation", "turbidity", "turbidité", "trouble", "haze", "sediment", "dépôt"]
+    entity_groups: []
+    outcomes: ["precipitation", "precipitate", "precipitated", "précipitation", "précipité", "sediment", "dépôt", "haze", "turbidity", "turbidité", "trouble"]
+    context: ["soda", "soft drink", "carbonated beverage", "boisson gazeuse", "citrus beverage", "juice beverage", "beverage emulsion"]
+    search_queries:
+      - "precipitation turbidity carbonated soft drink citrus beverage"
+      - "sediment haze lemon lime soda beverage"
+
+  citrus_flavor_oxidation:
+    label: "oxydation des arômes d’agrumes"
+    aliases: ["citral oxidation", "limonene oxidation", "oxydation du citral", "oxydation du limonène", "flavor oxidation", "oxydation des arômes"]
+    entity_groups:
+      - ["citral", "limonene", "limonène", "citrus flavor", "arôme d'agrume", "arôme citron"]
+      - ["oxidation", "oxidative", "oxydation", "oxygen", "oxygène"]
+    outcomes: ["degradation", "dégradation", "loss", "perte", "off-flavor", "off flavour", "arôme parasite", "oxidation", "oxydation"]
+    context: ["beverage", "boisson", "drink", "soda", "soft drink", "citrus", "lemon", "lime", "citron"]
+    search_queries:
+      - "citral limonene oxidation lemon lime beverage storage"
+
+  microbial_spoilage:
+    label: "altération microbiologique"
+    aliases: ["microbial spoilage", "altération microbiologique", "contamination microbienne", "yeast spoilage", "mold spoilage"]
+    entity_groups:
+      - ["microbial", "microbiological", "microbien", "microbiologique", "yeast", "levure", "mold", "moisissure", "bacteria", "bactérie"]
+    outcomes: ["spoilage", "altération", "contamination", "growth", "croissance", "fermentation", "gas", "gaz", "turbidity", "turbidité", "off-flavor"]
+    context: ["beverage", "boisson", "drink", "soda", "soft drink", "juice", "jus"]
+    search_queries:
+      - "yeast mold spoilage acidic carbonated beverage turbidity"

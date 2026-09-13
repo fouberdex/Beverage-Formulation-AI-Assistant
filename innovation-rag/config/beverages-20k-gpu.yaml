@@ -45,13 +45,13 @@ indexing:
   sparse_vector_name: "sparse"
 
 retrieval:
-  dense_candidates: 60
-  sparse_candidates: 60
-  top_k: 10
+  dense_candidates: 40
+  sparse_candidates: 40
+  top_k: 8
   multi_query_enabled: true
   source_balancing_enabled: true
-  max_subqueries: 6
-  candidates_per_query: 15
+  max_subqueries: 4
+  candidates_per_query: 12
   rrf_k: 60
 
 reranking:
@@ -59,9 +59,9 @@ reranking:
   provider: "http"
   model: "BAAI/bge-reranker-v2-m3"
   base_url: "http://localhost:8000"
-  candidate_pool_size: 40
+  candidate_pool_size: 24
   request_batch_size: 6
-  top_n: 12
+  top_n: 10
   timeout_seconds: 300
 
 generation:
@@ -70,5 +70,9 @@ generation:
   base_url: "http://localhost:8000/v1"
   temperature: 0.1
   timeout_seconds: 600
-  max_output_tokens: 1400
+  max_output_tokens: 1100
+  max_context_chars: 14000
   quality_gate_enabled: true
+
+evidence_policy_file: "config/evidence-policy.yaml"
+chemistry_rules_file: "config/chemistry-rules.yaml"

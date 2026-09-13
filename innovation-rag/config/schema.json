@@ -27,8 +27,13 @@
     "generation": {
       "type": "object",
       "required": ["provider", "model", "base_url"]
+    },
+    "evidence_policy_file": {
+      "type": ["string", "null"]
+    },
+    "chemistry_rules_file": {
+      "type": ["string", "null"]
     }
   },
   "additionalProperties": false
 }
-
