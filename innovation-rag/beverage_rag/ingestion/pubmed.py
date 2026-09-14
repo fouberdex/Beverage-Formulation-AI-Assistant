@@ -48,6 +48,35 @@ class PubMedConnector(SourceConnector):
                 if document is not None:
                     yield document
 
+    def fetch_ids(self, pmids: list[str]) -> Iterator[RawDocument]:
+        """Fetch an explicit, bounded set of public PubMed abstracts."""
+        ids = list(dict.fromkeys(pmid.strip() for pmid in pmids if pmid.strip()))
+        if not ids:
+            return
+        if any(not pmid.isdigit() for pmid in ids):
+            raise ValueError("PubMed identifiers must contain digits only")
+        common = {"tool": "BeverageDzAI-Innovation-RAG"}
+        if email := os.getenv("OPENALEX_EMAIL"):
+            common["email"] = email
+        if api_key := os.getenv("NCBI_API_KEY"):
+            common["api_key"] = api_key
+        with httpx.Client(timeout=self.settings.ingestion.request_timeout_seconds) as client:
+            response = get_with_retry(
+                client,
+                f"{self.base_url}/efetch.fcgi",
+                params={
+                    **common,
+                    "db": "pubmed",
+                    "id": ",".join(ids),
+                    "retmode": "xml",
+                },
+            )
+        root = ET.fromstring(response.content)
+        for article in root.findall(".//PubmedArticle"):
+            document = self._normalize(article)
+            if document is not None:
+                yield document
+
     def _normalize(self, article: ET.Element) -> RawDocument | None:
         citation = article.find("MedlineCitation")
         if citation is None:

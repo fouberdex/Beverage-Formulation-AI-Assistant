@@ -1,520 +1,80 @@
-import { useState, useEffect } from 'react';
-import { costAPI, formulationsAPI } from '../services/api';
-import { Formulation } from '../types';
-import { DollarSign, TrendingUp, Calculator, Loader, Info } from 'lucide-react';
-import StatusMessage from '../components/StatusMessage';
+import { useEffect, useMemo, useState } from 'react';
+import { Bot, Calculator, Factory, Landmark, Package, RefreshCw, Sparkles, TrendingUp, Truck } from 'lucide-react';
+import { aiAPI, costAPI, formulationsAPI } from '../services/api';
+import type { Formulation } from '../types';
 import { getErrorMessage } from '../services/errors';
+import StatusMessage from '../components/StatusMessage';
+
+const defaults = {
+  batch_size_liters: 1000, package_volume_ml: 330, units_per_case: 24, process_loss_percent: 2,
+  ingredient_waste_percent: 1, packaging_cost_per_unit: 18, secondary_packaging_per_unit: 3,
+  labor_hours: 16, labor_rate_per_hour: 450, utilities_per_liter: 2.5, quality_cost_per_batch: 3500,
+  sanitation_cost_per_batch: 2500, logistics_per_batch: 10000, warehousing_per_batch: 3000,
+  fixed_overhead_per_batch: 6000, depreciation_per_batch: 3000, financing_cost_per_batch: 0,
+  marketing_per_batch: 5000, sales_commission_percent: 3, distributor_margin_percent: 12,
+  retailer_margin_percent: 18, tax_percent: 19, target_margin_percent: 30, selling_price_per_unit: 90,
+  capex: 500000, working_capital: 250000, planned_batches_per_year: 48,
+};
+type CostInputs = typeof defaults;
 
 export default function CostPage() {
   const [formulations, setFormulations] = useState<Formulation[]>([]);
-  const [selectedFormulationId, setSelectedFormulationId] = useState('');
-  const [batchSize, setBatchSize] = useState('1000');
-  const [overheadPercent, setOverheadPercent] = useState('15');
-  const [marginPercent, setMarginPercent] = useState('30');
-  const [sellingPrice, setSellingPrice] = useState('');
+  const [formulationId, setFormulationId] = useState('');
+  const [inputs, setInputs] = useState<CostInputs>({ ...defaults });
+  const [result, setResult] = useState<any>(null);
+  const [history, setHistory] = useState<any[]>([]);
+  const [insight, setInsight] = useState<any>(null);
   const [loading, setLoading] = useState(false);
-  const [loadingFormulations, setLoadingFormulations] = useState(true);
-  const [costData, setCostData] = useState<any>(null);
-  const [comparisons, setComparisons] = useState<any[]>([]);
-  const [roiData, setRoiData] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'cost' | 'compare' | 'roi'>('cost');
+  const [aiLoading, setAiLoading] = useState(false);
   const [error, setError] = useState('');
-
-  useEffect(() => {
-    loadFormulations();
-  }, []);
-
-  async function loadFormulations() {
-    setLoadingFormulations(true);
-    try {
-      const res = await formulationsAPI.getAll({ limit: 100 });
-      setFormulations(res.data.data);
-      if (res.data.data.length > 0) {
-        setSelectedFormulationId(res.data.data[0].id);
-      }
-    } catch (error) {
-      setError(getErrorMessage(error, 'Unable to load formulations.'));
-    } finally {
-      setLoadingFormulations(false);
-    }
-  }
-
-  async function calculateCost() {
-    if (!selectedFormulationId) return;
-
-    setLoading(true);
+  const [message, setMessage] = useState('');
+  useEffect(() => { void (async () => { try { const response = await formulationsAPI.getAll({ limit: 100 }); setFormulations(response.data.data); setFormulationId(response.data.data[0]?.id || ''); } catch (reason) { setError(getErrorMessage(reason)); } })(); }, []);
+  useEffect(() => { if (formulationId) void loadHistory(); }, [formulationId]);
+  async function loadHistory() { try { setHistory((await costAPI.getBatchCosts(formulationId, { limit: 8 })).data.data); } catch { setHistory([]); } }
+  async function calculate() { if (!formulationId) return; setLoading(true); setError(''); setMessage(''); setInsight(null); try { setResult((await costAPI.calculateBatchCost(formulationId, inputs)).data.data); await loadHistory(); setMessage('Industrial cost scenario calculated and saved.'); } catch (reason) { setError(getErrorMessage(reason, 'Unable to calculate this scenario.')); } finally { setLoading(false); } }
+  async function askGemini() { if (!result) return; setAiLoading(true); setError(''); try { setInsight((await aiAPI.getInsight('cost', { formulation: formulations.find(item => item.id === formulationId), scenario: result })).data.data); } catch (reason) { setError(getErrorMessage(reason, 'Gemini analysis is unavailable. Enable external AI processing in Account.')); } finally { setAiLoading(false); } }
+  function resetAssumptions() {
+    setInputs({ ...defaults });
+    setResult(null);
+    setInsight(null);
     setError('');
-    setCostData(null);
-    try {
-      const res = await costAPI.calculateBatchCost(selectedFormulationId, {
-        batch_size_liters: parseFloat(batchSize),
-        overhead_percent: parseFloat(overheadPercent),
-        margin_percent: parseFloat(marginPercent),
-      });
-      setCostData(res.data.data);
-      setActiveTab('cost');
-    } catch (error) {
-      setError(getErrorMessage(error, 'Unable to calculate cost.'));
-    } finally {
-      setLoading(false);
-    }
+    setMessage('Assumptions restored to the BeverageAI baseline. Recalculate to save a new scenario.');
   }
+  const set = (key: keyof CostInputs, value: number) => setInputs(current => ({ ...current, [key]: value }));
+  const formulation = formulations.find(item => item.id === formulationId);
+  const sensitivity = useMemo(() => {
+    if (!result) return [];
+    const base = result.unit_economics.cost_per_unit;
+    const ingredientShare = result.breakdown.ingredient_cost / result.breakdown.manufacturing_cost;
+    const packagingShare = result.breakdown.packaging_cost / result.breakdown.manufacturing_cost;
+    return [{ name: 'Ingredients +10%', value: base * (1 + ingredientShare * .1) }, { name: 'Packaging +10%', value: base * (1 + packagingShare * .1) }, { name: 'Yield −3 pts', value: base * (result.production.yield_percent / Math.max(1, result.production.yield_percent - 3)) }, { name: 'Base scenario', value: base }].sort((a, b) => b.value - a.value);
+  }, [result]);
 
-  async function compareBatchSizes() {
-    if (!selectedFormulationId) return;
-
-    setLoading(true);
-    setError('');
-    setComparisons([]);
-    try {
-      const res = await costAPI.compareBatchSizes(selectedFormulationId, [1, 10, 100, 1000, 10000]);
-      setComparisons(res.data.data);
-      setActiveTab('compare');
-    } catch (error) {
-      setError(getErrorMessage(error, 'Unable to compare batch sizes.'));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function calculateROI() {
-    if (!selectedFormulationId || !sellingPrice) {
-      setError('Please enter a selling price per liter.');
-      return;
-    }
-
-    setLoading(true);
-    setError('');
-    setRoiData(null);
-    try {
-      const res = await costAPI.calculateROI(selectedFormulationId, {
-        batch_size_liters: parseFloat(batchSize),
-        selling_price_per_liter: parseFloat(sellingPrice),
-      });
-      setRoiData(res.data.data);
-      setActiveTab('roi');
-    } catch (error) {
-      setError(getErrorMessage(error, 'Unable to calculate ROI.'));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const selectedFormulation = formulations.find(f => f.id === selectedFormulationId);
-
-  return (
-    <div className="pb-8">
-      <div className="px-4 py-5 sm:px-6">
-        <h1 className="text-2xl font-bold text-gray-900">Cost & ROI Analysis</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Batch costing (1L → 10,000L) with ROI estimation
-        </p>
+  return <div className="space-y-6 pb-12">
+    <header className="hero-panel"><div><span className="hero-kicker"><TrendingUp className="h-4 w-4"/> Industrial economics</span><h1>Cost, Price & ROI</h1><p>Model true landed manufacturing cost, channel economics, investment payback and sensitivity — not just ingredients plus a percentage.</p></div><div className="hidden gap-2 lg:flex"><HeroIcon icon={Factory}/><HeroIcon icon={Truck}/><HeroIcon icon={Landmark}/></div></header>
+    <StatusMessage error={error} message={message}/>
+    <section className="surface-card"><label className="text-sm font-semibold text-slate-700">Formulation<select className="input mt-2" value={formulationId} onChange={event => { setFormulationId(event.target.value); setResult(null); }}><option value="">Choose a formulation</option>{formulations.map(item => <option key={item.id} value={item.id}>{item.name} · ingredients {(item.total_cost_per_liter || 0).toFixed(2)} DZD/L</option>)}</select></label>{formulation && <div className="mt-4 grid gap-3 rounded-xl bg-slate-50 p-4 sm:grid-cols-4"><Metric label="Ingredient basis" value={money(formulation.total_cost_per_liter) + '/L'}/><Metric label="Batch" value={`${inputs.batch_size_liters.toLocaleString()} L`}/><Metric label="Pack" value={`${inputs.package_volume_ml} mL`}/><Metric label="Annual batches" value={inputs.planned_batches_per_year}/></div>}</section>
+    <div className="grid gap-6 xl:grid-cols-[1fr_22rem]">
+      <div className="space-y-5"><InputSection icon={Factory} title="Production & yield" description="Model saleable output after line loss and raw-material waste."><div className="field-grid"><N label="Input batch (L)" k="batch_size_liters"/><N label="Pack size (mL)" k="package_volume_ml"/><N label="Units / case" k="units_per_case"/><N label="Process loss (%)" k="process_loss_percent"/><N label="Ingredient waste (%)" k="ingredient_waste_percent"/></div></InputSection>
+        <InputSection icon={Package} title="Packaging & conversion" description="Primary/secondary pack, operators, energy, cleaning and release testing."><div className="field-grid"><N label="Primary pack / unit" k="packaging_cost_per_unit"/><N label="Secondary pack / unit" k="secondary_packaging_per_unit"/><N label="Labor hours" k="labor_hours"/><N label="Labor rate / hour" k="labor_rate_per_hour"/><N label="Utilities / input L" k="utilities_per_liter"/><N label="Quality / batch" k="quality_cost_per_batch"/><N label="Sanitation / batch" k="sanitation_cost_per_batch"/><N label="Depreciation / batch" k="depreciation_per_batch"/></div></InputSection>
+        <InputSection icon={Truck} title="Supply chain & commercial" description="Include costs outside the factory gate and margins between you and the shelf."><div className="field-grid"><N label="Logistics / batch" k="logistics_per_batch"/><N label="Warehousing / batch" k="warehousing_per_batch"/><N label="Fixed overhead / batch" k="fixed_overhead_per_batch"/><N label="Marketing / batch" k="marketing_per_batch"/><N label="Financing / batch" k="financing_cost_per_batch"/><N label="Sales commission (%)" k="sales_commission_percent"/><N label="Distributor margin (%)" k="distributor_margin_percent"/><N label="Retailer margin (%)" k="retailer_margin_percent"/><N label="Tax / VAT (%)" k="tax_percent"/><N label="Target manufacturer margin (%)" k="target_margin_percent"/><N label="Actual selling price / unit" k="selling_price_per_unit"/></div></InputSection>
+        <InputSection icon={Landmark} title="Investment & scale" description="Connect batch contribution to launch capital and operating cadence."><div className="field-grid"><N label="CAPEX" k="capex"/><N label="Working capital" k="working_capital"/><N label="Planned batches / year" k="planned_batches_per_year"/></div></InputSection>
       </div>
-      <div className="mx-4 mb-4"><StatusMessage error={error} /></div>
-
-      {/* Info Box */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 mx-4">
-        <div className="flex items-start">
-          <Info className="h-5 w-5 text-blue-600 mr-3 mt-0.5 flex-shrink-0" />
-          <div className="text-sm text-blue-800">
-            <p className="font-medium mb-1">Cost Analysis Features:</p>
-            <ul className="list-disc list-inside space-y-1">
-              <li><strong>Batch Costing</strong>: Calculate total cost for any batch size</li>
-              <li><strong>Compare Sizes</strong>: See cost efficiency at different volumes</li>
-              <li><strong>ROI Calculator</strong>: Estimate profit and return on investment</li>
-            </ul>
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-white shadow rounded-lg p-6 mx-4">
-        {loadingFormulations ? (
-          <div className="text-center py-8 text-gray-500">Loading formulations...</div>
-        ) : formulations.length === 0 ? (
-          <div className="text-center py-8">
-            <p className="text-gray-500 mb-4">No formulations found. Create a formulation first!</p>
-            <a href="/formulations" className="text-sky-600 hover:text-sky-800 font-medium">
-              Go to Formulations →
-            </a>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Select Formulation
-              </label>
-              <select
-                value={selectedFormulationId}
-                onChange={(e) => {
-                  setSelectedFormulationId(e.target.value);
-                  setCostData(null);
-                  setComparisons([]);
-                  setRoiData(null);
-                }}
-                className="w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2"
-              >
-                {formulations.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.name} - Cost/L: {(f.total_cost_per_liter || 0).toFixed(2)} DZD
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {selectedFormulation && (
-              <div className="bg-gray-50 rounded-lg p-4">
-                <h4 className="font-medium text-gray-900 mb-2">Base Cost Information:</h4>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                  <div>
-                    <span className="text-gray-500">Ingredient Cost:</span>
-                    <p className="font-medium text-lg">{(selectedFormulation.total_cost_per_liter || 0).toFixed(2)} DZD/L</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">Calories:</span>
-                    <p className="font-medium">{(selectedFormulation.total_calories_per_100ml || 0).toFixed(1)}/100ml</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">Sugar:</span>
-                    <p className="font-medium">{(selectedFormulation.total_sugar_per_100ml || 0).toFixed(1)}g/100ml</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">Ingredients:</span>
-                    <p className="font-medium">{selectedFormulation.ingredients?.length || 0}</p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Parameters */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Batch Size (Liters)
-                </label>
-                <input
-                  type="number"
-                  value={batchSize}
-                  onChange={(e) => setBatchSize(e.target.value)}
-                  min="1"
-                  className="w-full rounded-md border p-2"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Overhead %
-                </label>
-                <input
-                  type="number"
-                  value={overheadPercent}
-                  onChange={(e) => setOverheadPercent(e.target.value)}
-                  min="0"
-                  max="100"
-                  className="w-full rounded-md border p-2"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Margin %
-                </label>
-                <input
-                  type="number"
-                  value={marginPercent}
-                  onChange={(e) => setMarginPercent(e.target.value)}
-                  min="0"
-                  max="100"
-                  className="w-full rounded-md border p-2"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Selling Price (DZD/L)
-                </label>
-                <input
-                  type="number"
-                  value={sellingPrice}
-                  onChange={(e) => setSellingPrice(e.target.value)}
-                  placeholder="For ROI calc"
-                  min="0"
-                  className="w-full rounded-md border p-2"
-                />
-              </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <button
-                onClick={calculateCost}
-                disabled={loading || !selectedFormulationId}
-                className="px-4 py-3 bg-sky-700 text-white rounded-md hover:bg-sky-800 disabled:opacity-50 flex items-center justify-center font-medium"
-              >
-                {loading && activeTab === 'cost' ? (
-                  <Loader className="h-5 w-5 mr-2 animate-spin" />
-                ) : (
-                  <Calculator className="h-5 w-5 mr-2" />
-                )}
-                Calculate Cost
-              </button>
-              <button
-                onClick={compareBatchSizes}
-                disabled={loading || !selectedFormulationId}
-                className="px-4 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 flex items-center justify-center font-medium"
-              >
-                {loading && activeTab === 'compare' ? (
-                  <Loader className="h-5 w-5 mr-2 animate-spin" />
-                ) : (
-                  <TrendingUp className="h-5 w-5 mr-2" />
-                )}
-                Compare Sizes
-              </button>
-              <button
-                onClick={calculateROI}
-                disabled={loading || !selectedFormulationId}
-                className="px-4 py-3 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50 flex items-center justify-center font-medium"
-              >
-                {loading && activeTab === 'roi' ? (
-                  <Loader className="h-5 w-5 mr-2 animate-spin" />
-                ) : (
-                  <DollarSign className="h-5 w-5 mr-2" />
-                )}
-                Calculate ROI
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Results */}
-        {(costData || comparisons.length > 0 || roiData) && (
-          <div className="mt-6 border-t pt-6">
-            {/* Tabs */}
-            <div className="flex border-b mb-4 overflow-x-auto">
-              <button
-                onClick={() => setActiveTab('cost')}
-                className={`px-4 py-2 font-medium text-sm border-b-2 -mb-px whitespace-nowrap ${
-                  activeTab === 'cost'
-                    ? 'border-sky-600 text-sky-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                Cost Breakdown
-              </button>
-              <button
-                onClick={() => setActiveTab('compare')}
-                className={`px-4 py-2 font-medium text-sm border-b-2 -mb-px whitespace-nowrap ${
-                  activeTab === 'compare'
-                    ? 'border-sky-600 text-sky-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                Size Comparison
-              </button>
-              <button
-                onClick={() => setActiveTab('roi')}
-                className={`px-4 py-2 font-medium text-sm border-b-2 -mb-px whitespace-nowrap ${
-                  activeTab === 'roi'
-                    ? 'border-sky-600 text-sky-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                ROI Analysis
-              </button>
-            </div>
-
-            {/* Cost Tab */}
-            {activeTab === 'cost' && costData && (
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold text-gray-900">
-                  Cost Breakdown for {costData.batch_size_liters?.toLocaleString()}L Batch
-                </h3>
-                
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <CostCard 
-                    label="Ingredient Cost" 
-                    value={costData.breakdown?.ingredient_cost} 
-                    color="blue"
-                  />
-                  <CostCard 
-                    label="Overhead Cost" 
-                    value={costData.breakdown?.overhead_cost} 
-                    color="orange"
-                  />
-                  <CostCard 
-                    label="Total Cost" 
-                    value={costData.breakdown?.total_cost} 
-                    color="red"
-                  />
-                  <CostCard 
-                    label="+ Margin" 
-                    value={costData.breakdown?.margin} 
-                    color="green"
-                  />
-                </div>
-
-                <div className="bg-sky-50 border border-sky-200 rounded-lg p-6">
-                  <div className="text-center">
-                    <p className="text-sky-600 text-sm font-medium">Final Selling Price</p>
-                    <p className="text-4xl font-bold text-sky-700">
-                      {costData.breakdown?.final_price?.toLocaleString(undefined, { maximumFractionDigits: 2 })} DZD
-                    </p>
-                    <p className="text-sky-500 text-sm mt-1">
-                      ({costData.per_liter?.final_price?.toFixed(2)} DZD per liter)
-                    </p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-3 gap-4 text-center">
-                  <div className="bg-gray-50 p-4 rounded-lg">
-                    <p className="text-gray-500 text-sm">Cost per Liter</p>
-                    <p className="text-xl font-bold text-gray-900">
-                      {costData.per_liter?.total_cost?.toFixed(2)} DZD
-                    </p>
-                  </div>
-                  <div className="bg-green-50 p-4 rounded-lg">
-                    <p className="text-green-700 text-sm">Est. Profit</p>
-                    <p className="text-xl font-bold text-green-700">
-                      {costData.breakdown?.estimated_profit?.toLocaleString(undefined, { maximumFractionDigits: 2 })} DZD
-                    </p>
-                  </div>
-                  <div className="bg-purple-50 p-4 rounded-lg">
-                    <p className="text-purple-600 text-sm">Est. ROI</p>
-                    <p className="text-xl font-bold text-purple-700">
-                      {costData.breakdown?.roi_percent?.toFixed(1)}%
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Compare Tab */}
-            {activeTab === 'compare' && comparisons.length > 0 && (
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Batch Size Comparison</h3>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                          Batch Size
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                          Cost/Liter
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                          Total Cost
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                          Price/Liter
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                          ROI %
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                      {comparisons.map((comp, idx) => (
-                        <tr key={idx}>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
-                            {comp.batch_size_liters?.toLocaleString()} L
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
-                            {comp.cost_per_liter?.toFixed(2)} DZD
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
-                            {comp.total_cost?.toLocaleString(undefined, { maximumFractionDigits: 2 })} DZD
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
-                            {comp.final_price_per_liter?.toFixed(2)} DZD
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm">
-                            <span className={`font-medium ${comp.roi_percent >= 25 ? 'text-green-700' : 'text-gray-600'}`}>
-                              {comp.roi_percent?.toFixed(1)}%
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <p className="text-xs text-gray-500 mt-2">
-                  * Per-liter ingredient cost stays constant until quantity-tier supplier pricing is configured. Packaging, labor, freight, tax, and process loss are not included.
-                </p>
-              </div>
-            )}
-
-            {/* ROI Tab */}
-            {activeTab === 'roi' && roiData && (
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold text-gray-900">ROI Analysis</h3>
-                
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                  <div className="bg-gray-50 p-4 rounded-lg">
-                    <p className="text-gray-500 text-sm">Batch Size</p>
-                    <p className="text-2xl font-bold text-gray-900">
-                      {roiData.batch_size_liters?.toLocaleString()} L
-                    </p>
-                  </div>
-                  <div className="bg-red-50 p-4 rounded-lg">
-                    <p className="text-red-600 text-sm">Total Cost</p>
-                    <p className="text-2xl font-bold text-red-700">
-                      {roiData.total_cost?.toLocaleString(undefined, { maximumFractionDigits: 2 })} DZD
-                    </p>
-                  </div>
-                  <div className="bg-blue-50 p-4 rounded-lg">
-                    <p className="text-blue-600 text-sm">Selling Price/L</p>
-                    <p className="text-2xl font-bold text-blue-700">
-                      {roiData.selling_price_per_liter?.toFixed(2)} DZD
-                    </p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-sky-50 p-6 rounded-lg text-center">
-                    <p className="text-sky-600 text-sm font-medium">Total Revenue</p>
-                    <p className="text-3xl font-bold text-sky-700">
-                      {roiData.total_revenue?.toLocaleString(undefined, { maximumFractionDigits: 2 })} DZD
-                    </p>
-                  </div>
-                  <div className="bg-green-50 p-6 rounded-lg text-center">
-                    <p className="text-green-700 text-sm font-medium">Profit</p>
-                    <p className={`text-3xl font-bold ${roiData.profit >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                      {roiData.profit?.toLocaleString(undefined, { maximumFractionDigits: 2 })} DZD
-                    </p>
-                  </div>
-                </div>
-
-                <div className={`p-6 rounded-lg text-center ${roiData.roi_percent >= 0 ? 'bg-purple-50' : 'bg-red-50'}`}>
-                  <p className={`text-sm font-medium ${roiData.roi_percent >= 0 ? 'text-purple-600' : 'text-red-600'}`}>
-                    Return on Investment
-                  </p>
-                  <p className={`text-5xl font-bold ${roiData.roi_percent >= 0 ? 'text-purple-700' : 'text-red-700'}`}>
-                    {roiData.roi_percent?.toFixed(1)}%
-                  </p>
-                  <p className="text-sm text-gray-500 mt-2">
-                    Break-even price: {roiData.break_even_price?.toFixed(2)} DZD/L
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+      <aside className="space-y-4 xl:sticky xl:top-8 xl:self-start"><div className="surface-card"><p className="eyebrow">Scenario readiness</p><h2 className="text-lg font-bold">Model controls</h2><div className="mt-4 space-y-2 text-sm"><Check label="Yield and waste included"/><Check label="Packaging included"/><Check label="Conversion costs included"/><Check label="Channel margins included"/><Check label="Investment included"/></div><button type="button" onClick={() => void calculate()} disabled={!formulationId || loading} className="primary-button mt-5 w-full justify-center"><Calculator className="h-4 w-4"/>{loading ? 'Calculating…' : 'Calculate & save'}</button><button type="button" data-testid="reset-cost-assumptions" onClick={resetAssumptions} className="secondary-button mt-2 w-full justify-center"><RefreshCw className="h-4 w-4"/>Reset assumptions</button></div>{history.length > 0 && <div className="surface-card"><p className="eyebrow">Database</p><h2 className="font-bold">Saved scenarios</h2><div className="mt-3 space-y-2">{history.slice(0, 5).map(item => <button type="button" key={item.id} onClick={() => { setResult(item); if (item.assumptions) setInputs({ ...defaults, ...item.assumptions }); }} className="w-full rounded-lg border p-3 text-left text-xs hover:border-sky-300"><strong>{Number(item.batch_size_liters).toLocaleString()} L</strong><span className="float-right text-slate-400">{new Date(item.calculated_at).toLocaleDateString()}</span><div className="mt-1 text-slate-500">{money(item.unit_economics?.cost_per_unit || item.per_liter?.total_cost)} / unit</div></button>)}</div></div>}</aside>
     </div>
-  );
+    {result && <section className="space-y-5"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5"><ResultMetric label="Saleable units" value={result.production.saleable_units.toLocaleString()}/><ResultMetric label="True cost / unit" value={money(result.unit_economics.cost_per_unit)}/><ResultMetric label="Target ex-factory" value={money(result.unit_economics.target_ex_factory_price)}/><ResultMetric label="Suggested retail" value={money(result.unit_economics.suggested_retail_price)}/><ResultMetric label="Gross margin" value={`${result.unit_economics.gross_margin_percent.toFixed(1)}%`} tone={result.unit_economics.gross_margin_percent >= 0 ? 'green' : 'red'}/></div>
+      <div className="grid gap-6 xl:grid-cols-2"><div className="surface-card"><h2 className="text-lg font-bold">Batch cost bridge</h2><div className="mt-4 divide-y">{Object.entries(result.breakdown).filter(([key]) => key.endsWith('_cost') || ['fixed_overhead', 'depreciation'].includes(key)).map(([key, value]) => <div key={key} className="flex justify-between py-2 text-sm"><span className="capitalize text-slate-600">{key.replace(/_/g, ' ')}</span><strong>{money(Number(value))}</strong></div>)}</div><div className="mt-3 flex justify-between border-t-4 border-slate-900 pt-3 text-lg"><strong>Manufacturing cost</strong><strong>{money(result.breakdown.manufacturing_cost)}</strong></div></div><div className="surface-card"><h2 className="text-lg font-bold">Investment case</h2><div className="mt-4 grid grid-cols-2 gap-3"><Metric label="Annual contribution" value={money(result.investment.annual_contribution)}/><Metric label="Annual ROI" value={result.investment.annual_roi_percent === null ? 'N/A' : `${result.investment.annual_roi_percent.toFixed(1)}%`}/><Metric label="Payback" value={result.investment.payback_months === null ? 'N/A' : `${result.investment.payback_months.toFixed(1)} months`}/><Metric label="Break-even volume" value={result.investment.break_even_units === null ? 'N/A' : `${result.investment.break_even_units.toLocaleString()} units`}/></div><button onClick={() => void askGemini()} disabled={aiLoading} className="primary-button mt-5"><Bot className="h-4 w-4"/>{aiLoading ? 'Gemini analyzing…' : 'Ask Gemini for trade-offs'}</button></div></div>
+      <div className="surface-card"><h2 className="text-lg font-bold">Deterministic sensitivity screen</h2><p className="mt-1 text-sm text-slate-500">One-factor shocks highlight the assumptions with the strongest unit-cost exposure.</p><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{sensitivity.map(item => <div key={item.name} className="rounded-xl bg-slate-50 p-4"><div className="text-xs font-semibold text-slate-500">{item.name}</div><div className="mt-2 text-xl font-bold">{money(item.value)}</div><div className="mt-1 text-xs text-slate-400">per unit</div></div>)}</div></div>
+      {insight && <div className="rounded-xl border border-violet-200 bg-violet-50 p-5 text-sm text-violet-950"><div className="flex items-center gap-2 font-bold"><Sparkles className="h-4 w-4"/> Gemini decision support</div><p className="mt-2 leading-6">{insight.summary}</p><ul className="mt-3 list-disc space-y-1 pl-5">{insight.recommendations.map((item: string) => <li key={item}>{item}</li>)}</ul>{insight.warnings.length > 0 && <ul className="mt-3 list-disc space-y-1 pl-5 text-amber-900">{insight.warnings.map((item: string) => <li key={item}>{item}</li>)}</ul>}</div>}
+    </section>}
+  </div>;
+
+  function N({ label, k }: { label: string; k: keyof CostInputs }) { return <label className="text-sm font-medium text-slate-700">{label}<input type="number" min="0" step="any" value={inputs[k]} onChange={event => set(k, Number(event.target.value))} className="input mt-1.5"/></label>; }
 }
 
-function CostCard({ label, value, color }: { label: string; value: number; color: string }) {
-  const colorClasses = {
-    blue: 'bg-blue-50 text-blue-700',
-    orange: 'bg-orange-50 text-orange-700',
-    red: 'bg-red-50 text-red-700',
-    green: 'bg-green-50 text-green-700',
-  };
-
-  return (
-    <div className={`p-4 rounded-lg ${colorClasses[color as keyof typeof colorClasses]}`}>
-      <p className="text-sm opacity-75">{label}</p>
-      <p className="text-xl font-bold">
-        {value?.toLocaleString(undefined, { maximumFractionDigits: 2 })} DZD
-      </p>
-    </div>
-  );
-}
+const money = (value: number) => `${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} DZD`;
+function HeroIcon({ icon: Icon }: { icon: typeof Factory }) { return <span className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/15 bg-white/10"><Icon className="h-6 w-6 text-cyan-100"/></span>; }
+function InputSection({ icon: Icon, title, description, children }: { icon: typeof Factory; title: string; description: string; children: React.ReactNode }) { return <section className="surface-card"><div className="mb-5 flex gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-100 text-sky-800"><Icon className="h-5 w-5"/></span><div><h2 className="font-bold text-slate-950">{title}</h2><p className="text-xs text-slate-500">{description}</p></div></div>{children}</section>; }
+function Check({ label }: { label: string }) { return <div className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-emerald-500"/>{label}</div>; }
+function Metric({ label, value }: { label: string; value: string | number }) { return <div className="rounded-lg bg-slate-50 p-3"><div className="text-[10px] font-bold uppercase tracking-wider text-slate-600">{label}</div><div className="mt-1 font-semibold text-slate-800">{value}</div></div>; }
+function ResultMetric({ label, value, tone }: { label: string; value: string; tone?: 'green' | 'red' }) { return <div className={`rounded-xl border p-5 shadow-sm ${tone === 'green' ? 'border-emerald-200 bg-emerald-50' : tone === 'red' ? 'border-rose-200 bg-rose-50' : 'border-slate-200 bg-white'}`}><div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{label}</div><div className="mt-2 text-2xl font-black text-slate-950">{value}</div></div>; }

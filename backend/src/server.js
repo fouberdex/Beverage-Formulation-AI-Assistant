@@ -10,6 +10,7 @@ import { z } from 'zod';
 import {
   describeGeminiFailure,
   getAIConfiguration,
+  generateExpertInsight,
   reviewFormulationCandidates,
   reviewFormulationVariants,
 } from './services/geminiService.js';
@@ -86,12 +87,16 @@ try {
   supabaseOrigin = undefined;
 }
 
+let ragOrigin;
+try { ragOrigin = process.env.RAG_URL ? new URL(process.env.RAG_URL).origin : undefined; } catch { ragOrigin = undefined; }
+
 await server.register(helmet, {
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
       baseUri: ["'self'"],
       connectSrc: ["'self'", ...(supabaseOrigin ? [supabaseOrigin] : [])],
+      frameSrc: ["'self'", 'http://127.0.0.1:8503', 'http://localhost:8503', ...(ragOrigin ? [ragOrigin] : [])],
       fontSrc: ["'self'", 'data:'],
       formAction: ["'self'"],
       frameAncestors: ["'none'"],
@@ -398,6 +403,24 @@ server.put(`${apiPrefix}/ai/preferences`, async (request) => {
   }).strict().parse(request.body || {});
   const updated = await updateAIPreferences(request.user?.id, preferences);
   return { data: updated };
+});
+
+server.post(`${apiPrefix}/ai/insights`, async (request, reply) => {
+  const input = z.object({
+    domain: z.enum(['laboratory', 'sensory', 'regulatory', 'cost', 'formulation']),
+    context: z.record(z.string(), z.unknown()),
+  }).parse(request.body || {});
+  const decision = await prepareExternalAI(request, `${input.domain}_insight`);
+  if (!decision.allowed) return reply.code(409).send({ error: decision.reason, ai: { ...decision.configuration, used: false, ...decision.governance } });
+  try {
+    const insight = await generateExpertInsight({ domain: input.domain, context: input.context });
+    await finishExternalAI(request, decision, 'succeeded', insight.usage);
+    return { data: { ...insight, ...decision.governance } };
+  } catch (error) {
+    await finishExternalAI(request, decision, 'failed');
+    request.log.warn({ err: error, domain: input.domain }, 'Gemini insight failed');
+    return reply.code(502).send({ error: describeGeminiFailure(error) });
+  }
 });
 
 server.get(`${apiPrefix}/audit`, async (request) => {
@@ -889,7 +912,7 @@ const laboratoryResultSchema = z.object({
 server.get(`${apiPrefix}/formulations/:id/laboratory-results`, async (request, reply) => {
   if (!findAccessibleFormulation(request, request.params.id)) return reply.code(404).send({ error: 'Formulation not found' });
   const data = request.store.laboratoryResults
-    .filter(item => item.formulation_id === request.params.id && isOwnedByRequest(request, item))
+    .filter(item => item.formulation_id === request.params.id && !item.deleted_at && isOwnedByRequest(request, item))
     .sort((a, b) => new Date(b.tested_at) - new Date(a.tested_at));
   return { data };
 });
@@ -928,6 +951,62 @@ server.post(`${apiPrefix}/formulations/:id/laboratory-results`, async (request, 
       ? 'Saved as a local learning example for future recommendation calibration. It is not sent to an external AI provider.'
       : 'Saved for formulation quality tracking only.',
   } });
+});
+
+server.put(`${apiPrefix}/formulations/:id/laboratory-results/:resultId`, async (request, reply) => {
+  if (!findAccessibleFormulation(request, request.params.id)) return reply.code(404).send({ error: 'Formulation not found' });
+  const result = request.store.laboratoryResults.find(item =>
+    item.id === request.params.resultId && item.formulation_id === request.params.id && !item.deleted_at && isOwnedByRequest(request, item)
+  );
+  if (!result) return reply.code(404).send({ error: 'Laboratory result not found' });
+  const input = laboratoryResultSchema.parse(request.body);
+  Object.assign(result, {
+    batch_code: input.batch_code || null,
+    tested_at: input.tested_at.toISOString(),
+    measurements: input.measurements,
+    sensory: input.sensory,
+    notes: input.notes || null,
+    include_in_ai_learning: input.include_in_ai_learning,
+    updated_at: new Date().toISOString(),
+  });
+  return { data: result };
+});
+
+server.delete(`${apiPrefix}/formulations/:id/laboratory-results/:resultId`, async (request, reply) => {
+  if (!findAccessibleFormulation(request, request.params.id)) return reply.code(404).send({ error: 'Formulation not found' });
+  const result = request.store.laboratoryResults.find(item =>
+    item.id === request.params.resultId && item.formulation_id === request.params.id && !item.deleted_at && isOwnedByRequest(request, item)
+  );
+  if (!result) return reply.code(404).send({ error: 'Laboratory result not found' });
+  result.deleted_at = new Date().toISOString();
+  result.updated_at = result.deleted_at;
+  return reply.code(204).send();
+});
+
+server.post(`${apiPrefix}/formulations/:id/laboratory-results/import`, async (request, reply) => {
+  const formulation = findAccessibleFormulation(request, request.params.id);
+  if (!formulation) return reply.code(404).send({ error: 'Formulation not found' });
+  const body = z.object({ rows: z.array(z.unknown()).min(1).max(1000) }).parse(request.body);
+  const created = [];
+  const errors = [];
+  const now = new Date().toISOString();
+  body.rows.forEach((row, index) => {
+    const parsed = laboratoryResultSchema.safeParse(row);
+    if (!parsed.success) {
+      errors.push({ row: index + 2, message: parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ') });
+      return;
+    }
+    const input = parsed.data;
+    const result = {
+      id: generateId(), owner_id: request.user?.id, formulation_id: formulation.id,
+      batch_code: input.batch_code || null, tested_at: input.tested_at.toISOString(),
+      measurements: input.measurements, sensory: input.sensory, notes: input.notes || null,
+      include_in_ai_learning: input.include_in_ai_learning, import_source: 'spreadsheet', created_at: now,
+    };
+    request.store.laboratoryResults.push(result);
+    created.push(result);
+  });
+  return reply.code(created.length ? 201 : 422).send({ data: created, imported: created.length, rejected: errors.length, errors });
 });
 
 server.get(`${apiPrefix}/ai/learning-feedback/summary`, async (request) => {
@@ -1052,6 +1131,19 @@ server.post(`${apiPrefix}/sensory/studies`, async (request, reply) => {
   return reply.code(201).send({ data: study });
 });
 
+server.put(`${apiPrefix}/sensory/studies/:id`, async (request, reply) => {
+  if (!requireSensoryPersistence(request, reply)) return reply;
+  const study = findSensoryStudy(request, request.params.id);
+  if (!study) return reply.code(404).send({ error: 'Sensory study not found' });
+  const input = sensoryStudySchema.parse(request.body);
+  const previousSamples = new Map(study.samples.map(sample => [sample.sample_code.toLowerCase(), sample.id]));
+  Object.assign(study, input, {
+    samples: input.samples.map(sample => ({ ...sample, id: previousSamples.get(sample.sample_code.toLowerCase()) || generateId() })),
+    updated_at: new Date().toISOString(),
+  });
+  return { data: study };
+});
+
 server.get(`${apiPrefix}/sensory/studies/:id`, async (request, reply) => {
   if (!requireSensoryPersistence(request, reply)) return reply;
   const study = findSensoryStudy(request, request.params.id);
@@ -1113,6 +1205,47 @@ server.post(`${apiPrefix}/sensory/studies/:id/responses`, async (request, reply)
   request.store.sensoryResponses.push(response);
   study.updated_at = response.created_at;
   return reply.code(201).send({ data: response });
+});
+
+server.post(`${apiPrefix}/sensory/studies/:id/responses/import`, async (request, reply) => {
+  if (!requireSensoryPersistence(request, reply)) return reply;
+  const study = findSensoryStudy(request, request.params.id);
+  if (!study) return reply.code(404).send({ error: 'Sensory study not found' });
+  if (['completed', 'archived'].includes(study.status)) return reply.code(409).send({ error: 'This study is closed to new responses' });
+  const body = z.object({ rows: z.array(z.unknown()).min(1).max(5000) }).parse(request.body);
+  const existingCodes = new Set(request.store.sensoryResponses
+    .filter(response => response.study_id === study.id && isOwnedByRequest(request, response))
+    .map(response => response.panelist_code.toLowerCase()));
+  const created = [];
+  const errors = [];
+  const sampleIds = new Set(study.samples.map(sample => sample.id));
+  const attributeKeys = new Set(study.attributes.map(attribute => attribute.key));
+  for (const [index, row] of body.rows.entries()) {
+    const parsed = sensoryResponseSchema.safeParse(row);
+    if (!parsed.success) {
+      errors.push({ row: index + 2, message: parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ') });
+      continue;
+    }
+    const input = parsed.data;
+    const code = input.panelist_code.toLowerCase();
+    const invalidSample = input.samples.some(sample => !sampleIds.has(sample.sample_id));
+    const invalidAttribute = input.samples.flatMap(sample => Object.keys(sample.scores)).find(key => !attributeKeys.has(key));
+    const outOfRange = input.samples.some(sample => Object.values(sample.scores).some(value => value < study.scale_min || value > study.scale_max));
+    if (existingCodes.has(code) || invalidSample || invalidAttribute || outOfRange) {
+      errors.push({ row: index + 2, message: existingCodes.has(code) ? 'Duplicate panelist code' : invalidSample ? 'Unknown sample' : invalidAttribute ? `Unknown attribute: ${invalidAttribute}` : 'Score outside study scale' });
+      continue;
+    }
+    const response = {
+      ...input, id: generateId(), owner_id: request.user?.id, study_id: study.id,
+      session: { ...input.session, completed_at: input.session.completed_at.toISOString() },
+      import_source: 'spreadsheet', created_at: new Date().toISOString(),
+    };
+    request.store.sensoryResponses.push(response);
+    existingCodes.add(code);
+    created.push(response);
+  }
+  if (created.length) study.updated_at = new Date().toISOString();
+  return reply.code(created.length ? 201 : 422).send({ data: created, imported: created.length, rejected: errors.length, errors });
 });
 
 server.get(`${apiPrefix}/sensory/studies/:id/analytics`, async (request, reply) => {
@@ -2235,6 +2368,20 @@ server.post(`${apiPrefix}/regulatory/formulations/:id/labels`, async (request, r
   if (!formulation) {
     return reply.code(404).send({ error: 'Formulation not found' });
   }
+  const options = z.object({
+    market: z.enum(['algeria', 'eu', 'uk', 'us']).default('algeria'),
+    language: z.enum(['ar', 'fr', 'en']).default('fr'),
+    serving_size_ml: z.coerce.number().finite().positive().max(5000).default(250),
+    servings_per_container: z.coerce.number().finite().positive().max(1000).default(1),
+    net_volume_ml: z.coerce.number().finite().positive().max(100000).default(250),
+    manufacturer_name: z.string().trim().max(200).default(''),
+    manufacturer_address: z.string().trim().max(500).default(''),
+    country_of_origin: z.string().trim().max(120).default('Algeria'),
+    storage_instructions: z.string().trim().max(500).default('Store in a cool, dry place away from direct sunlight.'),
+    shelf_life_months: z.coerce.number().int().positive().max(120).default(12),
+    lot_placeholder: z.string().trim().max(80).default('LOT: ______'),
+    claims: z.array(z.string().trim().min(1).max(100)).max(20).default([]),
+  }).parse(request.body || {});
   
   const labelIngredients = (language) => (formulation.ingredients || [])
     .slice()
@@ -2245,34 +2392,60 @@ server.post(`${apiPrefix}/regulatory/formulations/:id/labels`, async (request, r
     return { name: localizedName || ing?.name || 'Unknown', percentage: fi.percentage };
   });
 
+  const servingFactor = options.serving_size_ml / 100;
   const nutrition = {
     calories: Number((formulation.total_calories_per_100ml || 0).toFixed(1)),
     sugar: Number((formulation.total_sugar_per_100ml || 0).toFixed(1)),
     basis: 'per 100 ml, calculated from ingredient records',
+    per_serving: {
+      serving_size_ml: options.serving_size_ml,
+      calories: Number(((formulation.total_calories_per_100ml || 0) * servingFactor).toFixed(1)),
+      sugar_g: Number(((formulation.total_sugar_per_100ml || 0) * servingFactor).toFixed(1)),
+    },
+    data_gaps: ['fat', 'saturates', 'carbohydrate', 'protein', 'salt/sodium'].filter(key =>
+      !(formulation[`total_${key}_per_100ml`] >= 0)
+    ),
   };
   const isHalal = (formulation.ingredients || []).every(fi => getIngredientById(request, fi.ingredient_id)?.halal_certified);
+  const allergenPatterns = {
+    milk: /milk|whey|casein|lactose|dairy/i, gluten: /wheat|barley|rye|oat|gluten|malt/i,
+    soy: /soy|soya/i, egg: /egg|albumin/i, nuts: /almond|hazelnut|walnut|cashew|pistachio|nut/i,
+    sulphites: /sulphite|sulfite|sulfur dioxide/i, sesame: /sesame/i, peanut: /peanut/i,
+  };
+  const ingredientNames = (formulation.ingredients || []).map(fi => getIngredientById(request, fi.ingredient_id)?.name || '');
+  const allergens = Object.entries(allergenPatterns).filter(([, pattern]) => ingredientNames.some(name => pattern.test(name))).map(([name]) => name);
+  const common = {
+    market: options.market, serving_size_ml: options.serving_size_ml, servings_per_container: options.servings_per_container,
+    net_volume_ml: options.net_volume_ml, manufacturer: { name: options.manufacturer_name, address: options.manufacturer_address },
+    country_of_origin: options.country_of_origin, storage_instructions: options.storage_instructions,
+    shelf_life_months: options.shelf_life_months, lot: options.lot_placeholder, allergens,
+    claims: options.claims, status: 'draft_requires_regulatory_review', generated_at: new Date().toISOString(),
+  };
   
   const labels = {
       ar: {
         name: formulation.name,
         ingredients: labelIngredients('ar'),
-        nutrition,
+        ingredient_declaration: labelIngredients('ar').map(item => item.name).join('، '), nutrition,
         halal: isHalal,
         notice: 'مسودة للمراجعة فقط — يجب التحقق من المتطلبات القانونية قبل الاستخدام.',
+        ...common,
       },
       fr: {
         name: formulation.name,
         ingredients: labelIngredients('fr'),
-        nutrition,
+        ingredient_declaration: labelIngredients('fr').map(item => item.name).join(', '), nutrition,
         halal: isHalal,
         notice: 'Projet à vérifier — valider les exigences légales avant utilisation.',
+        ...common,
       },
       en: {
         name: formulation.name,
         ingredients: labelIngredients('en'),
-        nutrition,
+        ingredient_declaration: labelIngredients('en').map(item => item.name).join(', '), nutrition,
         halal: isHalal,
         notice: 'Draft for review — verify legal requirements before use.',
+        ...common,
       },
     };
   formulation.labels = labels;
@@ -2294,44 +2467,118 @@ server.get(`${apiPrefix}/regulatory/formulations/:id/labels`, async (request, re
 // COST ROUTES
 // ============================================================================
 
+const advancedCostSchema = z.object({
+  batch_size_liters: z.coerce.number().finite().positive().max(1000000),
+  package_volume_ml: z.coerce.number().finite().positive().max(10000).default(1000),
+  units_per_case: z.coerce.number().int().positive().max(1000).default(12),
+  process_loss_percent: z.coerce.number().finite().min(0).max(50).default(2),
+  ingredient_waste_percent: z.coerce.number().finite().min(0).max(50).default(1),
+  packaging_cost_per_unit: z.coerce.number().finite().nonnegative().default(0),
+  secondary_packaging_per_unit: z.coerce.number().finite().nonnegative().default(0),
+  labor_hours: z.coerce.number().finite().nonnegative().default(0),
+  labor_rate_per_hour: z.coerce.number().finite().nonnegative().default(0),
+  utilities_per_liter: z.coerce.number().finite().nonnegative().default(0),
+  quality_cost_per_batch: z.coerce.number().finite().nonnegative().default(0),
+  sanitation_cost_per_batch: z.coerce.number().finite().nonnegative().default(0),
+  logistics_per_batch: z.coerce.number().finite().nonnegative().default(0),
+  warehousing_per_batch: z.coerce.number().finite().nonnegative().default(0),
+  fixed_overhead_per_batch: z.coerce.number().finite().nonnegative().default(0),
+  depreciation_per_batch: z.coerce.number().finite().nonnegative().default(0),
+  financing_cost_per_batch: z.coerce.number().finite().nonnegative().default(0),
+  marketing_per_batch: z.coerce.number().finite().nonnegative().default(0),
+  sales_commission_percent: z.coerce.number().finite().min(0).max(100).default(0),
+  distributor_margin_percent: z.coerce.number().finite().min(0).max(95).default(0),
+  retailer_margin_percent: z.coerce.number().finite().min(0).max(95).default(0),
+  tax_percent: z.coerce.number().finite().min(0).max(100).default(0),
+  target_margin_percent: z.coerce.number().finite().min(0).max(95).default(30),
+  selling_price_per_unit: z.coerce.number().finite().nonnegative().optional(),
+  capex: z.coerce.number().finite().nonnegative().default(0),
+  working_capital: z.coerce.number().finite().nonnegative().default(0),
+  planned_batches_per_year: z.coerce.number().int().positive().max(100000).default(12),
+  overhead_percent: z.coerce.number().finite().min(0).max(1000).optional(),
+  margin_percent: z.coerce.number().finite().min(0).max(1000).optional(),
+});
+
+function calculateAdvancedCost(formulation, input) {
+  const targetMarginPercent = input.margin_percent ?? input.target_margin_percent;
+  const saleableLiters = input.batch_size_liters * (1 - input.process_loss_percent / 100);
+  const saleableUnits = Math.max(1, Math.floor((saleableLiters * 1000) / input.package_volume_ml));
+  const ingredientCost = (formulation.total_cost_per_liter || 0) * input.batch_size_liters * (1 + input.ingredient_waste_percent / 100);
+  const packagingCost = saleableUnits * (input.packaging_cost_per_unit + input.secondary_packaging_per_unit);
+  const laborCost = input.labor_hours * input.labor_rate_per_hour;
+  const utilitiesCost = input.utilities_per_liter * input.batch_size_liters;
+  const variableProductionCost = ingredientCost + packagingCost + laborCost + utilitiesCost;
+  const legacyOverhead = variableProductionCost * ((input.overhead_percent || 0) / 100);
+  const batchFixedCost = input.quality_cost_per_batch + input.sanitation_cost_per_batch + input.logistics_per_batch
+    + input.warehousing_per_batch + input.fixed_overhead_per_batch + input.depreciation_per_batch
+    + input.financing_cost_per_batch + input.marketing_per_batch + legacyOverhead;
+  const manufacturingCost = variableProductionCost + batchFixedCost;
+  const costPerUnit = manufacturingCost / saleableUnits;
+  const unitVolumeLiters = input.package_volume_ml / 1000;
+  const costPerLiter = manufacturingCost / saleableLiters;
+  const exFactoryTarget = costPerUnit / Math.max(0.05, 1 - targetMarginPercent / 100);
+  const channelFactor = Math.max(0.01, (1 - input.distributor_margin_percent / 100) * (1 - input.retailer_margin_percent / 100));
+  const suggestedRetailPrice = (exFactoryTarget / channelFactor) * (1 + input.tax_percent / 100);
+  const sellingPrice = input.selling_price_per_unit ?? exFactoryTarget;
+  const grossRevenue = sellingPrice * saleableUnits;
+  const commission = grossRevenue * (input.sales_commission_percent / 100);
+  const contribution = grossRevenue - manufacturingCost - commission;
+  const contributionPerUnit = contribution / saleableUnits;
+  const initialInvestment = input.capex + input.working_capital;
+  const annualContribution = contribution * input.planned_batches_per_year;
+  return {
+    assumptions: { ...input, target_margin_percent: targetMarginPercent },
+    production: {
+      input_liters: input.batch_size_liters, saleable_liters: saleableLiters, saleable_units: saleableUnits,
+      saleable_cases: saleableUnits / input.units_per_case, yield_percent: 100 - input.process_loss_percent,
+    },
+    breakdown: {
+      ingredient_cost: ingredientCost, packaging_cost: packagingCost, labor_cost: laborCost,
+      utilities_cost: utilitiesCost, quality_cost: input.quality_cost_per_batch,
+      sanitation_cost: input.sanitation_cost_per_batch, logistics_cost: input.logistics_per_batch,
+      warehousing_cost: input.warehousing_per_batch, fixed_overhead: input.fixed_overhead_per_batch + legacyOverhead,
+      depreciation: input.depreciation_per_batch, financing_cost: input.financing_cost_per_batch,
+      marketing_cost: input.marketing_per_batch, manufacturing_cost: manufacturingCost,
+      sales_commission: commission, total_cost: manufacturingCost + commission,
+      margin: contribution, final_price: grossRevenue, estimated_revenue: grossRevenue,
+      estimated_profit: contribution, roi_percent: input.margin_percent ?? (manufacturingCost === 0 ? 0 : (contribution / manufacturingCost) * 100),
+    },
+    unit_economics: {
+      cost_per_liter: costPerLiter, cost_per_unit: costPerUnit, cost_per_case: costPerUnit * input.units_per_case,
+      target_ex_factory_price: exFactoryTarget, suggested_retail_price: suggestedRetailPrice,
+      selling_price_per_unit: sellingPrice, contribution_per_unit: contributionPerUnit,
+      gross_margin_percent: grossRevenue === 0 ? 0 : (contribution / grossRevenue) * 100,
+    },
+    investment: {
+      initial_investment: initialInvestment, annual_contribution: annualContribution,
+      annual_roi_percent: initialInvestment === 0 ? null : (annualContribution / initialInvestment) * 100,
+      payback_months: annualContribution <= 0 || initialInvestment === 0 ? null : (initialInvestment / annualContribution) * 12,
+      break_even_units: contributionPerUnit <= 0 ? null : Math.ceil(initialInvestment / contributionPerUnit),
+      break_even_batches: contribution <= 0 ? null : initialInvestment / contribution,
+    },
+  };
+}
+
 server.post(`${apiPrefix}/cost/formulations/:id/batch-cost`, async (request, reply) => {
   const { id } = request.params;
-  const { batch_size_liters, overhead_percent, margin_percent } = z.object({
-    batch_size_liters: z.coerce.number().finite().positive().max(1000000),
-    overhead_percent: z.coerce.number().finite().min(0).max(1000).default(15),
-    margin_percent: z.coerce.number().finite().min(0).max(1000).default(30),
-  }).parse(request.body);
+  const input = advancedCostSchema.parse(request.body);
   
   const formulation = findAccessibleFormulation(request, id);
   if (!formulation) {
     return reply.code(404).send({ error: 'Formulation not found' });
   }
   
-  const ingredientCost = (formulation.total_cost_per_liter || 0) * batch_size_liters;
-  const overheadCost = ingredientCost * (overhead_percent / 100);
-  const totalCost = ingredientCost + overheadCost;
-  const marginAmount = totalCost * (margin_percent / 100);
-  const finalPrice = totalCost + marginAmount;
-  
+  const analysis = calculateAdvancedCost(formulation, input);
   const calculation = {
       id: generateId(),
       owner_id: request.user?.id,
       formulation_id: id,
-      batch_size_liters,
-      breakdown: {
-        ingredient_cost: ingredientCost,
-        overhead_cost: overheadCost,
-        total_cost: totalCost,
-        margin: marginAmount,
-        final_price: finalPrice,
-        estimated_revenue: finalPrice,
-        estimated_profit: marginAmount,
-        roi_percent: totalCost === 0 ? 0 : (marginAmount / totalCost) * 100,
-      },
+      batch_size_liters: input.batch_size_liters,
+      ...analysis,
       per_liter: {
-        ingredient_cost: ingredientCost / batch_size_liters,
-        total_cost: totalCost / batch_size_liters,
-        final_price: finalPrice / batch_size_liters,
+        ingredient_cost: analysis.breakdown.ingredient_cost / input.batch_size_liters,
+        total_cost: analysis.unit_economics.cost_per_liter,
+        final_price: analysis.unit_economics.target_ex_factory_price / (input.package_volume_ml / 1000),
       },
       calculated_at: new Date().toISOString(),
     };
@@ -2378,24 +2625,23 @@ server.get(`${apiPrefix}/cost/formulations/:id/compare-batch-sizes`, async (requ
 server.post(`${apiPrefix}/cost/formulations/:id/roi`, async (request, reply) => {
   const formulation = findAccessibleFormulation(request, request.params.id);
   if (!formulation) return reply.code(404).send({ error: 'Formulation not found' });
-  const input = z.object({
-    batch_size_liters: z.coerce.number().finite().positive().max(1000000),
-    selling_price_per_liter: z.coerce.number().finite().nonnegative(),
-  }).parse(request.body);
-  const totalCost = formulation.total_cost_per_liter * input.batch_size_liters;
-  const estimatedRevenue = input.selling_price_per_liter * input.batch_size_liters;
-  const estimatedProfit = estimatedRevenue - totalCost;
+  const legacy = z.object({ selling_price_per_liter: z.coerce.number().finite().nonnegative().optional() }).passthrough().parse(request.body);
+  const packageVolume = Number(legacy.package_volume_ml || 1000);
+  const normalized = { process_loss_percent: 0, ingredient_waste_percent: 0, ...legacy, selling_price_per_unit: legacy.selling_price_per_unit ?? ((legacy.selling_price_per_liter || 0) * packageVolume / 1000), package_volume_ml: packageVolume };
+  const input = advancedCostSchema.parse(normalized);
+  const analysis = calculateAdvancedCost(formulation, input);
   return { data: {
+    ...analysis,
     batch_size_liters: input.batch_size_liters,
-    cost_per_liter: formulation.total_cost_per_liter,
-    selling_price_per_liter: input.selling_price_per_liter,
-    total_cost: totalCost,
-    total_revenue: estimatedRevenue,
-    profit: estimatedProfit,
-    estimated_revenue: estimatedRevenue,
-    estimated_profit: estimatedProfit,
-    roi_percent: totalCost === 0 ? 0 : (estimatedProfit / totalCost) * 100,
-    break_even_price: formulation.total_cost_per_liter,
+    cost_per_liter: analysis.unit_economics.cost_per_liter,
+    selling_price_per_liter: legacy.selling_price_per_liter ?? (analysis.unit_economics.selling_price_per_unit / (packageVolume / 1000)),
+    total_cost: analysis.breakdown.total_cost,
+    total_revenue: analysis.breakdown.estimated_revenue,
+    profit: analysis.breakdown.estimated_profit,
+    estimated_revenue: analysis.breakdown.estimated_revenue,
+    estimated_profit: analysis.breakdown.estimated_profit,
+    roi_percent: analysis.breakdown.roi_percent,
+    break_even_price: analysis.unit_economics.cost_per_liter,
   } };
 });
 

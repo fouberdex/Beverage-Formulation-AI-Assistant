@@ -163,6 +163,7 @@ export interface LaboratoryResult {
   notes?: string;
   include_in_ai_learning: boolean;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface SensoryAttributeAnalytics {

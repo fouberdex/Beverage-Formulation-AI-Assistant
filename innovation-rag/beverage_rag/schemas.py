@@ -100,9 +100,117 @@ class SourceReference(BaseModel):
     score: float
 
 
+class RagDiagnostics(BaseModel):
+    status: Literal["no_results", "evidence_gap", "generated", "quality_failure"]
+    retrieved_chunks: int = 0
+    evidence_chunks: int = 0
+    max_reranker_score: float | None = None
+    retrieval_attempts: int = 0
+    required_mechanisms: list[str] = Field(default_factory=list)
+    missing_mechanisms: list[str] = Field(default_factory=list)
+    generation_invoked: bool = False
+    generation_attempts: int = 0
+
+
+class DiagnosticCandidate(BaseModel):
+    chunk_id: str
+    document_id: str
+    title: str
+    score: float
+
+
+class QueryDiagnosticTrace(BaseModel):
+    query_id: str
+    parent_query_id: str | None = None
+    query_kind: Literal[
+        "original",
+        "canonical",
+        "llm_decomposition",
+        "source_balancing",
+        "mechanism_retry",
+        "dynamic_claim_verification",
+        "rewrite",
+    ]
+    attempt: int
+    query_text: str | None = None
+    query_hash: str
+    source_filter: str | None = None
+    hybrid_candidate_count: int
+    reranked_count: int
+    best_reranker_score: float | None = None
+    reranker_threshold: float
+    reranker_margin: float | None = None
+    independent_sources: int = 0
+    category: Literal[
+        "no_candidates",
+        "far_below_threshold",
+        "near_threshold",
+        "above_threshold_no_mechanism_match",
+        "eligible",
+    ]
+    score_basis: str
+    top_candidates: list[DiagnosticCandidate] = Field(default_factory=list)
+    error: str | None = None
+
+
+class MechanismDiagnosticTrace(BaseModel):
+    mechanism_id: str
+    mechanism_label: str
+    attempt: int
+    matching_chunks: int
+    mechanism_match: bool
+    best_reranker_score: float | None = None
+    reranker_threshold: float
+    reranker_margin: float | None = None
+    independent_sources: int
+    required_independent_sources: int
+    source_deficit: int
+    calculated_score: int
+    required_calculated_score: int
+    proof_margin: int
+    category: Literal[
+        "no_candidates",
+        "far_below_threshold",
+        "near_threshold",
+        "above_threshold_no_mechanism_match",
+        "eligible",
+    ]
+    blocking_condition: str | None = None
+
+
+class RetrievalAttemptDiagnostic(BaseModel):
+    attempt: int
+    queries: list[QueryDiagnosticTrace] = Field(default_factory=list)
+    mechanisms: list[MechanismDiagnosticTrace] = Field(default_factory=list)
+
+
+class RagDiagnosticReport(BaseModel):
+    schema_version: int = 1
+    request_id: str
+    created_at: str
+    question_hash: str
+    question_text: str | None = None
+    config_file: str
+    near_threshold_margin: float
+    attempts: list[RetrievalAttemptDiagnostic] = Field(default_factory=list)
+    final_decision: Literal[
+        "no_candidates",
+        "evidence_gap",
+        "evidence_available",
+        "unmapped_question",
+        "quality_failure",
+        "generated",
+    ]
+    rewrite_attempted: bool = False
+    rewrite_changed_decision: bool | None = None
+    errors: list[str] = Field(default_factory=list)
+
+
 class RagAnswer(BaseModel):
     answer: str
     sources: list[SourceReference]
+    retrieved_candidates: list[SourceReference] = Field(default_factory=list)
+    diagnostics: RagDiagnostics | None = None
 
 
 def read_jsonl(path: Path, model: type[BaseModel]) -> list[Any]:

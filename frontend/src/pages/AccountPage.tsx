@@ -89,10 +89,9 @@ export default function AccountPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      <div className="px-1 py-5">
-        <h1 className="text-3xl font-bold text-gray-900">Account</h1>
-        <p className="mt-1 text-sm text-gray-500">Manage your profile and sign-in password.</p>
-      </div>
+      <header className="hero-panel">
+        <div><span className="hero-kicker"><UserRound className="h-4 w-4" /> Workspace controls</span><h1>Account</h1><p>Manage your profile, sign-in password and Gemini privacy preferences.</p></div>
+      </header>
 
       {recoveryMode && <p className="rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm text-sky-800">Password recovery verified. Choose a new password below.</p>}
       <StatusMessage error={error} message={message} />

@@ -174,6 +174,26 @@ test('sensory analytics summarize only accessible formulation laboratory results
   assert.equal(missing.statusCode, 404);
 });
 
+test('laboratory results support bulk import, durable editing and archive filtering', async () => {
+  const imported = await server.inject({
+    method: 'POST', url: '/api/v1/formulations/form-001/laboratory-results/import',
+    payload: { rows: [{ batch_code: 'IMPORT-001', tested_at: '2026-09-01', measurements: { ph: 3.25, brix: 9.8 }, sensory: { overall_acceptance: 7.5 } }] },
+  });
+  assert.equal(imported.statusCode, 201);
+  assert.equal(imported.json().imported, 1);
+  const result = imported.json().data[0];
+  const updated = await server.inject({
+    method: 'PUT', url: `/api/v1/formulations/form-001/laboratory-results/${result.id}`,
+    payload: { batch_code: 'IMPORT-001-EDITED', tested_at: '2026-09-02', measurements: { ph: 3.1 }, sensory: { overall_acceptance: 8 } },
+  });
+  assert.equal(updated.statusCode, 200);
+  assert.equal(updated.json().data.batch_code, 'IMPORT-001-EDITED');
+  const archived = await server.inject({ method: 'DELETE', url: `/api/v1/formulations/form-001/laboratory-results/${result.id}` });
+  assert.equal(archived.statusCode, 204);
+  const listed = await server.inject({ method: 'GET', url: '/api/v1/formulations/form-001/laboratory-results' });
+  assert.equal(listed.json().data.some(item => item.id === result.id), false);
+});
+
 test('sensory workspace persists study design, individual responses and advanced analysis', async () => {
   const created = await server.inject({
     method: 'POST', url: '/api/v1/sensory/studies', payload: {
@@ -233,6 +253,23 @@ test('sensory workspace persists study design, individual responses and advanced
   const listed = await server.inject({ method: 'GET', url: '/api/v1/sensory/studies' });
   assert.equal(listed.statusCode, 200);
   assert.equal(listed.json().data.find(item => item.id === study.id).response_count, 1);
+});
+
+test('sensory panel spreadsheet payload imports grouped panel responses', async () => {
+  const created = await server.inject({ method: 'POST', url: '/api/v1/sensory/studies', payload: {
+    name: 'Imported panel', objective: 'Verify imported panel responses become available to analytics.',
+    test_type: 'hedonic', panel_type: 'internal', planned_panelists: 5, scale_min: 0, scale_max: 10, status: 'active',
+    attributes: [{ key: 'aroma', label: 'Aroma', category: 'aroma' }, { key: 'overall_liking', label: 'Overall liking', category: 'overall' }],
+    samples: [{ sample_code: 'S1', blind_code: '123', label: 'Sample one' }], protocol: { randomize_order: false },
+  } });
+  const study = created.json().data;
+  const imported = await server.inject({ method: 'POST', url: `/api/v1/sensory/studies/${study.id}/responses/import`, payload: { rows: [{
+    panelist_code: 'CSV-001', segment: 'Internal', samples: [{ sample_id: study.samples[0].id, scores: { aroma: 7, overall_liking: 8 }, jar: {} }],
+  }] } });
+  assert.equal(imported.statusCode, 201);
+  assert.equal(imported.json().imported, 1);
+  const analytics = await server.inject({ method: 'GET', url: `/api/v1/sensory/studies/${study.id}/analytics` });
+  assert.equal(analytics.json().data.coverage.response_count, 1);
 });
 
 test('target generation uses ingredient sugar data', async () => {
@@ -339,6 +376,24 @@ test('batch costing returns the fields rendered by the frontend', async () => {
   assert.ok(response.json().data.per_liter.final_price > response.json().data.per_liter.total_cost);
 });
 
+test('advanced costing persists yield, conversion, channel and investment economics', async () => {
+  const response = await server.inject({ method: 'POST', url: '/api/v1/cost/formulations/form-001/batch-cost', payload: {
+    batch_size_liters: 1000, package_volume_ml: 330, process_loss_percent: 3, ingredient_waste_percent: 2,
+    packaging_cost_per_unit: 18, secondary_packaging_per_unit: 3, labor_hours: 16, labor_rate_per_hour: 450,
+    utilities_per_liter: 2.5, quality_cost_per_batch: 3500, logistics_per_batch: 10000,
+    target_margin_percent: 30, distributor_margin_percent: 12, retailer_margin_percent: 18,
+    selling_price_per_unit: 90, capex: 500000, working_capital: 250000, planned_batches_per_year: 48,
+  } });
+  assert.equal(response.statusCode, 201);
+  const data = response.json().data;
+  assert.equal(data.production.saleable_liters, 970);
+  assert.ok(data.breakdown.packaging_cost > 0);
+  assert.ok(data.unit_economics.suggested_retail_price > data.unit_economics.target_ex_factory_price);
+  assert.ok(data.investment.break_even_units > 0);
+  const history = await server.inject({ method: 'GET', url: '/api/v1/cost/formulations/form-001/batch-costs' });
+  assert.ok(history.json().data.some(item => item.id === data.id));
+});
+
 test('ingredient lookup by code is implemented', async () => {
   const response = await server.inject({ method: 'GET', url: '/api/v1/ingredients/code/SWEET-001' });
   assert.equal(response.statusCode, 200);
@@ -393,7 +448,7 @@ test('Gemini responses are schema-validated before they affect candidates', asyn
   try {
     const result = await reviewFormulationCandidates({ candidates: [candidate], constraints: {} }, fakeFetch);
     assert.equal(result.used, true);
-    assert.equal(result.model, 'gemini-2.5-flash-lite');
+    assert.equal(result.model, 'gemini-3.1-flash-lite');
     assert.equal(result.reviews[0].compatibility, 92);
   } finally {
     delete process.env.GEMINI_API_KEY;

@@ -16,13 +16,26 @@ class ChemistryRule:
     action_groups: list[list[str]]
     context_any: list[str]
     warning: str
+    ignore_when_protective_terms: bool = True
 
     def matches(self, action: str, context: str, protective_terms: list[str]) -> bool:
-        if contains_any(action, protective_terms):
+        if self.ignore_when_protective_terms and contains_any(
+            action, protective_terms
+        ):
             return False
         return all(contains_any(action, group) for group in self.action_groups) and (
             not self.context_any or contains_any(context, self.context_any)
         )
+
+
+@dataclass(frozen=True)
+class ChemistryAlert:
+    alert_id: str
+    context_groups: list[list[str]]
+    warning: str
+
+    def matches(self, context: str) -> bool:
+        return all(contains_any(context, group) for group in self.context_groups)
 
 
 @dataclass(frozen=True)
@@ -31,6 +44,7 @@ class ChemistryPolicy:
     enabled: bool
     protective_terms: list[str]
     rules: list[ChemistryRule]
+    context_alerts: list[ChemistryAlert]
 
     @classmethod
     def load(cls, path: Path) -> "ChemistryPolicy":
@@ -42,8 +56,21 @@ class ChemistryPolicy:
                 action_groups=[list(group) for group in value.get("action_groups", [])],
                 context_any=list(value.get("context_any", [])),
                 warning=str(value["warning"]),
+                ignore_when_protective_terms=bool(
+                    value.get("ignore_when_protective_terms", True)
+                ),
             )
             for value in payload.get("rules", [])
+        ]
+        alerts = [
+            ChemistryAlert(
+                alert_id=value["id"],
+                context_groups=[
+                    list(group) for group in value.get("context_groups", [])
+                ],
+                warning=str(value["warning"]),
+            )
+            for value in payload.get("context_alerts", [])
         ]
         invalid = [rule.rule_id for rule in rules if rule.severity not in {"block", "warn"}]
         if invalid:
@@ -53,6 +80,7 @@ class ChemistryPolicy:
             enabled=bool(payload.get("enabled", True)),
             protective_terms=list(payload.get("protective_terms", [])),
             rules=rules,
+            context_alerts=alerts,
         )
 
 
@@ -76,7 +104,7 @@ def _separator(cells: list[str]) -> bool:
 def _column(headers: list[str], name: str) -> int | None:
     wanted = normalize_text(name)
     return next(
-        (index for index, value in enumerate(headers) if wanted in normalize_text(value)),
+        (index for index, value in enumerate(headers) if wanted == normalize_text(value)),
         None,
     )
 
@@ -105,6 +133,36 @@ def _action_section(answer: str) -> str:
     return "\n".join(lines[start:end])
 
 
+def _unsafe_action_rows(answer: str, question: str, policy: ChemistryPolicy) -> bool:
+    lines = answer.splitlines()
+    for index, line in enumerate(lines):
+        if not line.strip().startswith("|"):
+            continue
+        headers = _cells(line)
+        action_index = _column(headers, "action")
+        if action_index is None:
+            continue
+        row_index = index + 1
+        if row_index < len(lines) and _separator(_cells(lines[row_index])):
+            row_index += 1
+        while row_index < len(lines) and lines[row_index].strip().startswith("|"):
+            cells = _cells(lines[row_index])
+            row_index += 1
+            if len(cells) != len(headers) or _separator(cells):
+                continue
+            action = cells[action_index]
+            if action.startswith("Aucune action corrective"):
+                continue
+            if any(
+                rule.severity == "block"
+                and rule.matches(action, f"{question}\n{answer}", policy.protective_terms)
+                for rule in policy.rules
+            ):
+                return True
+        return False
+    return False
+
+
 def apply_chemistry_guardrails(
     answer: str,
     question: str,
@@ -114,7 +172,9 @@ def apply_chemistry_guardrails(
     lines = answer.splitlines()
     context = f"{question}\n{answer}"
     blocked: list[str] = []
-    warnings: list[str] = []
+    warnings: list[str] = [
+        alert.warning for alert in policy.context_alerts if alert.matches(question)
+    ]
     action_table_found = False
     index = 0
     while index < len(lines):
@@ -123,7 +183,7 @@ def apply_chemistry_guardrails(
             continue
         headers = _cells(lines[index])
         action_index = _column(headers, "action")
-        risk_index = _column(headers, "risque")
+        risk_index = _column(headers, "risque/limite")
         if action_index is None or risk_index is None:
             index += 1
             continue
@@ -171,12 +231,7 @@ def apply_chemistry_guardrails(
         "actions correctives",
         list(dict.fromkeys(warnings)),
     )
-    remaining_section = _action_section(guarded)
-    unsafe_remaining = any(
-        rule.severity == "block"
-        and rule.matches(remaining_section, f"{question}\n{guarded}", policy.protective_terms)
-        for rule in policy.rules
-    )
+    unsafe_remaining = _unsafe_action_rows(guarded, question, policy)
     return ChemistryControlResult(
         answer=guarded,
         action_table_found=action_table_found,

@@ -1,16 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Activity, AlertTriangle, BarChart3, Beaker, CheckCircle2, ClipboardList,
-  FlaskConical, Plus, Save, Settings2, Sparkles, Users,
+  Bot, Download, FlaskConical, Plus, Save, Settings2, Sparkles, Upload, Users,
 } from 'lucide-react';
 import {
   Bar, BarChart, CartesianGrid, Legend, PolarAngleAxis, PolarGrid, PolarRadiusAxis,
   Radar, RadarChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
-import { formulationsAPI, sensoryAPI } from '../services/api';
+import { aiAPI, formulationsAPI, sensoryAPI } from '../services/api';
 import { getErrorMessage } from '../services/errors';
 import StatusMessage from '../components/StatusMessage';
 import type { Formulation, SensoryStudy, SensoryStudyAnalytics, SensoryStudyAttribute } from '../types';
+import { downloadSpreadsheetTemplate, optionalNumber, readSpreadsheet } from '../utils/spreadsheet';
 
 const COLORS = ['#0369a1', '#7c3aed', '#059669', '#d97706', '#dc2626', '#0891b2'];
 const DEFAULT_ATTRIBUTES: SensoryStudyAttribute[] = [
@@ -45,6 +46,8 @@ export default function SensoryPage() {
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [importing, setImporting] = useState(false);
+  const importRef = useRef<HTMLInputElement>(null);
   const selectedStudy = studies.find(study => study.id === selectedStudyId) || null;
 
   useEffect(() => { void loadWorkspace(); }, []);
@@ -94,10 +97,51 @@ export default function SensoryPage() {
     setMessage('Panel response saved and analytics recalculated.');
   }
 
+  function downloadTemplate() {
+    if (!selectedStudy) return;
+    const rows = selectedStudy.samples.map(sample => ({
+      panelist_code: 'P-001', segment: 'Regular buyer', sample_code: sample.sample_code,
+      ...Object.fromEntries(selectedStudy.attributes.map(attribute => [attribute.key, 7])),
+      jar_sweetness: 0, jar_acidity: 0, jar_flavor_intensity: 0,
+      purchase_intent: 4, preference_rank: 1, comment: '', location: 'Sensory room',
+    }));
+    downloadSpreadsheetTemplate(`sensory-${selectedStudy.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.xlsx`, rows);
+  }
+
+  async function importPanelFile(file: File) {
+    if (!selectedStudy) return;
+    setImporting(true); setError(''); setMessage('');
+    try {
+      const spreadsheetRows = await readSpreadsheet(file);
+      const grouped = new Map<string, { panelist_code: string; segment?: string; demographics: Record<string, string>; session: Record<string, unknown>; samples: any[] }>();
+      for (const row of spreadsheetRows) {
+        const code = String(row.panelist_code || row.panelist || row.paneliste || '').trim();
+        if (!code) throw new Error('Every row needs a panelist_code.');
+        const sampleReference = String(row.sample_code || row.blind_code || row.sample || row.echantillon || '').trim().toLowerCase();
+        const sample = selectedStudy.samples.find(item => [item.sample_code, item.blind_code, item.label].some(value => value.toLowerCase() === sampleReference));
+        if (!sample) throw new Error(`Unknown sample “${sampleReference}” for panelist ${code}.`);
+        const group = grouped.get(code.toLowerCase()) || {
+          panelist_code: code, segment: String(row.segment || '').trim() || undefined,
+          demographics: { age_range: String(row.age_range || ''), gender: String(row.gender || ''), consumption_frequency: String(row.consumption_frequency || '') },
+          session: { location: String(row.location || ''), serving_order: [] as string[] }, samples: [],
+        };
+        const scores = Object.fromEntries(selectedStudy.attributes.map(attribute => [attribute.key, optionalNumber(row[attribute.key])]).filter(([, value]) => value !== undefined));
+        const jar = Object.fromEntries(['sweetness', 'acidity', 'flavor_intensity'].map(key => [key, optionalNumber(row[`jar_${key}`])]).filter(([, value]) => value !== undefined));
+        group.samples.push({ sample_id: sample.id, scores, jar, purchase_intent: optionalNumber(row.purchase_intent), preference_rank: optionalNumber(row.preference_rank), comment: String(row.comment || '').trim() || undefined });
+        (group.session.serving_order as string[]).push(sample.id);
+        grouped.set(code.toLowerCase(), group);
+      }
+      const response = await sensoryAPI.importResponses(selectedStudy.id, [...grouped.values()]);
+      await responseCreated();
+      setMessage(`${response.data.imported} panel response(s) imported${response.data.rejected ? `; ${response.data.rejected} rejected. ${response.data.errors[0]?.message || ''}` : '.'}`);
+    } catch (reason) { setError(getErrorMessage(reason, 'Unable to import panel data.')); }
+    finally { setImporting(false); if (importRef.current) importRef.current.value = ''; }
+  }
+
   return <div className="space-y-6 pb-10">
-    <header className="overflow-hidden rounded-2xl bg-gradient-to-br from-slate-950 via-sky-950 to-cyan-900 px-6 py-7 text-white shadow-xl sm:px-8">
+    <header className="overflow-hidden rounded-2xl border border-slate-200 bg-white px-6 py-7 text-slate-950 shadow-sm sm:px-8">
       <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
-        <div><div className="mb-3 inline-flex items-center gap-2 rounded-full border border-cyan-300/30 bg-cyan-300/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100"><Sparkles className="h-3.5 w-3.5"/> Sensory science workspace</div><h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Sensory Analysis</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-sky-100">Design controlled studies, capture individual panel responses, and turn perception data into statistically transparent product decisions.</p></div>
+        <div><div className="hero-kicker mb-3"><Sparkles className="h-3.5 w-3.5"/> Sensory science workspace</div><h1 className="text-3xl font-black tracking-tight sm:text-4xl">Sensory Analysis</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">Design controlled studies, capture individual panel responses, and turn perception data into statistically transparent product decisions.</p></div>
         <div className="grid grid-cols-3 gap-2 text-center"><HeroMetric value={studies.length} label="Studies"/><HeroMetric value={studies.reduce((sum, study) => sum + (study.response_count || 0), 0)} label="Responses"/><HeroMetric value={studies.filter(study => study.status === 'active').length} label="Active"/></div>
       </div>
     </header>
@@ -110,7 +154,7 @@ export default function SensoryPage() {
         <WorkspaceTabButton active={tab === 'capture'} icon={ClipboardList} label="Panel data" onClick={() => setTab('capture')} />
         <WorkspaceTabButton active={tab === 'analysis'} icon={BarChart3} label="Analysis" onClick={() => setTab('analysis')} />
       </div>
-      {tab !== 'design' && <label className="flex min-w-0 items-center gap-3 px-2 text-sm"><span className="shrink-0 font-medium text-slate-600">Study</span><select value={selectedStudyId} onChange={event => setSelectedStudyId(event.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 lg:w-96">{studies.map(study => <option key={study.id} value={study.id}>{study.name} · {study.response_count || 0} responses</option>)}</select></label>}
+      {tab !== 'design' && <div className="flex flex-wrap items-center gap-2"><label className="flex min-w-0 items-center gap-3 px-2 text-sm"><span className="shrink-0 font-medium text-slate-600">Study</span><select value={selectedStudyId} onChange={event => setSelectedStudyId(event.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 lg:w-80"><option value="">Choose a study</option>{studies.map(study => <option key={study.id} value={study.id}>{study.name} · {study.response_count || 0} responses</option>)}</select></label>{tab === 'capture' && <><button type="button" disabled={!selectedStudy} onClick={downloadTemplate} className="secondary-button"><Download className="h-4 w-4"/> Template</button><button type="button" disabled={!selectedStudy || importing} onClick={() => importRef.current?.click()} className="primary-button"><Upload className="h-4 w-4"/>{importing ? 'Importing…' : 'Import CSV / Excel'}</button><input ref={importRef} type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={event => event.target.files?.[0] && void importPanelFile(event.target.files[0])}/></>}</div>}
     </div>
 
     {loading ? <div role="status" className="rounded-xl border bg-white p-12 text-center text-slate-500">Loading sensory workspace…</div> : <>
@@ -122,7 +166,7 @@ export default function SensoryPage() {
 }
 
 function HeroMetric({ value, label }: { value: number; label: string }) {
-  return <div className="min-w-20 rounded-xl border border-white/15 bg-white/10 px-3 py-2 backdrop-blur"><div className="text-xl font-bold">{value}</div><div className="text-[10px] uppercase tracking-wider text-sky-100">{label}</div></div>;
+  return <div className="min-w-20 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"><div className="text-xl font-black text-slate-900">{value}</div><div className="text-[10px] font-bold uppercase tracking-wider text-slate-600">{label}</div></div>;
 }
 
 function WorkspaceTabButton({ active, icon: Icon, label, onClick }: { active: boolean; icon: typeof Settings2; label: string; onClick: () => void }) {
@@ -181,7 +225,7 @@ function StudyDesigner({ formulations, onCreated, onError }: { formulations: For
       </SectionCard>
 
       <SectionCard icon={Activity} eyebrow="03 · Instrument" title="Sensory attributes" description="Choose the dimensions each panelist will score for every sample.">
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">{DEFAULT_ATTRIBUTES.map(attribute => { const selected = form.attributes.some(item => item.key === attribute.key); return <button key={attribute.key} type="button" onClick={() => toggleAttribute(attribute)} aria-pressed={selected} className={`rounded-xl border p-3 text-left transition ${selected ? 'border-sky-400 bg-sky-50 ring-1 ring-sky-300' : 'border-slate-200 hover:border-slate-300'}`}><div className="flex items-center justify-between"><span className="text-sm font-semibold text-slate-800">{attribute.label}</span>{selected && <CheckCircle2 className="h-4 w-4 text-sky-700"/>}</div><span className="mt-1 block text-xs capitalize text-slate-500">{attribute.category}</span></button>; })}</div>
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">{DEFAULT_ATTRIBUTES.map(attribute => { const selected = form.attributes.some(item => item.key === attribute.key); return <button key={attribute.key} type="button" onClick={() => toggleAttribute(attribute)} aria-pressed={selected} className={`rounded-xl border p-3 text-left transition ${selected ? 'border-sky-400 bg-sky-50 ring-1 ring-sky-300' : 'border-slate-200 hover:border-slate-300'}`}><div className="flex items-center justify-between"><span className="text-sm font-semibold text-slate-800">{attribute.label}</span>{selected && <CheckCircle2 className="h-4 w-4 text-sky-700"/>}</div><span className="mt-1 block text-xs capitalize text-slate-600">{attribute.category}</span></button>; })}</div>
       </SectionCard>
 
       <SectionCard icon={Settings2} eyebrow="04 · Protocol" title="Serving controls" description="Record the conditions needed to reproduce the session and interpret deviations.">
@@ -258,6 +302,9 @@ function ResponseCapture({ study, onSaved, onError }: { study: SensoryStudy | nu
 
 function AnalysisDashboard({ study, analytics, loading }: { study: SensoryStudy | null; analytics: SensoryStudyAnalytics | null; loading: boolean }) {
   const [attributeKey, setAttributeKey] = useState('overall_liking');
+  const [insight, setInsight] = useState<any>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState('');
   useEffect(() => { if (study && !study.attributes.some(attribute => attribute.key === attributeKey)) setAttributeKey(study.attributes[0]?.key || ''); }, [study?.id]);
   if (!study) return <EmptyWorkspace title="No sensory study selected" description="Select or create a sensory study to open its analysis workspace."/>;
   if (loading) return <div role="status" className="rounded-xl border bg-white p-12 text-center text-slate-500">Running sensory analysis…</div>;
@@ -273,8 +320,15 @@ function AnalysisDashboard({ study, analytics, loading }: { study: SensoryStudy 
   const jarData = analytics.jar_penalty.filter(item => item.mean_drop !== null).map(item => ({ ...item, name: `${analytics.samples.find(sample => sample.sample_id === item.sample_id)?.label} · ${item.dimension.replace('_', ' ')} · ${item.direction.replace('_', ' ')}` }));
   const segments = [...new Set(analytics.segments.map(item => item.segment))];
   const segmentData = segments.map(segment => ({ segment, ...Object.fromEntries(analytics.segments.filter(item => item.segment === segment).map(item => [item.sample_id, item.mean])) }));
+  async function askGemini() {
+    setAiLoading(true); setAiError('');
+    try { setInsight((await aiAPI.getInsight('sensory', { study, analytics })).data.data); }
+    catch (reason) { setAiError(getErrorMessage(reason, 'Gemini analysis is unavailable. Enable external AI processing in Account.')); }
+    finally { setAiLoading(false); }
+  }
 
   return <div className="space-y-6">
+    <div className="surface-card flex flex-wrap items-center justify-between gap-3"><div><p className="eyebrow">Decision narrative</p><h2 className="text-lg font-bold">Gemini-assisted interpretation</h2><p className="mt-1 text-xs text-slate-500">Gemini explains the deterministic statistics; it cannot change scores or significance tests.</p></div><button type="button" onClick={() => void askGemini()} disabled={aiLoading} className="primary-button"><Bot className="h-4 w-4"/>{aiLoading ? 'Interpreting…' : 'Interpret with Gemini'}</button>{aiError && <p role="alert" className="w-full text-sm text-rose-700">{aiError}</p>}{insight && <div className="w-full rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm text-violet-950"><p>{insight.summary}</p><ul className="mt-2 list-disc pl-5">{insight.recommendations.map((item: string) => <li key={item}>{item}</li>)}</ul></div>}</div>
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5"><Metric label="Panelists" value={analytics.coverage.response_count}/><Metric label="Evaluations" value={analytics.coverage.evaluation_count}/><Metric label="Score completion" value={`${analytics.coverage.score_completion_percent}%`}/><Metric label="Segments" value={analytics.coverage.segment_count}/><Metric label="Quality flags" value={analytics.quality.flags.length + analytics.quality.outliers.length}/></div>
     {analytics.warnings.length > 0 && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><div className="flex items-center gap-2 font-semibold"><AlertTriangle className="h-4 w-4"/> Interpretation checks</div><ul className="mt-2 list-disc space-y-1 pl-5">{analytics.warnings.map(warning => <li key={warning.code}>{warning.message}</li>)}</ul></div>}
 
@@ -323,11 +377,11 @@ function ChartCard({ title, description, action, children }: { title: string; de
 }
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return <label className="block text-sm font-medium text-slate-700"><span>{label}</span>{hint && <span className="ml-2 text-xs font-normal text-slate-400">{hint}</span>}<div className="mt-1.5">{children}</div></label>;
+  return <label className="block text-sm font-medium text-slate-700"><span>{label}</span>{hint && <span className="ml-2 text-xs font-normal text-slate-600">{hint}</span>}<div className="mt-1.5">{children}</div></label>;
 }
 
 function Readiness({ ok, label }: { ok: boolean; label: string }) {
-  return <div className="flex items-center gap-2"><span className={`flex h-5 w-5 items-center justify-center rounded-full ${ok ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>{ok ? <CheckCircle2 className="h-3.5 w-3.5"/> : '·'}</span><span className={ok ? 'text-slate-700' : 'text-slate-400'}>{label}</span></div>;
+  return <div className="flex items-center gap-2"><span className={`flex h-5 w-5 items-center justify-center rounded-full ${ok ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{ok ? <CheckCircle2 className="h-3.5 w-3.5"/> : '·'}</span><span className={ok ? 'text-slate-700' : 'text-slate-600'}>{label}</span></div>;
 }
 
 function Metric({ label, value }: { label: string; value: string | number }) {

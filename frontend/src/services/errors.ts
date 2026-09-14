@@ -16,13 +16,14 @@ export function normalizeApiError(error: unknown, fallback = 'Something went wro
   if (axios.isAxiosError(error)) {
     const body = error.response?.data as { error?: string; message?: string } | undefined;
     const status = error.response?.status;
+    const serverMessage = body?.error || body?.message;
     const friendly = status === 403
       ? 'You do not have permission to perform this action.'
       : status === 429
         ? 'Too many requests. Please wait a moment and try again.'
         : status && status >= 500
-          ? 'The service is temporarily unavailable. Please try again.'
-          : body?.error || body?.message || fallback;
+          ? ([502, 503].includes(status) && serverMessage ? serverMessage : 'The service is temporarily unavailable. Please try again.')
+          : serverMessage || fallback;
     return new ApiError(friendly, status, error.response?.headers?.['x-request-id']);
   }
   return new ApiError(error instanceof Error ? error.message : fallback);

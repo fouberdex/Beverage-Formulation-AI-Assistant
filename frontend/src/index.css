@@ -6,6 +6,19 @@
   .input {
     @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-sky-600 focus:ring-2 focus:ring-sky-100 disabled:bg-slate-100 disabled:text-slate-500;
   }
+  .primary-button {
+    @apply inline-flex items-center gap-2 rounded-xl bg-sky-800 px-4 py-2.5 text-sm font-bold text-white shadow-sm shadow-sky-200 transition hover:bg-sky-900 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .secondary-button {
+    @apply inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-sky-300 hover:bg-sky-50 hover:text-sky-800 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .surface-card { @apply rounded-2xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/50 sm:p-6; }
+  .hero-panel { @apply flex flex-col justify-between gap-5 overflow-hidden rounded-2xl border border-slate-200 bg-white px-6 py-7 text-slate-950 shadow-sm shadow-slate-200/50 sm:flex-row sm:items-end sm:px-8; }
+  .hero-panel h1 { @apply mt-2 text-3xl font-black tracking-tight sm:text-4xl; }
+  .hero-panel p { @apply mt-2 max-w-3xl text-sm leading-6 text-slate-500; }
+  .hero-kicker { @apply inline-flex items-center gap-2 rounded-full bg-sky-50 px-3 py-1 text-[10px] font-bold uppercase tracking-[.18em] text-sky-700 ring-1 ring-sky-100; }
+  .eyebrow { @apply text-[10px] font-bold uppercase tracking-[.18em] text-sky-700; }
+  .field-grid { @apply grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4; }
 }
 
 * {
@@ -27,6 +40,19 @@ body {
   -moz-osx-font-smoothing: grayscale;
   line-height: 1.5;
   min-height: 100vh;
+  color: #0f172a;
+  background: #f7f8fc;
+}
+
+.bg-app { background: #f7f8fc; }
+
+@media print {
+  nav, .skip-link, button { display: none !important; }
+  .bg-app { background: white !important; }
+  main { max-width: none !important; padding: 0 !important; }
+  body * { visibility: hidden; }
+  #label-preview, #label-preview * { visibility: visible; }
+  #label-preview { position: absolute; inset: 0; border: 2px solid #000; }
 }
 
 #root {

@@ -214,27 +214,28 @@ export default function FormulationsPage() {
   const totalPercentage = formIngredients.reduce((sum, i) => sum + (i.percentage || 0), 0);
 
   return (
-    <div>
-      <div className="px-4 py-5 sm:px-6 flex justify-between items-center">
+    <div className="space-y-6">
+      <header className="hero-panel">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Formulations</h1>
-          <p className="mt-1 text-sm text-gray-500">
+          <span className="hero-kicker"><GitBranch className="h-4 w-4" /> Recipe workspace</span>
+          <h1>Formulations</h1>
+          <p>
             {canEdit ? 'Create and manage beverage formulations' : 'Review beverage formulations in read-only mode'}
           </p>
         </div>
         {canEdit && <button type="button"
           onClick={openCreateModal}
-          className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-sky-700 hover:bg-sky-800"
+          className="primary-button"
         >
           <Plus className="h-4 w-4 mr-2" />
           Create Formulation
         </button>}
-      </div>
+      </header>
 
       <StatusMessage error={error} message={message} />
 
       {/* Search */}
-      <div className="bg-white shadow rounded-lg p-4 mb-6">
+      <div className="surface-card">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
           <input
@@ -243,7 +244,7 @@ export default function FormulationsPage() {
             placeholder="Search formulations..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-10 w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2"
+            className="input pl-10"
           />
         </div>
       </div>

@@ -1,7 +1,8 @@
 import { z } from 'zod';
 
-const DEFAULT_MODEL = 'gemini-2.5-flash-lite';
+const DEFAULT_MODEL = 'gemini-3.1-flash-lite';
 const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_FALLBACK_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.6-flash'];
 
 const scoreSchema = { type: 'number', minimum: 0, maximum: 100 };
 const reviewJsonSchema = {
@@ -66,6 +67,20 @@ const variantReviewSchema = z.object({
   }).strict()).min(1).max(10),
 }).strict();
 
+const insightJsonSchema = {
+  type: 'object', additionalProperties: false, required: ['summary', 'recommendations', 'warnings'],
+  properties: {
+    summary: { type: 'string', minLength: 1, maxLength: 1600 },
+    recommendations: { type: 'array', maxItems: 8, items: { type: 'string', minLength: 1, maxLength: 500 } },
+    warnings: { type: 'array', maxItems: 8, items: { type: 'string', minLength: 1, maxLength: 500 } },
+  },
+};
+const insightSchema = z.object({
+  summary: z.string().trim().min(1).max(1600),
+  recommendations: z.array(z.string().trim().min(1).max(500)).max(8),
+  warnings: z.array(z.string().trim().min(1).max(500)).max(8),
+}).strict();
+
 const providerEnvelopeSchema = z.object({
   candidates: z.array(z.object({
     content: z.object({ parts: z.array(z.object({ text: z.string().optional() }).passthrough()).min(1) }).passthrough(),
@@ -92,42 +107,69 @@ function extractResponseText(payload) {
     .trim();
 }
 
+function candidateModels(primaryModel) {
+  const configured = (process.env.GEMINI_FALLBACK_MODELS || DEFAULT_FALLBACK_MODELS.join(','))
+    .split(',')
+    .map(model => model.trim())
+    .filter(Boolean);
+  return [...new Set([primaryModel, ...configured])].slice(0, 3);
+}
+
+async function requestGeminiJson({ generationConfig, prompt, fetchImplementation = fetch }) {
+  const configuration = getAIConfiguration();
+  let lastError;
+  const models = candidateModels(configuration.model);
+
+  for (const [index, model] of models.entries()) {
+    const controller = new AbortController();
+    const timeoutMs = Number.parseInt(process.env.GEMINI_TIMEOUT_MS || `${DEFAULT_TIMEOUT_MS}`, 10);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetchImplementation(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY },
+        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig }),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const errorBody = await response.text();
+        const error = new Error(`Gemini request failed with HTTP ${response.status}: ${errorBody.slice(0, 300)}`);
+        const canFallback = [404, 429, 503].includes(response.status) && index < models.length - 1;
+        if (canFallback) {
+          lastError = error;
+          continue;
+        }
+        throw error;
+      }
+      return { payload: providerEnvelopeSchema.parse(await response.json()), model };
+    } catch (error) {
+      if (error?.name === 'AbortError') throw error;
+      lastError = error;
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  throw lastError || new Error('No Gemini model was available');
+}
+
 async function requestStructuredReview({ prompt, schema, jsonSchema, expectedIds }, fetchImplementation) {
   const configuration = getAIConfiguration();
   if (!configuration.configured) {
     return { ...configuration, used: false, reviews: [], reason: 'GEMINI_API_KEY is not configured' };
   }
 
-  const controller = new AbortController();
-  const timeoutMs = Number.parseInt(process.env.GEMINI_TIMEOUT_MS || `${DEFAULT_TIMEOUT_MS}`, 10);
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(configuration.model)}:generateContent`;
-    const response = await fetchImplementation(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': process.env.GEMINI_API_KEY,
-      },
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseJsonSchema: jsonSchema,
-          temperature: 0.2,
-          maxOutputTokens: 4096,
-        },
-      }),
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(`Gemini request failed with HTTP ${response.status}: ${errorBody.slice(0, 300)}`);
-    }
-
-    const payload = providerEnvelopeSchema.parse(await response.json());
+  const { payload, model } = await requestGeminiJson({
+    prompt,
+    fetchImplementation,
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseJsonSchema: jsonSchema,
+      temperature: 0.2,
+      maxOutputTokens: 4096,
+    },
+  });
+  {
     const text = extractResponseText(payload);
     if (!text) throw new Error('Gemini returned no text');
 
@@ -142,6 +184,7 @@ async function requestStructuredReview({ prompt, schema, jsonSchema, expectedIds
 
     return {
       ...configuration,
+      model,
       used: true,
       reviews: uniqueReviews,
       schema_version: '1.0',
@@ -151,8 +194,27 @@ async function requestStructuredReview({ prompt, schema, jsonSchema, expectedIds
         total_tokens: payload.usageMetadata?.totalTokenCount,
       },
     };
-  } finally {
-    clearTimeout(timeout);
+  }
+}
+
+export async function generateExpertInsight({ domain, context }, fetchImplementation = fetch) {
+  const configuration = getAIConfiguration();
+  if (!configuration.configured) return { ...configuration, used: false, reason: 'GEMINI_API_KEY is not configured' };
+  const prompt = [
+    'You are a conservative beverage R&D decision-support reviewer.',
+    `Domain: ${domain}.`,
+    'Analyze only the supplied structured data. Never invent measurements, prices, legal compliance, or experimental results.',
+    'Separate recommendations from warnings. State when evidence is insufficient. Return JSON only.',
+    `Data: ${JSON.stringify(context)}`,
+  ].join('\n');
+  const { payload, model } = await requestGeminiJson({
+    prompt,
+    fetchImplementation,
+    generationConfig: { responseMimeType: 'application/json', responseJsonSchema: insightJsonSchema, temperature: 0.15, maxOutputTokens: 2048 },
+  });
+  {
+    const result = insightSchema.parse(JSON.parse(extractResponseText(payload)));
+    return { ...configuration, model, used: true, ...result, usage: { prompt_tokens: payload.usageMetadata?.promptTokenCount, candidate_tokens: payload.usageMetadata?.candidatesTokenCount, total_tokens: payload.usageMetadata?.totalTokenCount } };
   }
 }
 

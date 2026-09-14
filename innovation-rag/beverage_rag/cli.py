@@ -102,6 +102,37 @@ def ask(
             typer.echo(f"[{item.citation_id}] {item.label} — {item.title} — {item.url or 'URL indisponible'}")
 
 
+@app.command("diagnose")
+def diagnose_command(
+    question: Annotated[str, typer.Argument(help="Question à diagnostiquer.")],
+    source: Annotated[str | None, typer.Option(help="Filtre de source facultatif.")] = None,
+    include_query_text: Annotated[
+        bool,
+        typer.Option(
+            "--include-query-text/--redact-query-text",
+            help="Afficher les requêtes en clair dans cette sortie locale explicite.",
+        ),
+    ] = True,
+    output: Annotated[
+        Path | None,
+        typer.Option(help="Fichier JSON facultatif; aucune sauvegarde par défaut."),
+    ] = None,
+    config: ConfigOption = Path(__file__).resolve().parents[1]
+    / "config"
+    / "beverages-20k-gpu.yaml",
+) -> None:
+    report = RagPipeline(load(config)).diagnose(
+        question,
+        source=source,
+        include_query_text=include_query_text,
+    )
+    rendered = report.model_dump_json(indent=2, exclude_none=True)
+    typer.echo(rendered)
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(rendered + "\n", encoding="utf-8")
+
+
 @app.command("run-pipeline")
 def run_pipeline(
     limit: Annotated[int | None, typer.Option(help="Limite totale du pilote.")] = None,

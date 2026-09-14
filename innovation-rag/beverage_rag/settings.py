@@ -115,6 +115,7 @@ class Settings(BaseModel):
     generation: GenerationSettings
     evidence_policy_file: Path | None = None
     chemistry_rules_file: Path | None = None
+    diagnostics_file: Path | None = None
     config_path: Path = Field(exclude=True)
     root_dir: Path = Field(exclude=True)
 

@@ -55,13 +55,10 @@ export default function CompatibilityPage() {
   const selectedFormulation = formulations.find(f => f.id === selectedFormulationId);
 
   return (
-    <div>
-      <div className="px-4 py-5 sm:px-6">
-        <h1 className="text-3xl font-bold text-gray-900">Compatibility & Risk Engine</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Evaluate formulation compatibility and identify potential risks
-        </p>
-      </div>
+    <div className="space-y-6">
+      <header className="hero-panel">
+        <div><span className="hero-kicker"><Shield className="h-4 w-4" /> Formulation safety</span><h1>Compatibility & Risk Engine</h1><p>Screen formulation interactions, incompatibilities and safety signals before pilot production.</p></div>
+      </header>
       <div className="mx-4 mb-4"><StatusMessage error={error} /></div>
 
       {/* Info Box */}

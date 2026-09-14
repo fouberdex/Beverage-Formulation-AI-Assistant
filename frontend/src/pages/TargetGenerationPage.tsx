@@ -84,14 +84,11 @@ export default function TargetGenerationPage() {
   }
 
   return (
-    <div>
+    <div className="space-y-6">
       <StatusMessage error={error} />
-      <div className="px-4 py-5 sm:px-6">
-        <h1 className="text-3xl font-bold text-gray-900">Target-Based Generation</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Generate formulations from constraints (calories, sugar, cost, type)
-        </p>
-      </div>
+      <header className="hero-panel">
+        <div><span className="hero-kicker"><Target className="h-4 w-4" /> Constraint-led design</span><h1>Target-Based Generation</h1><p>Generate candidate formulations against measurable nutrition, cost and composition constraints.</p></div>
+      </header>
 
       {/* Success Message */}
       {successMessage && (
@@ -131,13 +128,14 @@ export default function TargetGenerationPage() {
               Target Calories (per 100ml)
             </label>
             <input
+              aria-label="Target calories per 100ml"
               type="number"
               value={constraints.target_calories}
               onChange={(e) => setConstraints({ ...constraints, target_calories: e.target.value })}
               placeholder="e.g., 45"
               className="w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2"
             />
-            <p className="text-xs text-gray-400 mt-1">Typical: Soda 40-50, Juice 45-60, Water 0</p>
+            <p className="text-xs text-slate-600 mt-1">Typical: Soda 40-50, Juice 45-60, Water 0</p>
           </div>
 
           <div>
@@ -145,13 +143,14 @@ export default function TargetGenerationPage() {
               Target Sugar (g per 100ml)
             </label>
             <input
+              aria-label="Target sugar per 100ml"
               type="number"
               value={constraints.target_sugar}
               onChange={(e) => setConstraints({ ...constraints, target_sugar: e.target.value })}
               placeholder="e.g., 10"
               className="w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2"
             />
-            <p className="text-xs text-gray-400 mt-1">Typical: Soda 10-12, Juice 8-12, Diet 0</p>
+            <p className="text-xs text-slate-600 mt-1">Typical: Soda 10-12, Juice 8-12, Diet 0</p>
           </div>
 
           <div>
@@ -159,13 +158,14 @@ export default function TargetGenerationPage() {
               Target Cost (DZD per liter)
             </label>
             <input
+              aria-label="Target cost per liter"
               type="number"
               value={constraints.target_cost_per_liter}
               onChange={(e) => setConstraints({ ...constraints, target_cost_per_liter: e.target.value })}
               placeholder="e.g., 50"
               className="w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2"
             />
-            <p className="text-xs text-gray-400 mt-1">Ingredient cost only, before overhead</p>
+            <p className="text-xs text-slate-600 mt-1">Ingredient cost only, before overhead</p>
           </div>
 
           <div>
@@ -173,6 +173,7 @@ export default function TargetGenerationPage() {
               Beverage Type
             </label>
             <select
+              aria-label="Beverage type"
               value={constraints.beverage_type}
               onChange={(e) => setConstraints({ ...constraints, beverage_type: e.target.value })}
               className="w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2"
@@ -188,6 +189,7 @@ export default function TargetGenerationPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Minimum Ingredients</label>
             <input
+              aria-label="Minimum ingredients"
               type="number"
               min="1"
               max="40"
@@ -200,6 +202,7 @@ export default function TargetGenerationPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Maximum Ingredients</label>
             <input
+              aria-label="Maximum ingredients"
               type="number"
               min="1"
               max="40"
@@ -212,6 +215,7 @@ export default function TargetGenerationPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Candidates</label>
             <input
+              aria-label="Candidate count"
               type="number"
               min="1"
               max="10"

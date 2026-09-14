@@ -56,6 +56,11 @@ def preprocess(settings: Settings) -> tuple[Path, int]:
         for source in settings.ingestion.enabled_sources
         if (input_dir / source / "documents.jsonl").exists()
     ]
+    # Curated PubMed additions are kept separate from the large source exports so
+    # targeted evidence enrichment never overwrites the 10k-paper corpus.
+    curated_pubmed = input_dir / "curated_pubmed" / "documents.jsonl"
+    if curated_pubmed.exists():
+        paths.append(curated_pubmed)
     if not paths:
         raise FileNotFoundError(f"No ingestion files found below {input_dir}")
     documents: dict[str, RawDocument] = {}

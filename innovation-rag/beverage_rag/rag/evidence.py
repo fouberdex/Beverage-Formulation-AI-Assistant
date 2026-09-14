@@ -41,6 +41,9 @@ class MechanismRule:
     outcomes: list[str]
     context: list[str]
     search_queries: list[str]
+    cause_eligible: bool
+    question_entity_groups: list[list[str]]
+    satisfied_by: list[str]
 
     def supports(self, text: str) -> bool:
         sentences = [
@@ -66,12 +69,17 @@ class MechanismRule:
         return False
 
     def is_named_in(self, text: str) -> bool:
-        if contains_any(text, self.aliases):
+        if contains_any(text, [self.label, *self.aliases]):
             return True
         return bool(
             self.entity_groups
             and all(contains_any(text, group) for group in self.entity_groups)
             and (not self.outcomes or contains_any(text, self.outcomes))
+        )
+
+    def is_applicable_to(self, question: str) -> bool:
+        return not self.question_entity_groups or all(
+            contains_any(question, group) for group in self.question_entity_groups
         )
 
 
@@ -109,6 +117,11 @@ class EvidencePolicy:
                 outcomes=list(value.get("outcomes", [])),
                 context=list(value.get("context", [])),
                 search_queries=list(value.get("search_queries", [])),
+                cause_eligible=bool(value.get("cause_eligible", True)),
+                question_entity_groups=[
+                    list(group) for group in value.get("question_entity_groups", [])
+                ],
+                satisfied_by=list(value.get("satisfied_by", [])),
             )
             for mechanism_id, value in payload.get("mechanisms", {}).items()
         }
@@ -147,10 +160,22 @@ class EvidencePolicy:
         return policy
 
     def mechanisms_named_in(self, text: str) -> list[MechanismRule]:
-        return [rule for rule in self.mechanisms.values() if rule.is_named_in(text)]
+        return [
+            rule
+            for rule in self.mechanisms.values()
+            if rule.is_named_in(text)
+            or (rule.question_entity_groups and rule.is_applicable_to(text))
+        ]
 
-    def resolve_cause_mechanism(self, text: str) -> MechanismRule | None:
-        matches = self.mechanisms_named_in(text)
+    def resolve_cause_mechanism(
+        self, text: str, question: str = ""
+    ) -> MechanismRule | None:
+        matches = [
+            rule
+            for rule in self.mechanisms_named_in(text)
+            if rule.cause_eligible
+            and (not question or rule.is_applicable_to(question))
+        ]
         if not matches:
             return None
         return max(
@@ -161,6 +186,18 @@ class EvidencePolicy:
             ),
         )
 
+    def evidence_rules_for(
+        self, rule: MechanismRule, question: str
+    ) -> list[MechanismRule]:
+        if not rule.satisfied_by:
+            return [rule] if rule.is_applicable_to(question) else []
+        return [
+            self.mechanisms[mechanism_id]
+            for mechanism_id in rule.satisfied_by
+            if mechanism_id in self.mechanisms
+            and self.mechanisms[mechanism_id].is_applicable_to(question)
+        ]
+
 
 @dataclass(frozen=True)
 class ProofAssessment:
@@ -170,6 +207,19 @@ class ProofAssessment:
     independent_sources: int
     calculated_score: int
     level: str | None
+
+
+@dataclass(frozen=True)
+class MechanismEvidenceAssessment:
+    mechanism_id: str
+    matching_chunks: int
+    mechanism_match: bool
+    best_reranker_score: float | None
+    independent_sources: int
+    calculated_score: int
+    level: str | None
+    gap_eligible: bool
+    blocking_condition: str | None
 
 
 @dataclass(frozen=True)
@@ -201,15 +251,21 @@ def citation_result_map(results: list[RetrievedChunk]) -> dict[str, list[Retriev
     return mapped
 
 
+def result_evidence_text(result: RetrievedChunk) -> str:
+    """Include the title because it often carries the beverage/failure context."""
+    return f"{result.chunk.title}\n{result.chunk.text}"
+
+
 def assess_proof(
     cause_and_mechanism: str,
     cited_results: list[RetrievedChunk],
     policy: EvidencePolicy,
+    question: str = "",
 ) -> ProofAssessment:
-    rule = policy.resolve_cause_mechanism(cause_and_mechanism)
+    rule = policy.resolve_cause_mechanism(cause_and_mechanism, question)
     if rule is None:
         return ProofAssessment(None, False, 0.0, 0, 0, None)
-    matching = [item for item in cited_results if rule.supports(item.chunk.text)]
+    matching = [item for item in cited_results if rule.supports(result_evidence_text(item))]
     if not matching:
         return ProofAssessment(rule.mechanism_id, False, 0.0, 0, 0, None)
     best_score = max(item.score for item in matching)
@@ -259,6 +315,91 @@ def assess_proof(
     )
 
 
+def assess_mechanism_evidence(
+    rule: MechanismRule,
+    results: list[RetrievedChunk],
+    policy: EvidencePolicy,
+    question: str,
+) -> MechanismEvidenceAssessment:
+    """Expose the continuous evidence signals without changing gap decisions."""
+    evidence_rules = policy.evidence_rules_for(rule, question)
+    matching = [
+        item
+        for item in results
+        if any(
+            evidence_rule.supports(result_evidence_text(item))
+            for evidence_rule in evidence_rules
+        )
+    ]
+    if not matching:
+        return MechanismEvidenceAssessment(
+            mechanism_id=rule.mechanism_id,
+            matching_chunks=0,
+            mechanism_match=False,
+            best_reranker_score=None,
+            independent_sources=0,
+            calculated_score=0,
+            level=None,
+            gap_eligible=False,
+            blocking_condition="no_mechanism_match",
+        )
+    best_score = max(item.score for item in matching)
+    supporting = [
+        item for item in matching if item.score >= policy.supporting_source_min_score
+    ]
+    source_count = len({independent_source_key(item) for item in supporting})
+    source_credit = (
+        0.0
+        if source_count == 0
+        else policy.single_source_credit
+        if source_count == 1
+        else 1.0
+    )
+    calculated = round(
+        100
+        * (
+            policy.reranker_weight * best_score
+            + policy.source_weight * source_credit
+        )
+    )
+    strong = policy.strong
+    moderate = policy.moderate
+    if (
+        best_score >= float(strong["minimum_best_reranker_score"])
+        and source_count >= int(strong["minimum_independent_sources"])
+        and calculated >= int(strong["minimum_calculated_score"])
+    ):
+        level = "Fort"
+    elif (
+        best_score >= float(moderate["minimum_best_reranker_score"])
+        and source_count >= int(moderate["minimum_independent_sources"])
+        and calculated >= int(moderate["minimum_calculated_score"])
+    ):
+        level = "Modéré"
+    else:
+        level = None
+    gap_eligible = best_score >= policy.gap_max_score
+    if not gap_eligible:
+        blocking = "reranker_below_gap_threshold"
+    elif source_count < int(moderate["minimum_independent_sources"]):
+        blocking = "insufficient_independent_sources"
+    elif calculated < int(moderate["minimum_calculated_score"]):
+        blocking = "calculated_score_below_threshold"
+    else:
+        blocking = None
+    return MechanismEvidenceAssessment(
+        mechanism_id=rule.mechanism_id,
+        matching_chunks=len(matching),
+        mechanism_match=True,
+        best_reranker_score=best_score,
+        independent_sources=source_count,
+        calculated_score=calculated,
+        level=level,
+        gap_eligible=gap_eligible,
+        blocking_condition=blocking,
+    )
+
+
 def find_evidence_gaps(
     question: str,
     results: list[RetrievedChunk],
@@ -266,8 +407,14 @@ def find_evidence_gaps(
 ) -> list[MechanismRule]:
     gaps: list[MechanismRule] = []
     for rule in policy.mechanisms_named_in(question):
+        evidence_rules = policy.evidence_rules_for(rule, question)
         matching_scores = [
-            item.score for item in results if rule.supports(item.chunk.text)
+            item.score
+            for item in results
+            if any(
+                evidence_rule.supports(result_evidence_text(item))
+                for evidence_rule in evidence_rules
+            )
         ]
         if not matching_scores or max(matching_scores) < policy.gap_max_score:
             gaps.append(rule)
@@ -292,9 +439,13 @@ def _is_separator(cells: list[str]) -> bool:
 def _header_index(headers: list[str], *names: str) -> int | None:
     normalized = [normalize_text(header) for header in headers]
     for index, header in enumerate(normalized):
-        if any(name in header for name in names):
+        if any(header == normalize_text(name) for name in names):
             return index
     return None
+
+
+def proof_claim_key(cause: str, mechanism: str) -> str:
+    return normalize_text(f"{cause} | {mechanism}")
 
 
 def insert_under_section(answer: str, marker: str, additions: list[str]) -> str:
@@ -325,6 +476,8 @@ def apply_evidence_controls(
     answer: str,
     results: list[RetrievedChunk],
     policy: EvidencePolicy,
+    question: str = "",
+    dynamic_assessments: dict[str, ProofAssessment] | None = None,
 ) -> EvidenceControlResult:
     lines = answer.splitlines()
     mapped = citation_result_map(results)
@@ -340,7 +493,7 @@ def apply_evidence_controls(
         cause_index = _header_index(headers, "cause")
         mechanism_index = _header_index(headers, "mecanisme")
         proof_index = _header_index(headers, "niveau de preuve", "score de preuve")
-        source_index = _header_index(headers, "source")
+        source_index = _header_index(headers, "source", "sources")
         if None in (cause_index, mechanism_index, proof_index, source_index):
             index += 1
             continue
@@ -367,7 +520,15 @@ def apply_evidence_controls(
                 f"{cells[cause_index]} {cells[mechanism_index]}",
                 cited_results,
                 policy,
+                question,
             )
+            if assessment.level is None and dynamic_assessments:
+                assessment = dynamic_assessments.get(
+                    proof_claim_key(
+                        cells[cause_index], cells[mechanism_index]
+                    ),
+                    assessment,
+                )
             if assessment.level is None and policy.remove_unsupported_causes:
                 removed.append(cells[cause_index])
                 del lines[row_index]
@@ -385,7 +546,6 @@ def apply_evidence_controls(
             placeholder[proof_index] = "0/100 — Non soutenue"
             placeholder[source_index] = "—"
             lines.insert(row_index, "| " + " | ".join(placeholder) + " |")
-            controlled_rows += 1
         index = row_index + 1
     controlled_answer = "\n".join(lines)
     missing = [

@@ -60,6 +60,9 @@ export const formulationsAPI = {
   getLaboratoryResults: (id: string) => api.get(`/formulations/${id}/laboratory-results`),
   getSensoryAnalytics: (id: string) => api.get(`/formulations/${id}/sensory-analytics`),
   addLaboratoryResult: (id: string, data: any) => api.post(`/formulations/${id}/laboratory-results`, data),
+  updateLaboratoryResult: (id: string, resultId: string, data: any) => api.put(`/formulations/${id}/laboratory-results/${resultId}`, data),
+  deleteLaboratoryResult: (id: string, resultId: string) => api.delete(`/formulations/${id}/laboratory-results/${resultId}`),
+  importLaboratoryResults: (id: string, rows: any[]) => api.post(`/formulations/${id}/laboratory-results/import`, { rows }),
 };
 
 export const laboratoryAPI = {
@@ -70,9 +73,11 @@ export const sensoryAPI = {
   getStudies: () => api.get('/sensory/studies'),
   getStudy: (id: string) => api.get(`/sensory/studies/${id}`),
   createStudy: (data: any) => api.post('/sensory/studies', data),
+  updateStudy: (id: string, data: any) => api.put(`/sensory/studies/${id}`, data),
   updateStatus: (id: string, status: string) => api.put(`/sensory/studies/${id}/status`, { status }),
   getResponses: (id: string) => api.get(`/sensory/studies/${id}/responses`),
   addResponse: (id: string, data: any) => api.post(`/sensory/studies/${id}/responses`, data),
+  importResponses: (id: string, rows: any[]) => api.post(`/sensory/studies/${id}/responses/import`, { rows }),
   getAnalytics: (id: string) => api.get(`/sensory/studies/${id}/analytics`),
 };
 
@@ -97,6 +102,8 @@ export const aiAPI = {
     api.get(`/ai/formulations/${formulationId}/variants`, { params: filters }),
   acceptVariant: (variantId: string, data: any) =>
     api.post(`/ai/variants/${variantId}/accept`, data),
+  getInsight: (domain: 'laboratory' | 'sensory' | 'regulatory' | 'cost' | 'formulation', context: Record<string, unknown>) =>
+    api.post('/ai/insights', { domain, context }),
 };
 
 // Target Generation API
@@ -121,8 +128,8 @@ export const regulatoryAPI = {
     api.post(`/regulatory/formulations/${formulationId}/check`),
   getCompliance: (formulationId: string) =>
     api.get(`/regulatory/formulations/${formulationId}/compliance`),
-  generateLabels: (formulationId: string) =>
-    api.post(`/regulatory/formulations/${formulationId}/labels`),
+  generateLabels: (formulationId: string, options?: any) =>
+    api.post(`/regulatory/formulations/${formulationId}/labels`, options || {}),
   getLabels: (formulationId: string, language?: string) =>
     api.get(`/regulatory/formulations/${formulationId}/labels`, { params: { language } }),
 };

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { describeGeminiFailure, reviewFormulationVariants } from '../src/services/geminiService.js';
+import { describeGeminiFailure, generateExpertInsight, reviewFormulationVariants } from '../src/services/geminiService.js';
 
 const variantInput = {
   sourceFormulation: { name: 'Confidential Cola', beverage_type: 'soft_drink' },
@@ -14,7 +14,7 @@ const variantInput = {
 };
 
 test.beforeEach(() => { process.env.GEMINI_API_KEY = 'provider-test-key'; });
-test.afterEach(() => { delete process.env.GEMINI_API_KEY; delete process.env.GEMINI_TIMEOUT_MS; });
+test.afterEach(() => { delete process.env.GEMINI_API_KEY; delete process.env.GEMINI_TIMEOUT_MS; delete process.env.GEMINI_MODEL; delete process.env.GEMINI_FALLBACK_MODELS; });
 
 test('provider request carries a strict JSON schema, redacts names, and captures token metadata', async () => {
   const fakeFetch = async (_url, options) => {
@@ -52,4 +52,37 @@ test('provider calls honor the configured timeout', async () => {
     options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
   });
   await assert.rejects(() => reviewFormulationVariants(variantInput, hangingFetch), error => error.name === 'AbortError');
+});
+
+test('cross-workspace Gemini insights are schema constrained and preserve supplied calculations', async () => {
+  const fakeFetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    assert.equal(body.generationConfig.responseJsonSchema.additionalProperties, false);
+    assert.match(body.contents[0].parts[0].text, /Never invent measurements/);
+    return { ok: true, json: async () => ({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: 'Costs are packaging-led.', recommendations: ['Validate packaging quotes.'], warnings: ['Scenario only.'] }) }] } }],
+      usageMetadata: { totalTokenCount: 42 },
+    }) };
+  };
+  const result = await generateExpertInsight({ domain: 'cost', context: { cost_per_unit: 42 } }, fakeFetch);
+  assert.equal(result.used, true);
+  assert.equal(result.summary, 'Costs are packaging-led.');
+  assert.equal(result.usage.total_tokens, 42);
+});
+
+test('cross-workspace insights fall back once when the primary model is unavailable', async () => {
+  process.env.GEMINI_MODEL = 'busy-primary';
+  process.env.GEMINI_FALLBACK_MODELS = 'available-fallback';
+  const requestedModels = [];
+  const fakeFetch = async (url) => {
+    requestedModels.push(url);
+    if (url.includes('busy-primary')) return { ok: false, status: 503, text: async () => 'high demand' };
+    return { ok: true, json: async () => ({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: 'Fallback succeeded.', recommendations: [], warnings: [] }) }] } }],
+    }) };
+  };
+  const result = await generateExpertInsight({ domain: 'cost', context: { cost_per_unit: 42 } }, fakeFetch);
+  assert.equal(result.model, 'available-fallback');
+  assert.equal(result.summary, 'Fallback succeeded.');
+  assert.equal(requestedModels.length, 2);
 });

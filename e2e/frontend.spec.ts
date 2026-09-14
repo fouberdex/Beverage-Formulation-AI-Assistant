@@ -103,10 +103,61 @@ test('dashboard has no serious automated accessibility violations', async ({ pag
 
 test('core workspace pages have no serious automated accessibility violations', async ({ page }) => {
   await useRole(page, 'admin'); await mockApi(page);
-  for (const path of ['/ingredients', '/formulations', '/compatibility', '/history', '/account']) {
+  for (const path of ['/ingredients', '/formulations', '/compatibility', '/history', '/account', '/laboratory-results', '/sensory', '/labels', '/regulatory', '/cost', '/ai', '/target-generation']) {
     await page.goto(path);
     await expect(page.locator('h1')).toBeVisible();
     const results = await new AxeBuilder({ page }).analyze();
     expect(results.violations.filter(violation => ['serious', 'critical'].includes(violation.impact || '')), path).toEqual([]);
   }
+});
+
+test('new production workspaces are reachable and expose their primary controls', async ({ page }) => {
+  await useRole(page, 'admin'); await mockApi(page);
+  await page.goto('/laboratory-results');
+  await expect(page.getByRole('heading', { name: 'Laboratory Results' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Import CSV / Excel' })).toBeVisible();
+  await page.goto('/sensory');
+  await expect(page.getByRole('heading', { name: 'Sensory Analysis' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Panel data' })).toBeVisible();
+  await page.goto('/labels');
+  await expect(page.getByRole('heading', { name: 'Label Studio' })).toBeVisible();
+  await page.getByRole('tab', { name: 'Label Builder' }).click();
+  await expect(page.getByRole('button', { name: 'Generate and save label draft' })).toBeVisible();
+  await page.goto('/cost');
+  await expect(page.getByRole('heading', { name: 'Cost, Price & ROI' })).toBeVisible();
+  await expect(page.getByText('Packaging & conversion')).toBeVisible();
+  await page.goto('/rag');
+  await expect(page.getByRole('heading', { name: 'Patent & Publication RAG' })).toBeVisible();
+});
+
+test('Label Studio tabs expose complete recipe, builder, live and report workflows', async ({ page }) => {
+  await useRole(page, 'admin'); await mockApi(page); await page.goto('/labels');
+  await expect(page.getByRole('tab', { name: 'Recipes' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('button', { name: /Formula 1/ }).first()).toBeVisible();
+  await page.getByRole('button', { name: /Formula 1/ }).first().click();
+  await expect(page.getByRole('tab', { name: 'Label Builder' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('button', { name: 'Generate and save label draft' })).toBeEnabled();
+  await page.getByRole('tab', { name: 'Live Label' }).click();
+  await expect(page.getByRole('heading', { name: 'No live label yet' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open Label Builder' }).click();
+  await page.getByRole('tab', { name: 'Reports' }).click();
+  await expect(page.getByRole('heading', { name: 'No label report available' })).toBeVisible();
+});
+
+test('desktop workspace navigation can collapse and expand', async ({ page }) => {
+  await useRole(page, 'admin'); await mockApi(page); await page.goto('/');
+  await page.getByRole('button', { name: 'Collapse sidebar' }).click();
+  await expect(page.getByRole('button', { name: 'Expand sidebar' })).toBeVisible();
+  await page.getByRole('button', { name: 'Expand sidebar' }).click();
+  await expect(page.getByRole('button', { name: 'Collapse sidebar' })).toBeVisible();
+});
+
+test('cost assumptions reset visibly to the baseline', async ({ page }) => {
+  await useRole(page, 'admin'); await mockApi(page); await page.goto('/cost');
+  const batchSize = page.getByRole('spinbutton', { name: 'Input batch (L)' });
+  await batchSize.fill('2500');
+  await expect(batchSize).toHaveValue('2500');
+  await page.getByTestId('reset-cost-assumptions').click();
+  await expect(batchSize).toHaveValue('1000');
+  await expect(page.getByRole('status')).toContainText('Assumptions restored');
 });

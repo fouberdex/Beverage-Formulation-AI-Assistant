@@ -20,6 +20,12 @@ EVIDENCE_POLICY = EvidencePolicy.load(ROOT / "config" / "evidence-policy.yaml")
 CHEMISTRY_POLICY = ChemistryPolicy.load(ROOT / "config" / "chemistry-rules.yaml")
 
 
+def gpu_settings_without_diagnostic_log() -> Settings:
+    settings = Settings.load(ROOT / "config" / "beverages-20k-gpu.yaml")
+    settings.diagnostics_file = None
+    return settings
+
+
 def result(
     identifier: str,
     text: str,
@@ -53,13 +59,17 @@ Diagnostic test [S1].
 {cause_row}
 
 ## 3. Données précises extraites des documents
-Observation test [S1].
+| Paramètre/observation | Valeur et conditions | Portée | Source |
+|---|---|---|---|
+| Observation | Valeur test | Conditions de la fixture | [S1] |
 
 ## 4. Données manquantes pour trancher
 Mesures complémentaires nécessaires.
 
 ## 5. Essais de confirmation prioritaires
-Essai contre témoin [S1].
+| Hypothèse | Mesure | Protocole comparatif | Critère de décision | Délai |
+|---|---|---|---|---|
+| Hypothèse test | Mesure | Essai contre témoin | Différence mesurable | À définir [S1] |
 
 ## 6. Actions correctives et arbitrages industriels
 | Action | Preuve | Impact coût | Impact goût | Impact procédé | Risque/limite |
@@ -159,6 +169,179 @@ def test_calcium_carbonate_action_is_removed_and_warned() -> None:
     assert "Aucune action corrective à la fois sûre" in guarded.answer
 
 
+def test_preservative_and_acidity_reductions_are_blocked_for_acid_soda() -> None:
+    answer = full_answer(
+        "| 1 | Instabilité de l’émulsion | Instabilité de l’émulsion ou de l’agent de trouble | Moyenne | AUTO | Observation | [S1] |",
+        "| Réduire la dose de benzoate de sodium | [S1] | Faible | Faible | Simple | Aucun |\n"
+        "| Réduire l’acidité | [S1] | Faible | Faible | Simple | Aucun |",
+    )
+    question = (
+        "Soda citron-lime avec acide citrique, benzoate de sodium et acide "
+        "ascorbique : trouble et arôme altéré."
+    )
+
+    guarded = apply_chemistry_guardrails(
+        answer,
+        question,
+        CHEMISTRY_POLICY,
+        EVIDENCE_POLICY.no_safe_action_message,
+    )
+
+    assert set(guarded.blocked_actions) == {
+        "Réduire la dose de benzoate de sodium",
+        "Réduire l’acidité",
+    }
+    assert "challenge microbiologique" in guarded.answer
+    assert "association benzoate–ascorbate" in guarded.answer
+    assert "Point de vigilance indépendant du trouble" in guarded.answer
+
+
+def test_generic_physical_symptom_cannot_be_published_as_a_cause() -> None:
+    evidence = [
+        result(
+            "generic-haze",
+            "A carbonated beverage developed turbidity and sediment during storage.",
+            0.90,
+        )
+    ]
+    answer = full_answer(
+        "| 1 | Acidité excessive | Précipitation ou turbidité physique | Moyenne | AUTO | Observation | [S1] |",
+        "| Mesurer la turbidité | [S1] | Faible | Aucun | Simple | À valider |",
+    )
+
+    controlled = apply_evidence_controls(
+        answer,
+        evidence,
+        EVIDENCE_POLICY,
+        "Soda citron-lime trouble au stockage.",
+    )
+
+    assert "Aucune cause suffisamment soutenue" in controlled.answer
+    assert "90/100" not in controlled.answer
+
+
+def test_pectin_protein_source_is_inapplicable_when_ingredients_are_absent() -> None:
+    evidence = [
+        result(
+            "protein-haze",
+            "Pectin and whey protein aggregated and caused turbidity in an acidic beverage.",
+            0.91,
+        )
+    ]
+    answer = full_answer(
+        "| 1 | Floculation pectine-protéine | Interaction pectine-protéine et floculation | Moyenne | AUTO | Relation observée | [S1] |",
+        "| Mesurer la turbidité | [S1] | Faible | Aucun | Simple | À valider |",
+    )
+
+    controlled = apply_evidence_controls(
+        answer,
+        evidence,
+        EVIDENCE_POLICY,
+        "Soda citron-lime avec acide citrique, benzoate et acide ascorbique.",
+    )
+
+    assert "Aucune cause suffisamment soutenue" in controlled.answer
+    assert "91/100" not in controlled.answer
+
+
+def test_formula_entities_trigger_distinct_physical_and_flavor_mechanisms() -> None:
+    question = (
+        "Soda citron-lime avec acide citrique, benzoate de sodium et acide "
+        "ascorbique en bouteille PET : léger trouble et arôme altéré."
+    )
+
+    mechanism_ids = {
+        rule.mechanism_id for rule in EVIDENCE_POLICY.mechanisms_named_in(question)
+    }
+
+    assert "physical_precipitation_turbidity" in mechanism_ids
+    assert "clouding_emulsion_instability" in mechanism_ids
+    assert "benzoic_acid_crystallization" in mechanism_ids
+    assert "citrus_flavor_oxidation" in mechanism_ids
+    assert "ascorbate_flavor_oxidation" in mechanism_ids
+    assert "pet_oxygen_ingress" in mechanism_ids
+
+
+def test_orange_juice_browning_maps_to_an_umbrella_with_specific_mechanisms() -> None:
+    question = (
+        "Un jus d'orange pasteurisé perd sa couleur orangée et devient brunâtre "
+        "après 3 mois de stockage."
+    )
+
+    named = EVIDENCE_POLICY.mechanisms_named_in(question)
+    named_ids = {rule.mechanism_id for rule in named}
+    umbrella = next(
+        rule for rule in named if rule.mechanism_id == "orange_juice_browning"
+    )
+    evidence_ids = {
+        rule.mechanism_id
+        for rule in EVIDENCE_POLICY.evidence_rules_for(umbrella, question)
+    }
+
+    assert named_ids == {"orange_juice_browning"}
+    assert evidence_ids == {
+        "ascorbic_acid_browning",
+        "juice_nonenzymatic_browning",
+        "carotenoid_oxidation_color_loss",
+        "residual_enzyme_juice_browning",
+    }
+
+
+def test_orange_juice_browning_requires_a_beverage_mechanism_not_generic_color() -> None:
+    umbrella = EVIDENCE_POLICY.mechanisms["orange_juice_browning"]
+    question = "Jus d'orange pasteurisé devenu brunâtre pendant le stockage."
+    rules = EVIDENCE_POLICY.evidence_rules_for(umbrella, question)
+    supported = (
+        "During storage of orange juice, ascorbic acid degradation produced "
+        "furfural and was associated with browning and color loss."
+    )
+    dental_noise = (
+        "The dental restorative material showed color loss and darkening "
+        "after accelerated storage."
+    )
+
+    assert any(rule.supports(supported) for rule in rules)
+    assert not any(rule.supports(dental_noise) for rule in rules)
+
+
+def test_question_context_disambiguates_ascorbate_browning_from_flavor_rule() -> None:
+    question = "Un jus d'orange pasteurisé devient brunâtre pendant le stockage."
+    cause = (
+        "Brunissement non enzymatique dû à la dégradation de l'ascorbic acid; "
+        "des carbonyles réactifs entraînent le brunissement."
+    )
+
+    resolved = EVIDENCE_POLICY.resolve_cause_mechanism(cause, question)
+
+    assert resolved is not None
+    assert resolved.mechanism_id == "ascorbic_acid_browning"
+
+
+def test_french_nonenzymatic_browning_word_order_resolves_to_juice_rule() -> None:
+    question = "Un jus d'orange pasteurisé devient brunâtre pendant le stockage."
+    cause = (
+        "Réaction non enzymatique de brunissement; les composés formés "
+        "entraînent le brunissement du jus."
+    )
+
+    resolved = EVIDENCE_POLICY.resolve_cause_mechanism(cause, question)
+
+    assert resolved is not None
+    assert resolved.mechanism_id == "juice_nonenzymatic_browning"
+
+
+def test_official_mechanism_label_is_always_recognized() -> None:
+    question = "Un jus d'orange pasteurisé devient brunâtre pendant le stockage."
+    label = EVIDENCE_POLICY.mechanisms["ascorbic_acid_browning"].label
+
+    resolved = EVIDENCE_POLICY.resolve_cause_mechanism(
+        f"Cause probable | {label}", question
+    )
+
+    assert resolved is not None
+    assert resolved.mechanism_id == "ascorbic_acid_browning"
+
+
 def test_pipeline_returns_gap_before_generation_for_the_real_turbidity_query() -> None:
     noise = result(
         "noise",
@@ -178,7 +361,7 @@ def test_pipeline_returns_gap_before_generation_for_the_real_turbidity_query() -
             raise AssertionError("Generation must not run when the required mechanism is absent")
 
     pipeline = RagPipeline(
-        Settings.load(ROOT / "config" / "beverages-20k-gpu.yaml"),
+        gpu_settings_without_diagnostic_log(),
         store=FakeStore(),
         generator=GeneratorMustNotRun(),
     )
@@ -190,6 +373,10 @@ def test_pipeline_returns_gap_before_generation_for_the_real_turbidity_query() -
     assert "citrate" not in response.answer.casefold()
     assert "pectine" not in response.answer.casefold()
     assert response.sources == []
+    assert len(response.retrieved_candidates) == 1
+    assert response.diagnostics is not None
+    assert response.diagnostics.status == "evidence_gap"
+    assert response.diagnostics.generation_invoked is False
 
 
 def test_known_mechanism_uses_canonical_query_without_llm_decomposition() -> None:
@@ -213,27 +400,29 @@ def test_known_mechanism_uses_canonical_query_without_llm_decomposition() -> Non
 
     store = FakeStore()
     pipeline = RagPipeline(
-        Settings.load(ROOT / "config" / "beverages-20k-gpu.yaml"),
+        gpu_settings_without_diagnostic_log(),
         store=store,
         generator=NoDecompositionGenerator(),
     )
     pipeline.reranker.rerank = lambda question, candidates: candidates
 
-    pipeline._retrieve_evidence(
-        "précipitation trouble soda citron-lime", None, None, None
-    )
+    pipeline.ask("précipitation trouble soda citron-lime")
 
-    assert any("precipitation turbidity" in query for query in store.queries)
+    assert any("citrus beverage emulsion" in query for query in store.queries)
+    assert any("citrus beverage emulsion instability" in query for query in store.queries)
+    assert not any("calcium citrate precipitation" in query for query in store.queries)
+    assert not any("pectin protein flocculation" in query for query in store.queries)
 
 
 def test_pipeline_blocks_unsafe_calcium_carbonate_recommendation() -> None:
     relevant = result(
         "relevant",
-        "A carbonated soft drink developed precipitation and turbidity during storage.",
+        "A citrus beverage emulsion became unstable and produced turbidity and "
+        "sediment in a carbonated soft drink during storage.",
         0.85,
     )
     draft = full_answer(
-        "| 1 | Précipitation physique | Précipitation ou turbidité physique | Moyenne | AUTO | Trouble observé | [S1] |",
+        "| 1 | Instabilité de l’émulsion | Instabilité de l’émulsion ou de l’agent de trouble | Moyenne | AUTO | Trouble observé | [S1] |",
         "| Ajouter du carbonate de calcium pour augmenter le pH | [S1] | Faible | Minéral | Simple | Aucun |",
     )
 
@@ -252,7 +441,7 @@ def test_pipeline_blocks_unsafe_calcium_carbonate_recommendation() -> None:
             return draft
 
     pipeline = RagPipeline(
-        Settings.load(ROOT / "config" / "beverages-20k-gpu.yaml"),
+        gpu_settings_without_diagnostic_log(),
         store=FakeStore(),
         generator=FakeGenerator(),
     )
@@ -267,3 +456,5 @@ def test_pipeline_blocks_unsafe_calcium_carbonate_recommendation() -> None:
     assert "| Ajouter du carbonate de calcium" not in response.answer
     assert "citrate de calcium peu soluble" in response.answer
     assert "Aucune action corrective à la fois sûre" in response.answer
+    assert response.diagnostics is not None
+    assert response.diagnostics.generation_invoked is True

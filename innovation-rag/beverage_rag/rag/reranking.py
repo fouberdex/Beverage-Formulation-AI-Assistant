@@ -32,31 +32,48 @@ class Reranker:
             headers["Authorization"] = f"Bearer {api_key}"
         url = self.settings.base_url.rstrip("/") + "/rerank"
         ranked: list[RetrievedChunk] = []
-        with httpx.Client(timeout=self.settings.timeout_seconds, headers=headers) as client:
-            batch_size = self.settings.request_batch_size
-            for offset in range(0, len(candidates), batch_size):
-                batch = candidates[offset : offset + batch_size]
-                response = client.post(
-                    url,
-                    json={
-                        "model": self.settings.model,
-                        "query": question,
-                        "documents": [item.chunk.text for item in batch],
-                        # All batch scores are needed for the final global ranking.
-                        "top_n": len(batch),
-                    },
-                )
-                response.raise_for_status()
-                for result in response.json()["results"]:
-                    index = int(result["index"])
-                    if index < 0 or index >= len(batch):
-                        continue
-                    ranked.append(
-                        RetrievedChunk(
-                            chunk=batch[index].chunk,
-                            score=float(result["relevance_score"]),
-                        )
+        try:
+            with httpx.Client(timeout=self.settings.timeout_seconds, headers=headers) as client:
+                batch_size = self.settings.request_batch_size
+                for offset in range(0, len(candidates), batch_size):
+                    batch = candidates[offset : offset + batch_size]
+                    response = client.post(
+                        url,
+                        json={
+                            "model": self.settings.model,
+                            "query": question,
+                            "documents": [item.chunk.text for item in batch],
+                            # All batch scores are needed for the final global ranking.
+                            "top_n": len(batch),
+                        },
                     )
+                    response.raise_for_status()
+                    for result in response.json()["results"]:
+                        index = int(result["index"])
+                        if index < 0 or index >= len(batch):
+                            continue
+                        ranked.append(
+                            RetrievedChunk(
+                                chunk=batch[index].chunk,
+                                score=float(result["relevance_score"]),
+                            )
+                        )
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.text.strip()[:800]
+            raise RuntimeError(
+                f"Le reranker GPU a refusé la requête (HTTP "
+                f"{exc.response.status_code}): {detail or 'aucun détail'}. "
+                "Si /health fonctionne, réduisez la taille ou le nombre de passages "
+                "par lot; sinon relancez le tunnel Kaggle."
+            ) from exc
+        except httpx.RequestError as exc:
+            raise RuntimeError(
+                f"Le reranker GPU est inaccessible ({type(exc).__name__}). "
+                "La recherche locale Qdrant peut "
+                "fonctionner, mais le tunnel Kaggle a expiré ou la cellule serveur "
+                "est arrêtée. Relancez les cellules serveur/tunnel Kaggle, téléchargez "
+                "le nouveau fichier de connexion, puis redémarrez Streamlit."
+            ) from exc
         if not ranked:
             raise RuntimeError("The reranker returned no valid result")
         ranked.sort(key=lambda item: item.score, reverse=True)

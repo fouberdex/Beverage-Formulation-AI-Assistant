@@ -1,12 +1,13 @@
 version: 1
 enabled: true
 
-# Scores emitted by the configured single-label CrossEncoder are explicitly
-# normalized to [0, 1] by the GPU gateway. These initial values must be calibrated
-# against the labelled evaluation set before a production demonstration.
+# Scores emitted by the configured single-label CrossEncoder are normalized to
+# [0, 1] by the GPU gateway. The 0.40 operational threshold is based on the
+# 2026-09-13 smoke calibration documented in docs/evidence-threshold-calibration.md.
+# It remains provisional until the full labelled industrial evaluation is complete.
 relevance:
-  gap_max_score: 0.55
-  supporting_source_min_score: 0.60
+  gap_max_score: 0.40
+  supporting_source_min_score: 0.40
   maximum_retrieval_attempts: 2
 
 proof:
@@ -18,8 +19,8 @@ proof:
     minimum_best_reranker_score: 0.75
     minimum_independent_sources: 2
   moderate:
-    minimum_calculated_score: 60
-    minimum_best_reranker_score: 0.60
+    minimum_calculated_score: 44
+    minimum_best_reranker_score: 0.40
     minimum_independent_sources: 1
 
 display:
@@ -47,6 +48,9 @@ mechanisms:
       - ["citrate", "citric acid", "acide citrique"]
     outcomes: ["precipitation", "precipitate", "precipitated", "précipitation", "précipité", "insoluble", "sediment", "dépôt", "turbidity", "turbidité", "trouble"]
     context: ["soda", "soft drink", "carbonated beverage", "boisson gazeuse", "citrus beverage", "lemon", "lime", "citron"]
+    question_entity_groups:
+      - ["calcium", "ca2+", "ca²+", "dureté", "hardness"]
+      - ["citrate", "citric acid", "acide citrique"]
     search_queries:
       - "calcium citrate precipitation acidic carbonated beverage"
       - "calcium citric acid insoluble salt beverage turbidity"
@@ -59,6 +63,9 @@ mechanisms:
       - ["protein", "protéine", "whey", "caséin", "casein"]
     outcomes: ["aggregation", "agrégation", "flocculation", "floc", "precipitation", "précipitation", "haze", "turbidity", "turbidité", "trouble", "feathering"]
     context: ["beverage", "boisson", "drink", "soda", "juice", "jus"]
+    question_entity_groups:
+      - ["pectin", "pectine"]
+      - ["protein", "protéine", "whey", "lactosérum", "casein", "caséine"]
     search_queries:
       - "pectin protein interaction flocculation acidic beverage"
       - "pectin protein haze precipitation beverage"
@@ -70,19 +77,57 @@ mechanisms:
       - ["clouding agent", "cloudifier", "agent de trouble", "emulsion", "émulsion", "citrus oil", "huile d'agrume"]
     outcomes: ["instability", "unstable", "destabilization", "instabilité", "separation", "séparation", "creaming", "ringing", "sediment", "dépôt", "haze", "turbidity", "turbidité", "trouble"]
     context: ["beverage", "boisson", "drink", "soda", "soft drink", "carbonated", "citrus", "lemon", "lime", "citron"]
+    question_entity_groups:
+      - ["citrus", "agrume", "lemon", "lime", "citron"]
+      - ["trouble", "turbidity", "turbidité", "haze", "sediment", "dépôt", "ring", "anneau"]
     search_queries:
       - "citrus beverage emulsion instability sediment"
       - "clouding agent instability carbonated soft drink"
+      - "flavor emulsion reduced turbidity zeta potential beverage stability"
+      - "citrus beverage cloud stability sedimentation hydrocolloid"
+
+  benzoic_acid_crystallization:
+    label: "cristallisation ou précipitation de l’acide benzoïque"
+    aliases: ["benzoic acid crystallization", "benzoic acid precipitation", "cristallisation de l'acide benzoïque", "précipitation de l'acide benzoïque"]
+    entity_groups:
+      - ["sodium benzoate", "benzoate de sodium", "benzoic acid", "acide benzoïque", "benzoate"]
+      - ["crystallization", "crystallisation", "crystal", "cristal", "precipitation", "précipitation", "solubility", "solubilité"]
+    outcomes: ["sediment", "dépôt", "haze", "turbidity", "turbidité", "trouble", "precipitate", "précipité", "crystal", "cristal"]
+    context: ["beverage", "boisson", "drink", "soda", "soft drink", "acidic", "acide"]
+    question_entity_groups:
+      - ["sodium benzoate", "benzoate de sodium", "benzoate", "benzoic acid", "acide benzoïque"]
+      - ["acid", "acide", "low pH", "pH bas", "citric acid", "acide citrique"]
+      - ["trouble", "turbidity", "turbidité", "haze", "sediment", "dépôt", "precipitation", "précipitation"]
+    search_queries:
+      - "benzoic acid crystallization solubility acidic soft drink haze"
+      - "sodium benzoate precipitation low pH beverage sediment"
 
   physical_precipitation_turbidity:
     label: "précipitation ou turbidité physique"
     aliases: ["precipitation", "précipitation", "turbidity", "turbidité", "trouble", "haze", "sediment", "dépôt"]
+    cause_eligible: false
+    satisfied_by:
+      - calcium_citrate_precipitation
+      - pectin_protein_flocculation
+      - clouding_emulsion_instability
+      - benzoic_acid_crystallization
+      - microbial_spoilage
     entity_groups: []
     outcomes: ["precipitation", "precipitate", "precipitated", "précipitation", "précipité", "sediment", "dépôt", "haze", "turbidity", "turbidité", "trouble"]
-    context: ["soda", "soft drink", "carbonated beverage", "boisson gazeuse", "citrus beverage", "juice beverage", "beverage emulsion"]
+    context: ["soda", "soft drink", "carbonated beverage", "boisson gazeuse", "citrus beverage", "juice beverage", "beverage emulsion", "beverage", "boisson", "drink"]
     search_queries:
       - "precipitation turbidity carbonated soft drink citrus beverage"
       - "sediment haze lemon lime soda beverage"
+      - "calcium citrate precipitation acidic citrus beverage turbidity"
+      - "pectin protein flocculation acidic beverage turbidity"
+      - "clouding agent citrus beverage emulsion instability sediment creaming"
+      - "flavor emulsion turbidity sedimentation beverage stability"
+      - "ascorbic acid oxidation citrus beverage flavor storage"
+      - "PET bottle oxygen ingress citrus flavor oxidation beverage"
+      - "acid tolerant yeast spoilage carbonated citrus beverage haze"
+      - "citral flavor deterioration off taste beverage storage"
+      - "sodium benzoate ascorbic acid benzene soft drink storage"
+      - "benzoic acid crystallization solubility acidic soft drink haze"
 
   citrus_flavor_oxidation:
     label: "oxydation des arômes d’agrumes"
@@ -92,8 +137,109 @@ mechanisms:
       - ["oxidation", "oxidative", "oxydation", "oxygen", "oxygène"]
     outcomes: ["degradation", "dégradation", "loss", "perte", "off-flavor", "off flavour", "arôme parasite", "oxidation", "oxydation"]
     context: ["beverage", "boisson", "drink", "soda", "soft drink", "citrus", "lemon", "lime", "citron"]
+    question_entity_groups:
+      - ["citrus", "agrume", "lemon", "lime", "citron"]
+      - ["flavor", "flavour", "arôme", "arome", "goût", "gout", "altéré", "degradation", "dégradation", "perte"]
     search_queries:
       - "citral limonene oxidation lemon lime beverage storage"
+      - "citral flavor deterioration off taste beverage storage"
+
+  ascorbate_flavor_oxidation:
+    label: "oxydation liée à l’acide ascorbique"
+    aliases: ["ascorbic acid oxidation", "oxidation de l'acide ascorbique", "oxydation liée à l'acide ascorbique", "vitamin c degradation"]
+    entity_groups:
+      - ["ascorbic acid", "acide ascorbique", "vitamin c", "vitamine c", "ascorbate"]
+      - ["oxidation", "oxidative", "oxydation", "oxygen", "oxygène", "degradation", "dégradation"]
+    outcomes: ["flavor", "flavour", "arôme", "arome", "off-flavor", "off flavour", "browning", "brunissement", "degradation", "dégradation"]
+    context: ["beverage", "boisson", "drink", "soda", "soft drink", "citrus", "lemon", "lime", "citron"]
+    question_entity_groups:
+      - ["ascorbic acid", "acide ascorbique", "vitamin c", "vitamine c", "ascorbate"]
+      - ["flavor", "flavour", "arôme", "arome", "goût", "gout", "altéré", "degradation", "dégradation", "perte"]
+    search_queries:
+      - "ascorbic acid oxidation citrus beverage flavor storage"
+      - "vitamin C degradation off flavor soft drink oxygen storage"
+      - "packaged beverage ascorbic acid discoloration flavor storage"
+
+  ascorbic_acid_browning:
+    label: "brunissement lié à la dégradation de l’acide ascorbique"
+    aliases: ["ascorbic acid browning", "vitamin C browning", "brunissement de l'acide ascorbique", "dégradation de la vitamine C"]
+    entity_groups:
+      - ["ascorbic acid", "acide ascorbique", "vitamin c", "vitamine c", "ascorbate", "dehydroascorbic acid", "acide déhydroascorbique"]
+      - ["degradation", "dégradation", "oxidation", "oxydation", "furfural", "hydroxymethylfurfural", "5-hmf", "hmf"]
+    outcomes: ["browning", "brown", "brunissement", "brun", "brunâtre", "darkening", "color loss", "colour loss", "perte de couleur", "discoloration"]
+    context: ["orange juice", "jus d'orange", "citrus juice", "jus d'agrume", "fruit juice", "jus de fruit", "juice", "jus"]
+    search_queries:
+      - "pasteurized orange juice browning ascorbic acid degradation storage"
+      - "orange juice vitamin C degradation furfural browning shelf life"
+
+  juice_nonenzymatic_browning:
+    label: "brunissement non enzymatique du jus"
+    aliases: ["nonenzymatic browning", "non-enzymatic browning", "brunissement non enzymatique", "réaction non enzymatique de brunissement", "maillard browning", "réaction de Maillard"]
+    entity_groups:
+      - ["nonenzymatic browning", "non-enzymatic browning", "brunissement non enzymatique", "réaction non enzymatique de brunissement", "maillard reaction", "maillard browning", "réaction de maillard"]
+    outcomes: ["browning", "brown", "brunissement", "brun", "brunâtre", "darkening", "color loss", "colour loss", "perte de couleur", "discoloration"]
+    context: ["orange juice", "jus d'orange", "citrus juice", "fruit juice", "jus de fruit", "juice", "jus", "beverage", "boisson"]
+    search_queries:
+      - "pasteurized orange juice nonenzymatic browning storage"
+      - "orange juice Maillard browning storage temperature color"
+
+  carotenoid_oxidation_color_loss:
+    label: "dégradation oxydative des caroténoïdes"
+    aliases: ["carotenoid oxidation", "carotenoid degradation", "oxydation des caroténoïdes", "dégradation des caroténoïdes", "beta-carotene degradation"]
+    entity_groups:
+      - ["carotenoid", "caroténoïde", "beta-carotene", "β-carotène", "pigment"]
+      - ["degradation", "dégradation", "oxidation", "oxydation", "isomerization", "isomérisation"]
+    outcomes: ["browning", "brown", "brunissement", "brun", "brunâtre", "darkening", "color loss", "colour loss", "perte de couleur", "discoloration", "fading"]
+    context: ["orange juice", "jus d'orange", "citrus juice", "fruit juice", "jus de fruit", "juice", "jus", "beverage", "boisson"]
+    search_queries:
+      - "orange juice carotenoid oxidation color loss storage"
+      - "pasteurized orange juice pigment degradation browning oxygen storage"
+
+  residual_enzyme_juice_browning:
+    label: "brunissement enzymatique résiduel après pasteurisation"
+    aliases: ["enzymatic browning", "brunissement enzymatique", "polyphenol oxidase", "polyphénol oxydase", "peroxidase activity"]
+    entity_groups:
+      - ["polyphenol oxidase", "polyphénol oxydase", "ppo", "peroxidase", "peroxydase", "residual enzyme", "enzyme résiduelle"]
+      - ["activity", "activité", "inactivation", "inactivation thermique", "oxidation", "oxydation"]
+    outcomes: ["browning", "brown", "brunissement", "brun", "brunâtre", "darkening", "color loss", "colour loss", "perte de couleur", "discoloration"]
+    context: ["orange juice", "jus d'orange", "citrus juice", "fruit juice", "jus de fruit", "juice", "jus", "pasteurized", "pasteurisé"]
+    search_queries:
+      - "pasteurized orange juice residual enzyme browning polyphenol oxidase"
+      - "orange juice peroxidase thermal inactivation browning storage"
+
+  orange_juice_browning:
+    label: "brunissement et perte de couleur du jus d’orange"
+    aliases: ["orange juice browning", "brunissement du jus d'orange", "orange juice color loss", "perte de couleur du jus d'orange"]
+    cause_eligible: false
+    satisfied_by:
+      - ascorbic_acid_browning
+      - juice_nonenzymatic_browning
+      - carotenoid_oxidation_color_loss
+      - residual_enzyme_juice_browning
+    entity_groups: []
+    outcomes: ["browning", "brown", "brunissement", "brun", "brunâtre", "darkening", "color loss", "colour loss", "perte de couleur", "discoloration"]
+    context: ["orange juice", "jus d'orange", "citrus juice", "jus d'agrume", "juice", "jus"]
+    question_entity_groups:
+      - ["orange juice", "jus d'orange", "jus orange"]
+      - ["browning", "brown", "brunissement", "brun", "brunâtre", "brunatre", "devient brun", "color loss", "colour loss", "perd sa couleur", "perte de couleur", "décoloration"]
+    search_queries:
+      - "pasteurized orange juice browning color loss storage mechanisms"
+      - "orange juice brown discoloration shelf life low cost prevention"
+
+  pet_oxygen_ingress:
+    label: "perméation d’oxygène à travers l’emballage PET"
+    aliases: ["PET oxygen ingress", "oxygen permeability PET", "perméation d'oxygène PET", "barrière oxygène PET"]
+    entity_groups:
+      - ["PET", "polyethylene terephthalate", "polyéthylène téréphtalate", "plastic bottle", "bouteille plastique"]
+      - ["oxygen", "oxygène", "permeability", "perméabilité", "permeation", "perméation", "ingress"]
+    outcomes: ["oxidation", "oxydation", "flavor loss", "flavour loss", "perte d'arôme", "off-flavor", "degradation", "dégradation"]
+    context: ["beverage", "boisson", "drink", "soda", "soft drink", "citrus", "lemon", "lime", "citron"]
+    question_entity_groups:
+      - ["PET", "polyethylene terephthalate", "polyéthylène téréphtalate", "bouteille plastique"]
+      - ["flavor", "flavour", "arôme", "arome", "goût", "gout", "altéré", "degradation", "dégradation", "perte"]
+    search_queries:
+      - "PET bottle oxygen ingress citrus flavor oxidation beverage"
+      - "oxygen permeability PET soft drink aroma shelf life"
 
   microbial_spoilage:
     label: "altération microbiologique"

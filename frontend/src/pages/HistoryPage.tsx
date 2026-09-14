@@ -4,6 +4,7 @@ import { useAuth } from '../auth/AuthContext';
 import Pagination from '../components/Pagination';
 import StatusMessage from '../components/StatusMessage';
 import { getErrorMessage } from '../services/errors';
+import { History } from 'lucide-react';
 
 export default function HistoryPage() {
   const { profile } = useAuth();
@@ -35,10 +36,9 @@ export default function HistoryPage() {
 
   return (
     <div className="space-y-7">
-      <div className="px-1 py-5">
-        <h1 className="text-3xl font-bold text-gray-900">History</h1>
-        <p className="mt-1 text-sm text-gray-500">Your saved AI generation runs and API change log.</p>
-      </div>
+      <header className="hero-panel">
+        <div><span className="hero-kicker"><History className="h-4 w-4" /> Traceability</span><h1>History</h1><p>Review saved generation runs and immutable API change events across the workspace.</p></div>
+      </header>
       <StatusMessage error={error} />
 
       <section className="overflow-hidden rounded-lg bg-white shadow">

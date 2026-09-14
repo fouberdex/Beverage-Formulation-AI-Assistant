@@ -124,13 +124,10 @@ export default function AIPage() {
   const selectedFormulation = formulations.find(f => f.id === selectedFormulationId);
 
   return (
-    <div>
-      <div className="px-4 py-5 sm:px-6">
-        <h1 className="text-3xl font-bold text-gray-900">AI Recommendation Engine</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Generate locally validated alternatives, then have Gemini review and rank them
-        </p>
-      </div>
+    <div className="space-y-6">
+      <header className="hero-panel">
+        <div><span className="hero-kicker"><Sparkles className="h-4 w-4" /> Gemini-assisted iteration</span><h1>AI Recommendation Engine</h1><p>Generate locally validated alternatives, then have Gemini review and rank them with explicit provider status.</p></div>
+      </header>
       <div className="mx-4 mb-4"><StatusMessage error={error} /></div>
 
       {/* Success Message */}
@@ -178,6 +175,7 @@ export default function AIPage() {
                 Select Source Formulation *
               </label>
               <select
+                aria-label="Select source formulation"
                 value={selectedFormulationId}
                 onChange={(e) => setSelectedFormulationId(e.target.value)}
                 className="w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2"
@@ -228,6 +226,7 @@ export default function AIPage() {
                   Number of Variants (max 10)
                 </label>
                 <input
+                  aria-label="Number of variants"
                   type="number"
                   value={count}
                   onChange={(e) => setCount(parseInt(e.target.value) || 5)}
@@ -242,6 +241,7 @@ export default function AIPage() {
                   Generation Type
                 </label>
                 <select
+                  aria-label="Generation type"
                   value={generationType}
                   onChange={(e) => setGenerationType(e.target.value)}
                   className="w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2"

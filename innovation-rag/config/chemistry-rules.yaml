@@ -3,6 +3,17 @@ enabled: true
 
 protective_terms: ["avoid", "remove", "reduce", "limit", "exclude", "éviter", "retirer", "supprimer", "réduire", "limiter", "ne pas ajouter"]
 
+context_alerts:
+  - id: benzoate_ascorbate_benzene_context
+    context_groups:
+      - ["benzoate", "benzoic acid", "acide benzoïque"]
+      - ["ascorbic acid", "acide ascorbique", "vitamin c", "vitamine c", "ascorbate"]
+    warning: >-
+      Point de vigilance indépendant du trouble : l’association benzoate–ascorbate
+      peut former du benzène dans certaines conditions favorisées par les métaux,
+      la lumière et la chaleur. Ne pas attribuer automatiquement le trouble à cette
+      réaction ; prévoir une vérification analytique et réglementaire dédiée.
+
 rules:
   - id: calcium_citrate_precipitation
     severity: block
@@ -66,3 +77,38 @@ rules:
       Avertissement critique : l’association benzoate–ascorbate peut former du benzène
       dans certaines conditions favorisées par les métaux, la lumière et la chaleur ;
       une évaluation analytique et réglementaire est requise.
+
+  - id: preservative_reduction_without_validation
+    severity: block
+    ignore_when_protective_terms: false
+    action_groups:
+      - ["reduce", "decrease", "lower", "remove", "réduire", "diminuer", "baisser", "retirer", "supprimer"]
+      - ["benzoate", "sorbate", "preservative", "conservateur"]
+    context_any: ["beverage", "boisson", "drink", "soda", "soft drink", "juice", "jus"]
+    warning: >-
+      Action écartée : réduire ou supprimer un conservateur sans étude de challenge
+      microbiologique et validation de la stratégie de barrières peut diminuer la
+      sécurité et la durée de vie. Traiter cette option uniquement comme essai encadré.
+
+  - id: acidity_reduction_with_preservative
+    severity: block
+    ignore_when_protective_terms: false
+    action_groups:
+      - ["reduce", "decrease", "lower", "neutralize", "réduire", "diminuer", "baisser", "neutraliser"]
+      - ["acidity", "acid", "acidité", "acide citrique", "citric acid"]
+    context_any: ["benzoate", "sorbate", "preservative", "conservateur", "soda", "soft drink", "boisson"]
+    warning: >-
+      Action écartée : réduire l’acidité peut modifier le goût et l’efficacité du
+      système conservateur. Une telle modification contredit l’objectif « sans changer
+      le goût » et exige validation microbiologique, sensorielle et réglementaire.
+
+  - id: ph_increase_with_preservative
+    severity: block
+    ignore_when_protective_terms: false
+    action_groups:
+      - ["increase pH", "raise pH", "augmenter le pH", "remonter le pH", "corriger le pH"]
+    context_any: ["benzoate", "sorbate", "preservative", "conservateur", "soda", "soft drink", "boisson"]
+    warning: >-
+      Action écartée : augmenter le pH peut réduire l’efficacité des conservateurs
+      acides et modifier le profil sensoriel. Ne pas l’appliquer sans validation
+      microbiologique, sensorielle et réglementaire.

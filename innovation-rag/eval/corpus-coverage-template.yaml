@@ -1,0 +1,13 @@
+version: 1
+taxonomy_version: 1
+questions:
+  - id: "example-covered"
+    question: "Pourquoi l'arôme citron d'un soda diminue-t-il au stockage ?"
+    mechanism_family: "oxidative_flavor_stability"
+    corpus_covers: true
+    split: "calibration"
+  - id: "example-not-covered"
+    question: "Question volontairement hors couverture documentaire"
+    mechanism_family: "sensory_formulation_stability"
+    corpus_covers: false
+    split: "validation"

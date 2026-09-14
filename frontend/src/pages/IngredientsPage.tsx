@@ -166,24 +166,25 @@ export default function IngredientsPage() {
   }
 
   return (
-    <div>
-      <div className="px-4 py-5 sm:px-6 flex justify-between items-center">
+    <div className="space-y-6">
+      <header className="hero-panel">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Ingredients</h1>
-          <p className="mt-1 text-sm text-gray-500">
+          <span className="hero-kicker"><Filter className="h-4 w-4" /> Ingredient library</span>
+          <h1>Ingredients</h1>
+          <p>
             {total} beverage ingredients · DZD/kg values are planning estimates until replaced with supplier quotes
           </p>
         </div>
         {canManageIngredients && (
           <button
             onClick={openAddModal}
-            className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-sky-700 hover:bg-sky-800"
+            className="primary-button"
           >
             <Plus className="h-4 w-4 mr-2" />
             Add Ingredient
           </button>
         )}
-      </div>
+      </header>
 
       <StatusMessage error={error} message={message} />
 

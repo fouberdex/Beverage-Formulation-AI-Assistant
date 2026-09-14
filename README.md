@@ -23,10 +23,12 @@ The application uses Supabase Postgres for durable storage and Supabase Auth for
 
 ### Product features
 
-- Gemini can review locally generated recommendation candidates; validated local generation remains available if Gemini is unavailable.
+- Gemini can review formulation candidates and provide opt-in, schema-validated interpretations for laboratory, sensory, regulatory/label, and cost workspaces; deterministic calculations remain authoritative and available if Gemini is unavailable.
+- Laboratory results are durable, clickable/editable records with CSV/XLSX import and import-row validation.
 - A dedicated Sensory workspace supports controlled study design, blinded and randomized sample presentation, individual panel responses, sensory profiles, confidence intervals, exploratory ANOVA, correlations, segment analysis, JAR penalty analysis, commercial-intent measures, and response-quality diagnostics.
-- Algerian regulatory checks and multilingual labels are draft screening tools, not legal certification.
-- Cost, ROI, batch-cost, ingredient pricing history, target-generation history, and audit history are implemented.
+- Algerian regulatory checks and the separate multilingual Label Studio are draft screening tools, not legal certification. Its Recipes, Label Builder, Live Label and Reports tabs cover formulation selection, market/pack data, nutrition, ingredient declarations, allergen-name screening, claims, storage, operator, origin, lot, QR workspace previews, print/PDF and launch-readiness review.
+- Cost and ROI scenarios include yield/loss, ingredient waste, primary and secondary packaging, labor, utilities, quality, sanitation, freight, warehousing, fixed overhead, depreciation, financing, marketing, sales commission, distributor/retailer margins, tax, CAPEX, working capital, break-even and payback.
+- The Patent & Publication RAG is available as an isolated primary workspace configured with `VITE_RAG_URL`; RAG downtime cannot take down the main application.
 
 ### Access and history
 
@@ -79,6 +81,7 @@ Important backend settings:
 - `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, and `SUPABASE_SECRET_KEY` configure the backend. The secret key must never be placed in frontend variables.
 - `BOOTSTRAP_ADMIN_EMAIL` is required in production and identifies the Auth account permitted to claim the initial administrator role.
 - `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` configure browser authentication.
+- `VITE_RAG_URL` configures the independently hosted evidence workspace embedded under **RAG Evidence**.
 - Setting `API_KEY` requires clients to send the same value in `x-api-key`. Set `VITE_API_KEY` for the frontend when using this option.
 - `AI_DAILY_REQUEST_LIMIT` and `AI_MONTHLY_REQUEST_LIMIT` default to 25 and 250 external provider calls per account. The daily limit cannot exceed the monthly limit.
 
@@ -88,7 +91,7 @@ environments. `PERSIST_DATA=false` is also rejected in production.
 
 ### Optional AI review
 
-Target-based predictive formulation and the AI Recommendation Engine support the Google Gemini API. The default model is `gemini-2.5-flash-lite`; model availability, free-tier limits, and data-use terms are controlled by Google and can change.
+Target-based predictive formulation and the AI Recommendation Engine support the Google Gemini API. The default model is `gemini-3.1-flash-lite`; `GEMINI_FALLBACK_MODELS` configures a short ordered fallback list for transient 404/429/503 provider failures. Model availability, free-tier limits, and data-use terms are controlled by Google and can change.
 
 1. Create a Gemini API key in [Google AI Studio](https://aistudio.google.com/app/apikey).
 2. Copy `backend/.env.example` to `backend/.env`.
@@ -128,6 +131,7 @@ The API is available under `/api/v1` and covers:
 - `/ai`
 - `/target-generation`
 - `/sensory/studies`
+- `/formulations/:id/laboratory-results`
 - `/regulatory`
 - `/cost`
 
@@ -136,6 +140,8 @@ Invalid requests return HTTP 400 with structured validation details. Missing res
 ## Supabase database
 
 Versioned migrations live in `supabase/migrations`; `backend/database/supabase_schema.sql` is the consolidated schema reference. The migrations include explicit Data API grants, RLS policies, cross-tenant relational constraints, Auth-backed profiles and roles, normalized formulation ingredients, AI results, target runs, compliance, pricing, costs, audit logs, and server-only transaction functions.
+
+The Sensory workspace requires `20260825202029_sensory_studies_and_responses.sql` on the hosted project. A missing table is reported as unavailable instead of silently using temporary browser data. Authenticate the Supabase CLI, link the intended project, inspect `supabase migration list`, then apply reviewed pending migrations with `supabase db push`; never use a remote reset to install this feature.
 
 All ordinary accounts start as `formulator`. Set `BOOTSTRAP_ADMIN_EMAIL` before the intended administrator signs in. The backend asks a service-role-only database function to verify that exact email against `auth.users`; the bootstrap is idempotent for that account and rejects every second identity. Administrators can manage the shared ingredient catalog and other users; `viewer` accounts are read-only.
 
@@ -159,6 +165,10 @@ all tenants into a shared process-wide store. Legacy rows without an owner are
 not exposed or claimed automatically; assign them deliberately during a
 reviewed data migration.
 
+## Spreadsheet imports
+
+Lab Results and Sensory Panel Data accept CSV or XLSX. Download the template from the relevant screen. Lab files use one row per batch result. Sensory files use one row per panelist/sample pair and are grouped transactionally by `panelist_code` during import. Invalid rows are rejected with a row number while valid rows are committed to the owner-scoped database.
+
 ## Cost model
 
 The MVP assumes one liter of beverage has approximately one kilogram of formulation mass. Ingredient contribution is therefore calculated as:
@@ -167,7 +177,7 @@ The MVP assumes one liter of beverage has approximately one kilogram of formulat
 percentage / 100 × price per kg
 ```
 
-Real production costing should incorporate measured density, process loss, packaging, labor, freight, and supplier price history.
+The scenario engine expands that ingredient basis with saleable yield, raw-material waste, packaging, conversion, QC, sanitation, logistics, warehousing, fixed costs, depreciation, commercial deductions and investment assumptions. Outputs remain planning estimates until supplier quotes, measured line losses and finance assumptions are validated.
 
 ## Ingredient catalog methodology
 

@@ -21,3 +21,20 @@ questions:
   - id: microbial_spoilage
     question: "Un soda acide devient trouble et produit du gaz après remplissage."
     expected_mechanism: microbial_spoilage
+
+  - id: citrus_pet_benzoate_ascorbate_storage
+    question: >-
+      Soda citron-lime avec acide citrique, benzoate de sodium et acide ascorbique,
+      conditionné en PET : léger trouble et arôme altéré après stockage, sans odeur
+      de fermentation. Causes possibles et corrections sans changer le goût ?
+    expected_mechanisms:
+      - clouding_emulsion_instability
+      - citrus_flavor_oxidation
+      - ascorbate_flavor_oxidation
+      - pet_oxygen_ingress
+    forbidden_unguarded_actions:
+      - "réduire le benzoate"
+      - "réduire l'acidité"
+      - "augmenter le pH"
+    required_context_alert: benzoate_ascorbate_benzene_context
+    regression: true

@@ -19,6 +19,34 @@ scope:
       - "beverage flavor"
       - "beverage aroma"
       - "soft drink flavor"
+    physical_stability:
+      - "beverage emulsion instability"
+      - "citrus beverage haze"
+      - "beverage sedimentation"
+      - "clouding agent stability"
+    oxidation_shelf_life:
+      - "citral oxidation beverage"
+      - "limonene degradation beverage"
+      - "ascorbic acid beverage oxidation"
+      - "dissolved oxygen flavor beverage"
+      - "pasteurized orange juice nonenzymatic browning"
+      - "orange juice vitamin C degradation browning storage"
+      - "orange juice carotenoid oxidation color loss"
+      - "orange juice residual enzyme browning pasteurization"
+    packaging_stability:
+      - "PET oxygen permeability beverage"
+      - "beverage packaging aroma shelf life"
+    preservative_interactions:
+      - "sodium benzoate ascorbic acid beverage"
+      - "benzoate benzene soft drink"
+      - "benzoic acid solubility acidic beverage"
+    colloidal_interactions:
+      - "pectin protein flocculation beverage"
+      - "calcium citrate precipitation beverage"
+      - "hydrocolloid beverage turbidity"
+    microbial_spoilage:
+      - "acid tolerant yeast soft drink"
+      - "carbonated beverage microbial haze"
   languages: ["en", "fr"]
   date_from: "2010-01-01"
   date_to: "2026-12-31"
@@ -84,3 +112,5 @@ generation:
   timeout_seconds: 600
   max_output_tokens: 900
   quality_gate_enabled: false
+
+diagnostics_file: "config/diagnostics.yaml"

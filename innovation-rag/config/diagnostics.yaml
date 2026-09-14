@@ -1,0 +1,15 @@
+version: 1
+enabled: true
+log_path: "data/diagnostics/rag-evidence.jsonl"
+include_question_text_in_production: false
+include_query_text_in_production: false
+near_threshold_margin: 0.05
+
+rotation:
+  max_bytes: 26214400
+  backup_count: 5
+  retention_days: 30
+
+automatic_query_rewrite:
+  enabled: false
+  maximum_extra_attempts: 1

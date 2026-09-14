@@ -1,0 +1,47 @@
+version: 1
+status: "frozen-for-initial-calibration"
+change_policy: >-
+  Toute modification exige une nouvelle version et une revue des annotations.
+
+families:
+  physical_colloidal_stability:
+    label: "Stabilité physique et colloïdale"
+    includes: ["trouble", "sédimentation", "crémage", "anneau", "floculation", "précipitation"]
+    excludes: ["altération d'arôme sans défaut physique", "croissance microbienne confirmée"]
+    canonical_mechanism_ids: [physical_precipitation_turbidity, clouding_emulsion_instability, calcium_citrate_precipitation, pectin_protein_flocculation]
+
+  oxidative_flavor_stability:
+    label: "Oxydation et stabilité aromatique"
+    includes: ["perte d'arôme", "off-flavor oxydatif", "dégradation du citral ou limonène"]
+    excludes: ["défaut exclusivement microbiologique"]
+    canonical_mechanism_ids: [citrus_flavor_oxidation, ascorbate_flavor_oxidation, carotenoid_oxidation_color_loss]
+
+  preservative_chemical_interactions:
+    label: "Interactions chimiques des conservateurs"
+    includes: ["solubilité", "cristallisation", "produits de réaction", "efficacité dépendante du pH"]
+    excludes: ["simple présence d'un conservateur sans mécanisme documenté"]
+    canonical_mechanism_ids: [benzoic_acid_crystallization]
+
+  packaging_mass_transfer:
+    label: "Emballage et transferts de matière"
+    includes: ["perméation d'oxygène", "perte d'arôme", "migration", "barrière PET"]
+    excludes: ["défaut antérieur au conditionnement"]
+    canonical_mechanism_ids: [pet_oxygen_ingress]
+
+  microbiological_spoilage:
+    label: "Altération microbiologique"
+    includes: ["levures", "moisissures", "bactéries", "gaz", "fermentation", "trouble microbien"]
+    excludes: ["trouble stérile démontré"]
+    canonical_mechanism_ids: [microbial_spoilage]
+
+  thermal_nonenzymatic_reactions:
+    label: "Réactions thermiques et brunissement non enzymatique"
+    includes: ["Maillard", "caramélisation", "brunissement", "dégradation thermique"]
+    excludes: ["oxydation aromatique sans effet thermique"]
+    canonical_mechanism_ids: [orange_juice_browning, ascorbic_acid_browning, juice_nonenzymatic_browning, residual_enzyme_juice_browning]
+
+  sensory_formulation_stability:
+    label: "Stabilité sensorielle et équilibre de formulation"
+    includes: ["évolution goût", "masquage", "déséquilibre acide-sucre", "arrière-goût"]
+    excludes: ["recommandation sensorielle sans mesure ni source"]
+    canonical_mechanism_ids: []
