@@ -42,6 +42,10 @@ export interface Formulation {
   parent_formulation_id?: string;
   is_latest_version: boolean;
   status: string;
+  project_id?: string | null;
+  locked_at?: string | null;
+  locked_by?: string | null;
+  approval_note?: string;
   total_percentage: number;
   total_cost_per_liter: number;
   total_calories_per_100ml: number;
@@ -172,12 +176,23 @@ export interface RDProject {
   target_market: string;
   beverage_category: string;
   target_claims: string[];
+  brief_status: 'draft' | 'validated';
+  ingredient_constraints: { required: string[]; forbidden: string[]; notes: string };
+  cost_objectives: { max_cost_per_liter?: number; currency: string };
+  nutrition_objectives: { max_sugar_g_per_100ml?: number; max_calories_per_100ml?: number; target_ph_min?: number; target_ph_max?: number };
+  regulatory_constraints: { markets: string[]; certifications: string[]; forbidden_additives: string[] };
+  success_criteria: string[];
   priority: 'low' | 'normal' | 'high' | 'critical';
   due_date?: string | null;
   stage: ProjectStage;
   status: ProjectStatus;
   event_count?: number;
   events?: RDProjectEvent[];
+  traceability?: {
+    formulations: Array<{ id: string; code: string; name: string; version: number; status: string; locked_at?: string | null }>;
+    laboratory_results: Array<{ id: string; formulation_version_id: string; batch_code?: string; tested_at: string }>;
+    sensory_studies: Array<{ id: string; name: string; status: string; formulation_version_ids: string[] }>;
+  };
   created_at: string;
   updated_at: string;
 }
@@ -185,6 +200,8 @@ export interface RDProject {
 export interface LaboratoryResult {
   id: string;
   formulation_id: string;
+  formulation_version_id?: string;
+  project_id?: string | null;
   batch_code?: string;
   tested_at: string;
   measurements: { ph?: number; brix?: number; titratable_acidity?: number; viscosity?: number; density?: number; turbidity?: number; stability_score?: number };
@@ -270,6 +287,7 @@ export interface SensoryStudySample {
 
 export interface SensoryStudy {
   id: string;
+  project_id?: string | null;
   name: string;
   objective: string;
   test_type: 'hedonic' | 'descriptive' | 'preference' | 'jar' | 'combined';

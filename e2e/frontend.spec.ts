@@ -117,7 +117,12 @@ test('new production workspaces are reachable and expose their primary controls'
   await useRole(page, 'admin'); await mockApi(page);
   await page.goto('/projects');
   await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'New project' }).first()).toBeVisible();
+  await page.getByRole('button', { name: 'New project' }).first().click();
+  await expect(page.getByRole('heading', { name: 'New R&D project' })).toBeVisible();
+  await expect(page.getByText('Ingredient constraints')).toBeVisible();
+  await expect(page.getByText('Measurable objectives')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Validate brief' })).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel' }).click();
   await page.goto('/laboratory-results');
   await expect(page.getByRole('heading', { name: 'Laboratory Results' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Import CSV / Excel' })).toBeVisible();

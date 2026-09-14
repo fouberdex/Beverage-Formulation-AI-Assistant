@@ -99,6 +99,22 @@ test('R&D projects persist a controlled lifecycle and reject skipped gates', asy
   assert.equal(skipped.statusCode, 409);
   assert.deepEqual(skipped.json().allowed_transitions, ['concept']);
 
+  const blockedByDraftBrief = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/transition`, payload: { stage: 'concept' } });
+  assert.equal(blockedByDraftBrief.statusCode, 409);
+  assert.equal(blockedByDraftBrief.json().code, 'PROJECT_BRIEF_VALIDATION_REQUIRED');
+
+  const brief = await server.inject({ method: 'PUT', url: `/api/v1/projects/${id}/brief`, payload: { validate: true, brief: {
+    business_objective: 'Launch a locally relevant citrus beverage at a controlled cost.',
+    target_market: 'Algeria', beverage_category: 'carbonated soft drink', target_claims: ['low sugar'],
+    ingredient_constraints: { required: ['water'], forbidden: ['aspartame'], notes: '' },
+    cost_objectives: { max_cost_per_liter: 60, currency: 'DZD' },
+    nutrition_objectives: { max_sugar_g_per_100ml: 10, target_ph_min: 2.8, target_ph_max: 3.5 },
+    regulatory_constraints: { markets: ['Algeria'], certifications: ['Halal'], forbidden_additives: [] },
+    success_criteria: ['Overall liking reaches at least 7/10'],
+  } } });
+  assert.equal(brief.statusCode, 200);
+  assert.equal(brief.json().data.brief_status, 'validated');
+
   const advanced = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/transition`, payload: { stage: 'concept', note: 'Brief approved' } });
   assert.equal(advanced.statusCode, 200);
   assert.equal(advanced.json().data.status, 'active');
@@ -107,6 +123,45 @@ test('R&D projects persist a controlled lifecycle and reject skipped gates', asy
   assert.equal(detail.statusCode, 200);
   assert.equal(detail.json().data.events.filter(event => event.event_type === 'stage_transition').length, 1);
   assert.deepEqual(detail.json().allowed_transitions, ['formulation']);
+
+  const formulationResponse = await server.inject({ method: 'POST', url: '/api/v1/formulations', payload: {
+    name: 'Project citrus v1', project_id: id,
+    ingredients: [{ ingredient_id: INGREDIENT_IDS.WATER, percentage: 90 }, { ingredient_id: INGREDIENT_IDS.CANE_SUGAR, percentage: 10 }],
+  } });
+  assert.equal(formulationResponse.statusCode, 201);
+  const formulation = formulationResponse.json().data;
+  const approved = await server.inject({ method: 'POST', url: `/api/v1/formulations/${formulation.id}/approve`, payload: { note: 'Technical review completed' } });
+  assert.equal(approved.statusCode, 200);
+  assert.ok(approved.json().data.locked_at);
+  const forbiddenEdit = await server.inject({ method: 'PUT', url: `/api/v1/formulations/${formulation.id}`, payload: { name: 'Silent mutation' } });
+  assert.equal(forbiddenEdit.statusCode, 409);
+  const versionResponse = await server.inject({ method: 'POST', url: `/api/v1/formulations/${formulation.id}/versions`, payload: { name: 'Project citrus v2' } });
+  assert.equal(versionResponse.statusCode, 201);
+  const version = versionResponse.json().data;
+  assert.equal(version.project_id, id);
+  assert.equal(version.locked_at, undefined);
+
+  const lab = await server.inject({ method: 'POST', url: `/api/v1/formulations/${version.id}/laboratory-results`, payload: {
+    batch_code: 'TRACE-LAB-1', tested_at: '2026-09-14', measurements: { ph: 3.2 }, sensory: { overall_acceptance: 8 },
+  } });
+  assert.equal(lab.statusCode, 201);
+  assert.equal(lab.json().data.formulation_version_id, version.id);
+  assert.equal(lab.json().data.project_id, id);
+
+  const study = await server.inject({ method: 'POST', url: '/api/v1/sensory/studies', payload: {
+    name: 'Traceable project study', objective: 'Validate preference for the exact linked formulation version.',
+    test_type: 'hedonic', panel_type: 'internal', planned_panelists: 5, status: 'draft',
+    attributes: [{ key: 'aroma', label: 'Aroma', category: 'aroma' }, { key: 'overall', label: 'Overall', category: 'overall' }],
+    samples: [{ formulation_id: version.id, sample_code: 'TRACE', blind_code: '517', label: 'Project citrus v2' }],
+    protocol: { randomize_order: true },
+  } });
+  assert.equal(study.statusCode, 201);
+  assert.equal(study.json().data.project_id, id);
+
+  const traced = await server.inject({ method: 'GET', url: `/api/v1/projects/${id}` });
+  assert.equal(traced.json().data.traceability.formulations.length, 2);
+  assert.equal(traced.json().data.traceability.laboratory_results[0].formulation_version_id, version.id);
+  assert.deepEqual(traced.json().data.traceability.sensory_studies[0].formulation_version_ids, [version.id]);
 });
 
 test('missing resources return HTTP 404', async () => {

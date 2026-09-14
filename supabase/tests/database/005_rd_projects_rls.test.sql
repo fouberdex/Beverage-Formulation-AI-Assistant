@@ -1,5 +1,5 @@
 begin;
-select plan(7);
+select plan(10);
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -24,12 +24,23 @@ insert into public.rd_projects (id, owner_id, code, name, payload) values
 insert into public.rd_project_events (id, owner_id, project_id, event_type, payload) values
   ('event-a', '77777777-7777-4777-8777-777777777777', 'project-a', 'created', '{"id":"event-a"}'),
   ('event-b', '88888888-8888-4888-8888-888888888888', 'project-b', 'created', '{"id":"event-b"}');
+insert into public.formulations (id, owner_id, code, name, status, payload) values
+  ('trace-form-a', '77777777-7777-4777-8777-777777777777', 'TRACE-A', 'Trace A', 'approved', '{"id":"trace-form-a","project_id":"project-a","version":1}'),
+  ('trace-form-b', '88888888-8888-4888-8888-888888888888', 'TRACE-B', 'Trace B', 'approved', '{"id":"trace-form-b","project_id":"project-b","version":1}');
+insert into public.laboratory_results (id, owner_id, formulation_id, payload) values
+  ('trace-lab-a', '77777777-7777-4777-8777-777777777777', 'trace-form-a', '{"id":"trace-lab-a","project_id":"project-a","formulation_version_id":"trace-form-a"}');
+insert into public.sensory_studies (id, owner_id, status, payload) values
+  ('trace-study-a', '77777777-7777-4777-8777-777777777777', 'draft', '{"id":"trace-study-a","project_id":"project-a"}');
+insert into public.sensory_study_formulation_versions (owner_id, study_id, project_id, formulation_version_id, sample_id) values
+  ('77777777-7777-4777-8777-777777777777', 'trace-study-a', 'project-a', 'trace-form-a', 'sample-a');
 reset role;
 
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"77777777-7777-4777-8777-777777777777","role":"authenticated"}', true);
 select results_eq($$ select id from public.rd_projects $$, array['project-a']::text[], 'tenant A sees only its R&D project');
 select results_eq($$ select id from public.rd_project_events $$, array['event-a']::text[], 'tenant A sees only its project event');
+select results_eq($$ select formulation_version_id from public.laboratory_results $$, array['trace-form-a']::text[], 'tenant A lab result exposes its exact formulation version');
+select results_eq($$ select formulation_version_id from public.sensory_study_formulation_versions $$, array['trace-form-a']::text[], 'tenant A sensory link exposes its exact formulation version');
 select throws_ok($$ insert into public.rd_projects (id, owner_id, code, name) values
   ('client-project', '77777777-7777-4777-8777-777777777777', 'RD-CLIENT', 'Client project') $$,
   'permission denied for table rd_projects', 'authenticated clients cannot bypass the project API');
@@ -43,6 +54,9 @@ select throws_ok($$ insert into public.rd_project_events (id, owner_id, project_
 select throws_ok($$ insert into public.rd_projects (id, owner_id, code, name) values
   ('duplicate-code', '77777777-7777-4777-8777-777777777777', 'RD-A', 'Duplicate') $$,
   '23505', null, 'project code is unique within an owner workspace');
+select throws_ok($$ insert into public.sensory_study_formulation_versions (owner_id, study_id, project_id, formulation_version_id, sample_id) values
+  ('77777777-7777-4777-8777-777777777777', 'trace-study-a', 'project-a', 'trace-form-b', 'cross-version') $$,
+  '23503', null, 'sensory study cannot link a formulation version from another project or owner');
 reset role;
 
 set local role authenticated;

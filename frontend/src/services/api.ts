@@ -49,6 +49,7 @@ export const projectsAPI = {
   getById: (id: string) => api.get(`/projects/${id}`),
   create: (data: any) => api.post('/projects', data),
   update: (id: string, data: any) => api.put(`/projects/${id}`, data),
+  updateBrief: (id: string, brief: any, validate = false) => api.put(`/projects/${id}/brief`, { brief, validate }),
   transition: (id: string, stage: string, note = '') => api.post(`/projects/${id}/transition`, { stage, note }),
 };
 
@@ -62,6 +63,7 @@ export const formulationsAPI = {
   delete: (id: string) => api.delete(`/formulations/${id}`),
   createVersion: (id: string, data: any) => api.post(`/formulations/${id}/versions`, data),
   getVersions: (id: string) => api.get(`/formulations/${id}/versions`),
+  approve: (id: string, note: string) => api.post(`/formulations/${id}/approve`, { note }),
   getNutrition: (id: string) => api.get(`/formulations/${id}/nutrition`),
   getCost: (id: string, batchSize = 1) => 
     api.get(`/formulations/${id}/cost`, { params: { batch_size: batchSize } }),

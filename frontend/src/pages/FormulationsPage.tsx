@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { formulationsAPI, ingredientsAPI } from '../services/api';
-import { Formulation, Ingredient } from '../types';
-import { Plus, Search, X, Trash2, Archive, GitBranch } from 'lucide-react';
+import { formulationsAPI, ingredientsAPI, projectsAPI } from '../services/api';
+import { Formulation, Ingredient, RDProject } from '../types';
+import { Plus, Search, X, Trash2, Archive, GitBranch, LockKeyhole } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
 import { canManageFormulations } from '../auth/permissions';
 import Pagination from '../components/Pagination';
@@ -19,6 +19,7 @@ export default function FormulationsPage() {
   const pageSize = 12;
   const [formulations, setFormulations] = useState<Formulation[]>([]);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
+  const [projects, setProjects] = useState<RDProject[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);
@@ -36,9 +37,10 @@ export default function FormulationsPage() {
   const [formName, setFormName] = useState('');
   const [formDescription, setFormDescription] = useState('');
   const [formBeverageType, setFormBeverageType] = useState('soft_drink');
+  const [formProjectId, setFormProjectId] = useState('');
   const [formIngredients, setFormIngredients] = useState<FormulationIngredientInput[]>([]);
 
-  useEffect(() => { void loadIngredients(); }, []);
+  useEffect(() => { void loadIngredients(); void loadProjects(); }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadFormulations(), 250);
@@ -86,6 +88,11 @@ export default function FormulationsPage() {
     }
   }
 
+  async function loadProjects() {
+    try { const response = await projectsAPI.getAll({ status: 'all', limit: 200 }); setProjects(response.data.data); }
+    catch (error) { setError(getErrorMessage(error, 'Unable to load R&D project choices.')); }
+  }
+
   function openCreateModal() {
     if (!canEdit) return;
     triggerRef.current = document.activeElement as HTMLElement;
@@ -93,6 +100,7 @@ export default function FormulationsPage() {
     setFormName('');
     setFormDescription('');
     setFormBeverageType('soft_drink');
+    setFormProjectId('');
     setFormIngredients([{ ingredient_id: '', percentage: 0 }]);
     setShowModal(true);
   }
@@ -103,6 +111,7 @@ export default function FormulationsPage() {
     setFormName(formulation.name);
     setFormDescription(formulation.description || '');
     setFormBeverageType(formulation.beverage_type);
+    setFormProjectId(formulation.project_id || '');
     setFormIngredients(
       formulation.ingredients?.map(i => ({
         ingredient_id: i.ingredient_id,
@@ -169,6 +178,7 @@ export default function FormulationsPage() {
           name: formName,
           description: formDescription,
           beverage_type: formBeverageType,
+          project_id: formProjectId || undefined,
           ingredients: validIngredients,
         });
       }
@@ -209,6 +219,17 @@ export default function FormulationsPage() {
     } catch (error) {
       setError(getErrorMessage(error, 'Unable to create a formulation version.'));
     }
+  }
+
+  async function approveSelected() {
+    if (!selectedFormulation || selectedFormulation.locked_at) return;
+    const note = window.prompt('Approval decision note (required):', 'Approved for the next R&D gate after technical review.');
+    if (!note) return;
+    try {
+      const response = await formulationsAPI.approve(selectedFormulation.id, note);
+      setSelectedFormulation(response.data.data); setMessage('Formulation version approved and locked.');
+      await loadFormulations();
+    } catch (error) { setError(getErrorMessage(error, 'Unable to approve this formulation version.')); }
   }
 
   const totalPercentage = formIngredients.reduce((sum, i) => sum + (i.percentage || 0), 0);
@@ -307,7 +328,7 @@ export default function FormulationsPage() {
                       <input
                         type="text"
                         id="formulation-name"
-                        disabled={!canEdit}
+                        disabled={!canEdit || Boolean(selectedFormulation?.locked_at)}
                         value={formName}
                         onChange={(e) => setFormName(e.target.value)}
                         required
@@ -321,7 +342,7 @@ export default function FormulationsPage() {
                       </label>
                       <select
                         id="formulation-type"
-                        disabled={!canEdit}
+                        disabled={!canEdit || Boolean(selectedFormulation?.locked_at)}
                         value={formBeverageType}
                         onChange={(e) => setFormBeverageType(e.target.value)}
                         className="input"
@@ -333,6 +354,15 @@ export default function FormulationsPage() {
                         <option value="tea">Tea</option>
                       </select>
                     </div>
+                  </div>
+
+                  <div>
+                    <label htmlFor="formulation-project" className="block text-sm font-medium text-gray-700 mb-1">R&D project</label>
+                    <select id="formulation-project" value={formProjectId} onChange={event => setFormProjectId(event.target.value)} disabled={Boolean(selectedFormulation) || !canEdit} className="input">
+                      <option value="">Standalone formulation</option>
+                      {projects.filter(project => project.brief_status === 'validated' && project.status !== 'archived').map(project => <option key={project.id} value={project.id}>{project.code} · {project.name}</option>)}
+                    </select>
+                    {selectedFormulation?.locked_at && <p className="mt-2 flex items-center gap-2 text-sm font-semibold text-emerald-700"><LockKeyhole className="h-4 w-4"/>Approved version locked on {new Date(selectedFormulation.locked_at).toLocaleDateString()}</p>}
                   </div>
 
                   {selectedFormulation && versions.length > 1 && (
@@ -347,7 +377,7 @@ export default function FormulationsPage() {
                     </label>
                     <textarea
                       id="formulation-description"
-                      disabled={!canEdit}
+                      disabled={!canEdit || Boolean(selectedFormulation?.locked_at)}
                       value={formDescription}
                       onChange={(e) => setFormDescription(e.target.value)}
                       rows={2}
@@ -368,7 +398,7 @@ export default function FormulationsPage() {
                         }`}>
                           Total: {totalPercentage.toFixed(2)}%
                         </span>
-                        {canEdit && <button
+                        {canEdit && !selectedFormulation?.locked_at && <button
                           type="button"
                           onClick={addIngredientRow}
                           className="inline-flex items-center px-3 py-1 bg-sky-100 text-sky-700 rounded-md hover:bg-sky-200 text-sm"
@@ -393,7 +423,7 @@ export default function FormulationsPage() {
                           <div className="col-span-7">
                             <select
                               aria-label={`Ingredient ${index + 1}`}
-                              disabled={!canEdit}
+                              disabled={!canEdit || Boolean(selectedFormulation?.locked_at)}
                               value={fi.ingredient_id}
                               onChange={(e) => updateIngredient(index, 'ingredient_id', e.target.value)}
                               className="input"
@@ -409,7 +439,7 @@ export default function FormulationsPage() {
                           <div className="col-span-3">
                             <input
                               aria-label={`Percentage for ingredient ${index + 1}`}
-                              disabled={!canEdit}
+                              disabled={!canEdit || Boolean(selectedFormulation?.locked_at)}
                               type="number"
                               value={fi.percentage || ''}
                               onChange={(e) => updateIngredient(index, 'percentage', e.target.value)}
@@ -421,7 +451,7 @@ export default function FormulationsPage() {
                             />
                           </div>
                           <div className="col-span-2 flex justify-center">
-                            {canEdit && <button
+                            {canEdit && !selectedFormulation?.locked_at && <button
                               type="button"
                               onClick={() => removeIngredientRow(index)}
                               className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded"
@@ -454,6 +484,10 @@ export default function FormulationsPage() {
                         className="inline-flex items-center px-4 py-2 border border-sky-300 rounded-md text-sky-700 hover:bg-sky-50">
                         <GitBranch className="h-4 w-4 mr-2" /> Save as New Version
                       </button>
+                      {!selectedFormulation.locked_at && <button type="button" onClick={approveSelected} disabled={!selectedFormulation.project_id}
+                        className="secondary-button" title={!selectedFormulation.project_id ? 'Link this version to an R&D project first' : undefined}>
+                        <LockKeyhole className="h-4 w-4"/> Approve & lock
+                      </button>}
                     </>
                   )}
                   <button
@@ -463,7 +497,7 @@ export default function FormulationsPage() {
                   >
                     Close
                   </button>
-                  {canEdit && <button
+                  {canEdit && !selectedFormulation?.locked_at && <button
                     type="submit"
                     className="primary-button"
                   >

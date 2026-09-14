@@ -39,6 +39,10 @@ try {
   const signedIn = await client.auth.signInWithPassword({ email, password });
   if (signedIn.error) throw signedIn.error;
   token = signedIn.data.session.access_token;
+  const verifiedSession = await admin.auth.getUser(token);
+  if (verifiedSession.error || verifiedSession.data.user?.id !== userId) {
+    throw new Error(`Supabase session preflight failed: ${verifiedSession.error?.message || 'user mismatch'}`);
+  }
 
   await api('/auth/me');
   ok('Authentication and profile bootstrap');
@@ -52,7 +56,15 @@ try {
     beverage_category: 'carbonated soft drink', target_market: 'Algeria', priority: 'high',
     business_objective: 'Verify durable project lifecycle persistence before demonstration.',
   } })).data;
-  await api(`/projects/${project.id}`, { method: 'PUT', body: { target_claims: ['low sugar'] } });
+  await api(`/projects/${project.id}/brief`, { method: 'PUT', body: { validate: true, brief: {
+    business_objective: 'Verify durable project lifecycle persistence before demonstration.',
+    target_market: 'Algeria', beverage_category: 'carbonated soft drink', target_claims: ['low sugar'],
+    ingredient_constraints: { required: ['water'], forbidden: [], notes: '' },
+    cost_objectives: { max_cost_per_liter: 60, currency: 'DZD' },
+    nutrition_objectives: { max_sugar_g_per_100ml: 10, target_ph_min: 2.8, target_ph_max: 3.5 },
+    regulatory_constraints: { markets: ['Algeria'], certifications: ['Halal'], forbidden_additives: [] },
+    success_criteria: ['Project data remains traceable after a complete API round trip'],
+  } } });
   await api(`/projects/${project.id}/transition`, { method: 'POST', body: { stage: 'concept', note: 'Automated brief approval' } });
   const projectDetail = (await api(`/projects/${project.id}`)).data;
   if (projectDetail.stage !== 'concept' || !projectDetail.events.some(event => event.event_type === 'stage_transition')) {
@@ -62,10 +74,12 @@ try {
 
   const formulation = (await api('/formulations', { method: 'POST', body: {
     code: `SMOKE-${suffix}`.slice(0, 48), name: 'Demo persistence smoke test', beverage_type: 'soft_drink',
+    project_id: project.id,
     ingredients: [{ ingredient_id: water.id, percentage: 90 }, { ingredient_id: sugar.id, percentage: 10 }],
   } })).data;
   await api(`/formulations/${formulation.id}`);
   await api(`/formulations/${formulation.id}`, { method: 'PUT', body: { beverage_type: 'carbonated' } });
+  await api(`/formulations/${formulation.id}/approve`, { method: 'POST', body: { note: 'Automated technical approval before demonstration' } });
   ok('Formulation create, read and update persistence');
 
   const lab = (await api(`/formulations/${formulation.id}/laboratory-results`, { method: 'POST', body: {
@@ -92,6 +106,12 @@ try {
   const sensory = (await api(`/sensory/studies/${study.id}/analytics`)).data;
   if (sensory.coverage.response_count !== 1) throw new Error('Sensory response was not persisted');
   ok('Sensory study, panel response and analytics persistence');
+
+  const traceability = (await api(`/projects/${project.id}`)).data.traceability;
+  if (traceability.formulations.length !== 1 || traceability.laboratory_results.length < 2 || traceability.sensory_studies.length !== 1) {
+    throw new Error('Cross-workspace project traceability is incomplete');
+  }
+  ok('Project → formulation version → laboratory → sensory traceability');
 
   await api(`/compatibility/formulations/${formulation.id}`);
   ok('Compatibility engine connection');

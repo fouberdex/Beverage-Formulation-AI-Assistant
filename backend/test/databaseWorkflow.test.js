@@ -25,6 +25,7 @@ test('Supabase migrations form an ordered, complete database workflow', async ()
     '20260823142231_laboratory_feedback_commit.sql',
     '20260825202029_sensory_studies_and_responses.sql',
     '20260914180000_rd_projects_foundation.sql',
+    '20260914230000_rd_traceability_spine.sql',
   ]);
 
   const bootstrap = await readFile(
@@ -84,6 +85,17 @@ test('R&D project migration provides tenant isolation, lifecycle fields and an a
   assert.match(migration, /revoke all on function public\.commit_rd_project_data\(jsonb\) from public, anon, authenticated/);
 });
 
+test('R&D traceability migration links exact formulation versions to lab and sensory records', async () => {
+  const migration = await readFile(new URL('migrations/20260914230000_rd_traceability_spine.sql', supabaseDirectory), 'utf8');
+  assert.match(migration, /add column project_id text generated always as/);
+  assert.match(migration, /add column formulation_version_id text generated always as/);
+  assert.match(migration, /laboratory_exact_formulation_version_fk/);
+  assert.match(migration, /create table public\.sensory_study_formulation_versions/);
+  assert.match(migration, /foreign key \(owner_id, project_id, formulation_version_id\)/);
+  assert.match(migration, /deferrable initially deferred/g);
+  assert.match(migration, /commit_rd_traceability/);
+});
+
 test('Supabase seed data contains shared catalog rows only', async () => {
   const seed = await readFile(new URL('seed.sql', supabaseDirectory), 'utf8');
   const insertedTables = [...seed.matchAll(/insert\s+into\s+([\w.]+)/gi)].map(match => match[1].toLowerCase());
@@ -131,4 +143,6 @@ test('R&D project RLS integration suite covers ownership, server-only writes and
   assert.match(suite, /authenticated cannot execute project commit RPC/);
   assert.match(suite, /composite foreign key rejects a project event attached across owners/);
   assert.match(suite, /project code is unique within an owner workspace/);
+  assert.match(suite, /lab result exposes its exact formulation version/);
+  assert.match(suite, /sensory study cannot link a formulation version from another project or owner/);
 });

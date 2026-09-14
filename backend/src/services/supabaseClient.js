@@ -21,7 +21,14 @@ export function getSupabaseAdmin() {
 
 export async function verifySupabaseAccessToken(accessToken) {
   const { data, error } = await getSupabaseAdmin().auth.getUser(accessToken);
-  if (error || !data.user) return null;
+  if (error || !data.user) {
+    console.warn('Supabase access-token verification failed', {
+      status: error?.status || null,
+      code: error?.code || null,
+      message: error?.message || 'No user returned',
+    });
+    return null;
+  }
   return data.user;
 }
 

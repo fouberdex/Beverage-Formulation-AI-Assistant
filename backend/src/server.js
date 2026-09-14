@@ -371,6 +371,42 @@ const projectTransitions = {
   industrialization: ['formulation', 'launched'],
   launched: [],
 };
+const projectBriefFields = {
+  business_objective: z.string().trim().min(10).max(2000),
+  target_market: z.string().trim().min(2).max(160),
+  beverage_category: z.string().trim().min(2).max(120),
+  target_claims: z.array(z.string().trim().min(1).max(120)).max(20).default([]),
+  ingredient_constraints: z.object({
+    required: z.array(z.string().trim().min(1).max(120)).max(30).default([]),
+    forbidden: z.array(z.string().trim().min(1).max(120)).max(30).default([]),
+    notes: z.string().trim().max(1500).default(''),
+  }).default({ required: [], forbidden: [], notes: '' }),
+  cost_objectives: z.object({
+    max_cost_per_liter: z.coerce.number().finite().positive().optional(),
+    currency: z.string().trim().min(3).max(3).default('DZD'),
+  }).default({ currency: 'DZD' }),
+  nutrition_objectives: z.object({
+    max_sugar_g_per_100ml: z.coerce.number().finite().nonnegative().optional(),
+    max_calories_per_100ml: z.coerce.number().finite().nonnegative().optional(),
+    target_ph_min: z.coerce.number().finite().min(0).max(14).optional(),
+    target_ph_max: z.coerce.number().finite().min(0).max(14).optional(),
+  }).default({}),
+  regulatory_constraints: z.object({
+    markets: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
+    certifications: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
+    forbidden_additives: z.array(z.string().trim().min(1).max(120)).max(30).default([]),
+  }).default({ markets: [], certifications: [], forbidden_additives: [] }),
+  success_criteria: z.array(z.string().trim().min(3).max(300)).min(1).max(20),
+};
+const projectBriefSchema = z.object(projectBriefFields).superRefine((brief, context) => {
+  const { target_ph_min: minimum, target_ph_max: maximum } = brief.nutrition_objectives;
+  if (minimum !== undefined && maximum !== undefined && minimum > maximum) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['nutrition_objectives', 'target_ph_max'], message: 'Maximum target pH must be greater than or equal to minimum target pH' });
+  }
+  const required = new Set(brief.ingredient_constraints.required.map(value => value.toLowerCase()));
+  const overlap = brief.ingredient_constraints.forbidden.find(value => required.has(value.toLowerCase()));
+  if (overlap) context.addIssue({ code: z.ZodIssueCode.custom, path: ['ingredient_constraints'], message: `${overlap} cannot be both required and forbidden` });
+});
 const projectInputSchema = z.object({
   code: z.string().trim().min(1).max(50).optional(),
   name: z.string().trim().min(2).max(160),
@@ -380,6 +416,11 @@ const projectInputSchema = z.object({
   target_claims: z.array(z.string().trim().min(1).max(120)).max(20).default([]),
   priority: z.enum(['low', 'normal', 'high', 'critical']).default('normal'),
   due_date: z.string().date().nullable().optional(),
+  ingredient_constraints: projectBriefFields.ingredient_constraints.optional(),
+  cost_objectives: projectBriefFields.cost_objectives.optional(),
+  nutrition_objectives: projectBriefFields.nutrition_objectives.optional(),
+  regulatory_constraints: projectBriefFields.regulatory_constraints.optional(),
+  success_criteria: z.array(z.string().trim().min(3).max(300)).max(20).optional(),
 });
 
 function ensureProjectStorage(request, reply) {
@@ -394,7 +435,7 @@ function ownedProject(request, id) {
 
 function addProjectEvent(request, project, eventType, details = {}) {
   const event = {
-    id: generateId(), owner_id: request.user?.id, project_id: project.id,
+    id: generateId(), owner_id: request.user?.id, actor_id: request.user?.id, project_id: project.id,
     event_type: eventType, details, created_at: new Date().toISOString(),
   };
   request.store.rdProjectEvents.push(event);
@@ -443,7 +484,15 @@ server.get(`${apiPrefix}/projects/:id`, async (request, reply) => {
   const events = request.store.rdProjectEvents
     .filter(event => event.project_id === project.id && isOwnedByRequest(request, event))
     .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-  return { data: { ...project, events }, allowed_transitions: projectTransitions[project.stage] || [] };
+  const formulations = accessibleFormulations(request).filter(item => item.project_id === project.id);
+  const formulationIds = new Set(formulations.map(item => item.id));
+  const laboratoryResults = request.store.laboratoryResults.filter(item => formulationIds.has(item.formulation_id) && !item.deleted_at && isOwnedByRequest(request, item));
+  const sensoryStudies = request.store.sensoryStudies.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
+  return { data: { ...project, events, traceability: {
+    formulations: formulations.map(item => ({ id: item.id, code: item.code, name: item.name, version: item.version, status: item.status, locked_at: item.locked_at || null })),
+    laboratory_results: laboratoryResults.map(item => ({ id: item.id, formulation_version_id: item.formulation_id, batch_code: item.batch_code, tested_at: item.tested_at })),
+    sensory_studies: sensoryStudies.map(item => ({ id: item.id, name: item.name, status: item.status, formulation_version_ids: item.samples.map(sample => sample.formulation_id).filter(Boolean) })),
+  } }, allowed_transitions: projectTransitions[project.stage] || [] };
 });
 
 server.post(`${apiPrefix}/projects`, async (request, reply) => {
@@ -456,7 +505,11 @@ server.post(`${apiPrefix}/projects`, async (request, reply) => {
   const timestamp = new Date().toISOString();
   const project = {
     id: generateId(), owner_id: request.user?.id, ...input, code,
-    stage: 'brief', status: 'draft', created_at: timestamp, updated_at: timestamp,
+    stage: 'brief', status: 'draft', brief_status: 'draft',
+    ingredient_constraints: input.ingredient_constraints || { required: [], forbidden: [], notes: '' },
+    cost_objectives: input.cost_objectives || { currency: 'DZD' }, nutrition_objectives: input.nutrition_objectives || {},
+    regulatory_constraints: input.regulatory_constraints || { markets: [], certifications: [], forbidden_additives: [] },
+    success_criteria: input.success_criteria || [], created_at: timestamp, updated_at: timestamp,
   };
   request.store.rdProjects.push(project);
   addProjectEvent(request, project, 'created', { stage: project.stage, status: project.status });
@@ -479,6 +532,23 @@ server.put(`${apiPrefix}/projects/:id`, async (request, reply) => {
   return { data: project };
 });
 
+server.put(`${apiPrefix}/projects/:id/brief`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const input = z.object({ brief: projectBriefSchema, validate: z.boolean().default(false) }).parse(request.body);
+  Object.assign(project, input.brief, { brief_status: input.validate ? 'validated' : 'draft', updated_at: new Date().toISOString() });
+  addProjectEvent(request, project, input.validate ? 'brief_validated' : 'brief_updated', {
+    status: project.brief_status,
+    constraint_counts: {
+      required_ingredients: input.brief.ingredient_constraints.required.length,
+      forbidden_ingredients: input.brief.ingredient_constraints.forbidden.length,
+      success_criteria: input.brief.success_criteria.length,
+    },
+  });
+  return { data: project, allowed_transitions: projectTransitions[project.stage] || [] };
+});
+
 server.post(`${apiPrefix}/projects/:id/transition`, async (request, reply) => {
   if (!ensureProjectStorage(request, reply)) return;
   const project = ownedProject(request, request.params.id);
@@ -487,6 +557,9 @@ server.post(`${apiPrefix}/projects/:id/transition`, async (request, reply) => {
   const allowed = projectTransitions[project.stage] || [];
   if (!allowed.includes(input.stage)) {
     return reply.code(409).send({ error: `Invalid transition from ${project.stage} to ${input.stage}`, allowed_transitions: allowed });
+  }
+  if (project.stage === 'brief' && input.stage === 'concept' && project.brief_status !== 'validated') {
+    return reply.code(409).send({ error: 'Validate the structured R&D brief before moving to Concept', code: 'PROJECT_BRIEF_VALIDATION_REQUIRED' });
   }
   const from = project.stage;
   project.stage = input.stage;
@@ -890,8 +963,15 @@ server.post(`${apiPrefix}/formulations`, async (request, reply) => {
     name: z.string().trim().min(1).max(255),
     description: z.string().trim().max(5000).optional().default(''),
     beverage_type: z.string().trim().min(1).max(100).optional().default('soft_drink'),
+    project_id: z.string().trim().min(1).optional(),
     ingredients: z.array(formulationIngredientSchema).min(1).max(40),
   }).parse(request.body);
+
+  if (input.project_id) {
+    const project = ownedProject(request, input.project_id);
+    if (!project) return reply.code(400).send({ error: 'Linked R&D project is unavailable' });
+    if (project.brief_status !== 'validated') return reply.code(409).send({ error: 'Validate the structured R&D brief before creating a linked formulation' });
+  }
 
   const code = input.code || `FORM-${Date.now()}`;
   if (accessibleFormulations(request).some(item => item.code.toLowerCase() === code.toLowerCase())) {
@@ -906,6 +986,7 @@ server.post(`${apiPrefix}/formulations`, async (request, reply) => {
     name: input.name,
     description: input.description,
     beverage_type: input.beverage_type,
+    project_id: input.project_id || null,
     version: 1,
     is_latest_version: true,
     status: 'draft',
@@ -929,6 +1010,7 @@ server.put(`${apiPrefix}/formulations/:id`, async (request, reply) => {
   if (!existing) {
     return reply.code(404).send({ error: 'Formulation not found' });
   }
+  if (existing.locked_at) return reply.code(409).send({ error: 'Approved formulation versions are immutable. Create a new version to continue.' });
   
   const updates = {};
   Object.assign(updates, input);
@@ -978,9 +1060,30 @@ server.post(`${apiPrefix}/formulations/:id/versions`, async (request, reply) => 
     parent_formulation_id: source.parent_formulation_id || source.id,
     is_latest_version: true,
     status: 'draft',
+    locked_at: undefined,
+    locked_by: undefined,
     owner_id: request.user?.id,
   });
   return reply.code(201).send({ data: version });
+});
+
+server.post(`${apiPrefix}/formulations/:id/approve`, async (request, reply) => {
+  const formulation = findAccessibleFormulation(request, request.params.id);
+  if (!formulation) return reply.code(404).send({ error: 'Formulation not found' });
+  if (!formulation.project_id || !ownedProject(request, formulation.project_id)) {
+    return reply.code(409).send({ error: 'Link this formulation version to an R&D project before approval' });
+  }
+  if (formulation.locked_at) return { data: formulation };
+  const input = z.object({ note: z.string().trim().min(3).max(1000) }).parse(request.body);
+  formulation.status = 'approved';
+  formulation.locked_at = new Date().toISOString();
+  formulation.locked_by = request.user?.id;
+  formulation.approval_note = input.note;
+  formulation.updated_at = formulation.locked_at;
+  addProjectEvent(request, ownedProject(request, formulation.project_id), 'formulation_version_approved', {
+    formulation_version_id: formulation.id, version: formulation.version, code: formulation.code, note: input.note,
+  });
+  return { data: formulation };
 });
 
 server.get(`${apiPrefix}/formulations/:id/versions`, async (request, reply) => {
@@ -1058,6 +1161,7 @@ server.post(`${apiPrefix}/formulations/:id/laboratory-results`, async (request, 
   const now = new Date().toISOString();
   const result = {
     id: generateId(), owner_id: request.user?.id, formulation_id: formulation.id,
+    formulation_version_id: formulation.id, project_id: formulation.project_id || null,
     batch_code: input.batch_code || null, tested_at: input.tested_at.toISOString(),
     measurements: input.measurements, sensory: input.sensory, notes: input.notes || null,
     include_in_ai_learning: input.include_in_ai_learning, created_at: now,
@@ -1066,7 +1170,7 @@ server.post(`${apiPrefix}/formulations/:id/laboratory-results`, async (request, 
   if (input.include_in_ai_learning) {
     request.store.aiLearningExamples.push({
       id: generateId(), owner_id: request.user?.id, laboratory_result_id: result.id,
-      formulation_id: formulation.id,
+      formulation_id: formulation.id, formulation_version_id: formulation.id, project_id: formulation.project_id || null,
       input: { beverage_type: formulation.beverage_type, ingredients: formulation.ingredients || [] },
       outcome: { measurements: result.measurements, sensory: result.sensory },
       status: 'approved_for_local_learning', created_at: now,
@@ -1126,6 +1230,7 @@ server.post(`${apiPrefix}/formulations/:id/laboratory-results/import`, async (re
     const input = parsed.data;
     const result = {
       id: generateId(), owner_id: request.user?.id, formulation_id: formulation.id,
+      formulation_version_id: formulation.id, project_id: formulation.project_id || null,
       batch_code: input.batch_code || null, tested_at: input.tested_at.toISOString(),
       measurements: input.measurements, sensory: input.sensory, notes: input.notes || null,
       include_in_ai_learning: input.include_in_ai_learning, import_source: 'spreadsheet', created_at: now,
@@ -1163,6 +1268,7 @@ const sensorySampleSchema = z.object({
   batch_code: z.string().trim().max(100).optional(),
 });
 const sensoryStudySchema = z.object({
+  project_id: z.string().trim().min(1).optional(),
   name: z.string().trim().min(3).max(150),
   objective: z.string().trim().min(10).max(2000),
   test_type: z.enum(['hedonic', 'descriptive', 'preference', 'jar', 'combined']),
@@ -1227,6 +1333,18 @@ function requireSensoryPersistence(request, reply) {
   return false;
 }
 
+function resolveSensoryProject(request, study) {
+  const formulations = study.samples.filter(sample => sample.formulation_id).map(sample => findAccessibleFormulation(request, sample.formulation_id));
+  if (formulations.some(item => !item)) return { error: 'One or more sample formulation versions are unavailable' };
+  const projectIds = [...new Set(formulations.map(item => item.project_id).filter(Boolean))];
+  if (projectIds.length > 1) return { error: 'All linked formulation versions in one sensory study must belong to the same R&D project' };
+  const projectId = study.project_id || projectIds[0] || null;
+  if (projectId && !ownedProject(request, projectId)) return { error: 'Linked R&D project is unavailable' };
+  if (study.project_id && projectIds[0] && study.project_id !== projectIds[0]) return { error: 'The sensory project does not match its formulation versions' };
+  if (projectId && formulations.some(item => item.project_id !== projectId)) return { error: 'Every linked formulation version must belong to the sensory project' };
+  return { project_id: projectId };
+}
+
 server.get(`${apiPrefix}/sensory/studies`, async (request, reply) => {
   if (!requireSensoryPersistence(request, reply)) return reply;
   return { data: request.store.sensoryStudies.filter(study => isOwnedByRequest(request, study)).map(study => ({
@@ -1244,9 +1362,12 @@ server.post(`${apiPrefix}/sensory/studies`, async (request, reply) => {
       return reply.code(400).send({ error: `Sample formulation ${sample.formulation_id} is unavailable` });
     }
   }
+  const traceability = resolveSensoryProject(request, input);
+  if (traceability.error) return reply.code(400).send({ error: traceability.error });
   const now = new Date().toISOString();
   const study = {
     ...input,
+    project_id: traceability.project_id,
     id: generateId(),
     owner_id: request.user?.id,
     attributes: input.attributes.map(attribute => ({ ...attribute })),
@@ -1255,6 +1376,9 @@ server.post(`${apiPrefix}/sensory/studies`, async (request, reply) => {
     updated_at: now,
   };
   request.store.sensoryStudies.push(study);
+  if (study.project_id) addProjectEvent(request, ownedProject(request, study.project_id), 'sensory_study_created', {
+    sensory_study_id: study.id, formulation_version_ids: study.samples.map(sample => sample.formulation_id).filter(Boolean),
+  });
   return reply.code(201).send({ data: study });
 });
 
@@ -1263,8 +1387,10 @@ server.put(`${apiPrefix}/sensory/studies/:id`, async (request, reply) => {
   const study = findSensoryStudy(request, request.params.id);
   if (!study) return reply.code(404).send({ error: 'Sensory study not found' });
   const input = sensoryStudySchema.parse(request.body);
+  const traceability = resolveSensoryProject(request, input);
+  if (traceability.error) return reply.code(400).send({ error: traceability.error });
   const previousSamples = new Map(study.samples.map(sample => [sample.sample_code.toLowerCase(), sample.id]));
-  Object.assign(study, input, {
+  Object.assign(study, input, { project_id: traceability.project_id,
     samples: input.samples.map(sample => ({ ...sample, id: previousSamples.get(sample.sample_code.toLowerCase()) || generateId() })),
     updated_at: new Date().toISOString(),
   });

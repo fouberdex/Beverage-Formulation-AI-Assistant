@@ -109,10 +109,12 @@ and extraction provenance must remain immutable.
 - Add project overview, lifecycle timeline and cross-module navigation.
 - Preserve current standalone workflows during migration.
 
-Phase 1 is intentionally being delivered in reviewable tranches. Tranche 1 adds
+Phase 1 is intentionally being delivered in reviewable tranches. Tranche 1 added
 the project portfolio and lifecycle without changing existing formulation, lab or
-sensory records. Tranche 2 will add the validated project brief and explicit links
-to immutable formulation versions.
+sensory records. Tranche 2 now adds a validated, measurable project brief, locks
+approved formulation versions, and carries the project plus exact formulation
+version through laboratory and sensory records. Existing standalone records remain
+valid through nullable additive links.
 
 ### Phase 2 — formulation intelligence
 
