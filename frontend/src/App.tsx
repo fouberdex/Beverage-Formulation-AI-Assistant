@@ -24,7 +24,7 @@ const RagWorkspacePage = React.lazy(() => import('./pages/RagWorkspacePage'));
 function LoadingFallback() {
   return (
     <div role="status" aria-live="polite" className="flex items-center justify-center min-h-screen">
-      <div className="text-lg text-gray-600">Loading...</div>
+      <div className="surface-card flex items-center gap-3 text-sm font-semibold text-slate-600"><span className="h-3 w-3 animate-pulse rounded-full bg-sky-500"/>Loading workspace…</div>
     </div>
   );
 }
@@ -35,12 +35,12 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { err
   componentDidCatch(error: Error, details: React.ErrorInfo) { console.error('Unhandled application error', error, details); }
   render() {
     if (!this.state.error) return this.props.children;
-    return <div className="min-h-screen bg-red-50 flex items-center justify-center p-4">
-      <div role="alert" className="bg-white p-6 rounded-lg shadow-lg max-w-lg">
-        <h1 className="text-xl font-bold text-red-700 mb-2">Something went wrong</h1>
-        <p className="text-gray-600">The page could not be displayed. Your data has not been changed.</p>
+    return <div className="flex min-h-screen items-center justify-center bg-app p-4">
+      <div role="alert" className="surface-card max-w-lg border-rose-200">
+        <h1 className="mb-2 text-xl font-black text-rose-700">Something went wrong</h1>
+        <p className="text-slate-600">The page could not be displayed. Your data has not been changed.</p>
         <button type="button" onClick={() => this.setState({ error: null })}
-          className="mt-4 rounded-md bg-sky-700 px-4 py-2 text-sm font-medium text-white hover:bg-sky-800">Try again</button>
+          className="primary-button mt-4">Try again</button>
       </div>
     </div>;
   }
@@ -132,10 +132,10 @@ function RouteFocus() {
 function RoleRoute({ roles, children }: { roles: readonly UserRole[]; children: React.ReactNode }) {
   const { profile } = useAuth();
   if (hasRole(profile?.role, roles)) return <>{children}</>;
-  return <section role="alert" className="mx-auto mt-12 max-w-xl rounded-lg border border-amber-200 bg-amber-50 p-6">
-    <h1 className="text-2xl font-bold text-gray-900">Access restricted</h1>
-    <p className="mt-2 text-gray-700">Your {profile?.role ?? 'current'} role cannot open this workspace.</p>
-    <Link to="/" className="mt-4 inline-block font-medium text-sky-700 underline">Return to dashboard</Link>
+  return <section role="alert" className="surface-card mx-auto mt-12 max-w-xl border-amber-200 bg-amber-50">
+    <p className="eyebrow text-amber-700">Permissions</p><h1 className="mt-1 text-2xl font-black text-slate-950">Access restricted</h1>
+    <p className="mt-2 text-slate-700">Your {profile?.role ?? 'current'} role cannot open this workspace.</p>
+    <Link to="/" className="secondary-button mt-5">Return to dashboard</Link>
   </section>;
 }
 

@@ -12,6 +12,7 @@
     "build": "npm run build --workspace=backend && npm run build --workspace=frontend",
     "test": "npm run test --workspace=backend",
     "test:e2e": "node scripts/run-e2e.mjs",
+    "test:demo": "node scripts/demo-smoke.mjs",
     "db:start": "supabase start",
     "db:stop": "supabase stop",
     "db:reset": "supabase db reset --local",

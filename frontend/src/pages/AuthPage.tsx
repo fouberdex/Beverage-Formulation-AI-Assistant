@@ -41,20 +41,20 @@ export default function AuthPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-sky-50 via-white to-emerald-50 p-4">
-      <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-8 shadow-xl" aria-busy={busy}>
+    <div className="flex min-h-screen items-center justify-center bg-app p-4">
+      <div className="surface-card w-full max-w-md p-8 sm:p-9" aria-busy={busy}>
         <div className="mb-7 text-center">
-          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-sky-700 text-white">
+          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-sky-500 text-white shadow-sm shadow-sky-200">
             <FlaskConical aria-hidden="true" className="h-7 w-7" />
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">BeverageAI DZ</h1>
-          <p className="mt-1 text-sm text-gray-500">Secure formulation workspace</p>
+          <h1 className="text-2xl font-black tracking-tight text-slate-950">BeverageAI <span className="text-sky-700">DZ</span></h1>
+          <p className="mt-1 text-sm text-slate-500">Secure industrial R&amp;D workspace</p>
         </div>
 
-        <div className="mb-6 grid grid-cols-2 rounded-lg bg-gray-100 p-1">
+        <div role="tablist" aria-label="Authentication mode" className="mb-6 grid grid-cols-2 rounded-2xl border border-slate-200 bg-slate-50 p-1.5">
           {(['signin', 'signup'] as const).map(value => (
-            <button key={value} type="button" aria-pressed={mode === value} onClick={() => { setMode(value); setError(''); setMessage(''); }}
-              className={`rounded-md px-3 py-2 text-sm font-medium ${mode === value ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}>
+            <button key={value} type="button" role="tab" aria-selected={mode === value} onClick={() => { setMode(value); setError(''); setMessage(''); }}
+              className={`rounded-xl px-3 py-2.5 text-sm font-bold transition ${mode === value ? 'bg-white text-sky-700 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-900'}`}>
               {value === 'signin' ? 'Sign in' : 'Create account'}
             </button>
           ))}
@@ -62,23 +62,23 @@ export default function AuthPage() {
 
         <form onSubmit={submit} className="space-y-4">
           {mode === 'signup' && (
-            <label className="block text-sm font-medium text-gray-700">
+            <label className="block text-sm font-semibold text-slate-700">
               Display name
               <input value={displayName} onChange={event => setDisplayName(event.target.value)} required
-                className="mt-1 w-full rounded-md border border-gray-300 p-2.5 focus:border-sky-500 focus:ring-sky-500" />
+                className="input mt-1.5" />
             </label>
           )}
-          <label className="block text-sm font-medium text-gray-700">
+          <label className="block text-sm font-semibold text-slate-700">
             Email
             <input type="email" value={email} onChange={event => setEmail(event.target.value)} required autoComplete="email"
-              className="mt-1 w-full rounded-md border border-gray-300 p-2.5 focus:border-sky-500 focus:ring-sky-500" />
+              className="input mt-1.5" />
           </label>
           {mode !== 'reset' && (
-            <label className="block text-sm font-medium text-gray-700">
+            <label className="block text-sm font-semibold text-slate-700">
               Password
               <input type="password" value={password} onChange={event => setPassword(event.target.value)} required minLength={8}
                 autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
-                className="mt-1 w-full rounded-md border border-gray-300 p-2.5 focus:border-sky-500 focus:ring-sky-500" />
+                className="input mt-1.5" />
             </label>
           )}
           {mode === 'signin' && (
@@ -95,7 +95,7 @@ export default function AuthPage() {
           )}
           <StatusMessage error={error} message={message} />
           <button type="submit" disabled={busy}
-            className="flex w-full items-center justify-center rounded-md bg-sky-700 px-4 py-2.5 font-medium text-white hover:bg-sky-800 disabled:opacity-60">
+            className="primary-button w-full justify-center">
             {busy && <Loader2 aria-hidden="true" className="mr-2 h-4 w-4 animate-spin" />}
             {mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Create account' : 'Send reset email'}
           </button>

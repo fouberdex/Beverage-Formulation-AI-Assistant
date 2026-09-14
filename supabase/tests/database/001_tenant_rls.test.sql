@@ -67,15 +67,20 @@ select results_eq($$ select id from public.target_generation_runs order by id $$
 select is((select count(*)::integer from public.audit_logs), 1, 'tenant A sees only its audit events');
 select throws_ok($$ insert into public.formulations (id, owner_id, code, name) values
   ('cross-tenant-insert', '22222222-2222-4222-8222-222222222222', 'X-001', 'Cross tenant') $$,
+  '42501', 'new row violates row-level security policy for table "formulations"',
   'tenant A cannot insert rows owned by tenant B');
 select throws_ok($$ update public.formulations set owner_id = '22222222-2222-4222-8222-222222222222'
-  where id = 'tenant-a-form' $$, 'tenant A cannot transfer ownership to tenant B');
+  where id = 'tenant-a-form' $$,
+  '42501', 'new row violates row-level security policy for table "formulations"',
+  'tenant A cannot transfer ownership to tenant B');
 select throws_ok($$ insert into public.formulation_ingredients
   (formulation_id, ingredient_id, owner_id, percentage)
-  values ('tenant-b-form', 'rls-active', '11111111-1111-4111-8111-111111111111', 50) $$,
+  values ('tenant-b-form', 'rls-inactive', '11111111-1111-4111-8111-111111111111', 50) $$,
+  '23503', 'insert or update on table "formulation_ingredients" violates foreign key constraint "formulation_ingredients_owner_formulation_fkey"',
   'tenant A cannot attach a child record to tenant B formulation');
 select throws_ok($$ update public.profiles set role = 'admin'
-  where id = '11111111-1111-4111-8111-111111111111' $$, 'users cannot promote their own profile');
+  where id = '11111111-1111-4111-8111-111111111111' $$,
+  '42501', 'permission denied for table profiles', 'users cannot promote their own profile');
 select ok(not has_function_privilege('authenticated', 'public.ensure_profile(uuid,text)', 'EXECUTE'),
   'authenticated cannot call the server-only profile helper');
 select ok(not has_function_privilege('authenticated', 'public.bootstrap_admin(uuid,text)', 'EXECUTE'),

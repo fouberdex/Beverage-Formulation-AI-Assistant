@@ -96,7 +96,7 @@ export default function AccountPage() {
       {recoveryMode && <p className="rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm text-sky-800">Password recovery verified. Choose a new password below.</p>}
       <StatusMessage error={error} message={message} />
 
-      <form onSubmit={saveProfile} className="rounded-lg bg-white p-6 shadow">
+      <form onSubmit={saveProfile} className="surface-card">
         <div className="mb-5 flex items-center gap-3">
           <UserRound className="h-5 w-5 text-sky-600" />
           <h2 className="text-lg font-semibold text-gray-900">Profile</h2>
@@ -113,12 +113,12 @@ export default function AccountPage() {
             <input value={profile?.role || 'Loading…'} disabled className="mt-1 w-full capitalize rounded-md border border-gray-200 bg-gray-50 p-2.5 text-gray-500" />
           </label>
         </div>
-        <button disabled={busy !== null} className="mt-5 inline-flex items-center rounded-md bg-sky-700 px-4 py-2 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-60">
+        <button disabled={busy !== null} className="primary-button mt-5">
           {busy === 'profile' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />} Save profile
         </button>
       </form>
 
-      <form onSubmit={savePassword} className="rounded-lg bg-white p-6 shadow">
+      <form onSubmit={savePassword} className="surface-card">
         <div className="mb-5 flex items-center gap-3">
           <KeyRound className="h-5 w-5 text-sky-600" />
           <h2 className="text-lg font-semibold text-gray-900">Change password</h2>
@@ -133,12 +133,12 @@ export default function AccountPage() {
               className="mt-1 w-full rounded-md border border-gray-300 p-2.5" />
           </label>
         </div>
-        <button disabled={busy !== null} className="mt-5 inline-flex items-center rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
+        <button disabled={busy !== null} className="primary-button mt-5">
           {busy === 'password' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Update password
         </button>
       </form>
 
-      <form onSubmit={saveAIPrivacy} className="rounded-lg bg-white p-6 shadow">
+      <form onSubmit={saveAIPrivacy} className="surface-card">
         <div className="mb-4 flex items-center gap-3">
           <BrainCircuit aria-hidden="true" className="h-5 w-5 text-sky-700" />
           <div><h2 className="text-lg font-semibold text-gray-900">AI privacy and quota</h2>
@@ -163,7 +163,7 @@ export default function AccountPage() {
             <div className="rounded-md border p-3 sm:col-span-2"><span className="text-gray-500">Provider</span><p className="font-semibold">{aiGovernance.provider.configured ? `${aiGovernance.provider.provider} · ${aiGovernance.provider.model}` : 'Not configured'}</p></div>
           </div>}
         </div>
-        <button disabled={busy !== null} className="mt-5 inline-flex items-center rounded-md bg-sky-700 px-4 py-2 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-60">
+        <button disabled={busy !== null} className="primary-button mt-5">
           {busy === 'ai' && <Loader2 aria-hidden="true" className="mr-2 h-4 w-4 animate-spin" />} Save AI privacy
         </button>
       </form>

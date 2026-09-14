@@ -1,6 +1,6 @@
 # BeverageAI DZ
 
-Beverage formulation MVP with ingredient management, formulation calculations, compatibility checks, generated variants, regulatory checks, and cost/ROI analysis.
+Integrated beverage R&D decision-support platform with ingredient management, formulation calculations, laboratory and sensory workflows, compatibility screening, generated candidates, regulatory/label support, costing and evidence-grounded research.
 
 ## Current status
 
@@ -120,6 +120,10 @@ npm run test:db   # rebuild local Supabase and execute pgTAP RLS tests
 GitHub Actions now validates the application, database migrations, RLS policies, dependency audit, and production container. Published releases apply reviewed Supabase migrations and publish an immutable container image to GitHub Container Registry. A separate scheduled workflow creates encrypted logical database backups.
 
 See `OPERATIONS.md` for environment protection, deployment, rollback, backup restoration, monitoring, alerts, and incident response. See `SECURITY.md` for vulnerability reporting and production access requirements.
+
+The implemented architecture is documented in `ARCHITECTURE.md`. The audited
+industrial roadmap, explicit gaps and acceptance criteria are maintained in
+`MASTER_PLAN_AUDIT.md`; roadmap capabilities are not represented as shipped.
 
 ## API
 

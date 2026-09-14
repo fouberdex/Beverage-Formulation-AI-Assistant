@@ -220,7 +220,7 @@ export default function IngredientsPage() {
       )}
 
       {/* Filters */}
-      <div className="bg-white shadow rounded-lg p-4 mb-6">
+      <div className="surface-card">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
@@ -230,7 +230,7 @@ export default function IngredientsPage() {
               placeholder="Search ingredients..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pl-10 w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2"
+              className="input pl-10"
             />
           </div>
           <div className="relative">
@@ -239,7 +239,7 @@ export default function IngredientsPage() {
               aria-label="Filter ingredients by category"
               value={category}
               onChange={(e) => setCategory(e.target.value)}
-              className="pl-10 w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2"
+              className="input pl-10"
             >
               <option value="">All Categories</option>
               {categories.map((cat) => (
@@ -580,7 +580,7 @@ function IngredientForm({
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-2 bg-sky-700 text-white rounded-md hover:bg-sky-800"
+                    className="primary-button"
                   >
                     {selectedIngredient ? 'Save Changes' : 'Add Ingredient'}
                   </button>

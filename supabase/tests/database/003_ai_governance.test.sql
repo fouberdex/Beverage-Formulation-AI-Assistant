@@ -28,9 +28,14 @@ select set_config('request.jwt.claims', '{"sub":"33333333-3333-4333-8333-3333333
 select results_eq($$ select owner_id from public.ai_preferences $$,
   array['33333333-3333-4333-8333-333333333333']::uuid[], 'tenant A sees only its AI preference');
 select is((select count(*)::integer from public.ai_usage_events), 1, 'tenant A sees only its AI usage');
-select is((with changed as (update public.ai_preferences set include_formulation_name = true
-  where owner_id = '44444444-4444-4444-8444-444444444444' returning 1) select count(*)::integer from changed), 0,
+update public.ai_preferences set include_formulation_name = true
+  where owner_id = '44444444-4444-4444-8444-444444444444';
+reset role;
+select is((select include_formulation_name from public.ai_preferences
+  where owner_id = '44444444-4444-4444-8444-444444444444'), false,
   'tenant A cannot update tenant B AI preferences');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"33333333-3333-4333-8333-333333333333","role":"authenticated"}', true);
 select lives_ok($$ update public.ai_preferences set include_formulation_name = true
   where owner_id = '33333333-3333-4333-8333-333333333333' $$, 'tenant A can update its AI preference');
 select throws_ok($$ insert into public.ai_usage_events

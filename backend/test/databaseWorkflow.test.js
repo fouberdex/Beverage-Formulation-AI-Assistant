@@ -7,17 +7,29 @@ const supabaseDirectory = new URL('../../supabase/', import.meta.url);
 test('Supabase migrations form an ordered, complete database workflow', async () => {
   const migrationNames = (await readdir(new URL('migrations/', supabaseDirectory))).sort();
 
-  assert.deepEqual(migrationNames.map(name => name.replace(/^\d+_/, '')), [
-    'initial_schema.sql',
-    'request_scoped_transactional_repository.sql',
-    'controlled_admin_bootstrap.sql',
-    'enforce_tenant_relational_integrity.sql',
-    'ai_governance.sql',
-    'laboratory_results_feedback.sql',
-    'sensory_studies_and_responses.sql',
+  assert.deepEqual(migrationNames, [
+    '20260808173228_beverageai_core_schema.sql',
+    '20260808173856_add_foreign_key_indexes.sql',
+    '20260809173835_add_roles_and_atomic_formulation_sync.sql',
+    '20260817141428_initial_schema.sql',
+    '20260817141437_request_scoped_transactional_repository.sql',
+    '20260817141448_controlled_admin_bootstrap.sql',
+    '20260817141804_enforce_tenant_relational_integrity.sql',
+    '20260817150124_ai_governance.sql',
+    '20260817160122_request_scoped_transactional_repository.sql',
+    '20260817160127_controlled_admin_bootstrap.sql',
+    '20260817160134_enforce_tenant_relational_integrity.sql',
+    '20260817160139_ai_governance.sql',
+    '20260823120000_laboratory_results_feedback.sql',
+    '20260823142210_laboratory_feedback_tables.sql',
+    '20260823142231_laboratory_feedback_commit.sql',
+    '20260825202029_sensory_studies_and_responses.sql',
   ]);
 
-  const bootstrap = await readFile(new URL(`migrations/${migrationNames[2]}`, supabaseDirectory), 'utf8');
+  const bootstrap = await readFile(
+    new URL('migrations/20260817141448_controlled_admin_bootstrap.sql', supabaseDirectory),
+    'utf8',
+  );
   assert.match(bootstrap, /values \(p_user_id, nullif[\s\S]*'formulator'/);
   assert.match(bootstrap, /create or replace function public\.bootstrap_admin/);
   assert.match(bootstrap, /security definer/);

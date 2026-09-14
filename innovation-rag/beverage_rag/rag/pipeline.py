@@ -416,7 +416,12 @@ class RagPipeline:
         generator: LocalGenerator | None = None,
     ) -> None:
         self.settings = settings
-        self.retriever = HybridRetriever(store or QdrantHybridStore(settings))
+        self.retriever = HybridRetriever(
+            store
+            or QdrantHybridStore(
+                settings, sparse_only=settings.retrieval.sparse_only
+            )
+        )
         self.generator = generator or LocalGenerator(settings.generation)
         self.reranker = Reranker(settings.reranking)
         self.evidence_policy = (

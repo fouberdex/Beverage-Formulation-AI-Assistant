@@ -32,7 +32,7 @@ export default function HistoryPage() {
       .finally(() => setLoading(false));
   }, [runPage, eventPage]);
 
-  if (loading) return <div className="p-8 text-center text-gray-500">Loading history…</div>;
+  if (loading) return <div className="surface-card p-8 text-center text-sm font-semibold text-slate-500">Loading history…</div>;
 
   return (
     <div className="space-y-7">
@@ -41,32 +41,32 @@ export default function HistoryPage() {
       </header>
       <StatusMessage error={error} />
 
-      <section className="overflow-hidden rounded-lg bg-white shadow">
-        <h2 className="border-b px-5 py-4 text-lg font-semibold">Target generation runs</h2>
-        {runs.length === 0 ? <p className="p-5 text-sm text-gray-500">No generation runs yet.</p> : (
+      <section className="aka-table-shell">
+        <div className="border-b border-slate-200 px-5 py-4"><p className="eyebrow">Optimization</p><h2 className="mt-1 text-lg font-black">Target generation runs</h2></div>
+        {runs.length === 0 ? <p className="p-5 text-sm text-slate-500">No generation runs yet.</p> : (
           <div className="divide-y">
             {runs.map(run => <div key={run.id} className="grid gap-2 px-5 py-4 text-sm sm:grid-cols-4">
-              <span className="font-medium text-gray-900">{run.constraints?.beverage_type || 'Beverage'}</span>
+              <span className="font-semibold text-slate-900">{run.constraints?.beverage_type || 'Beverage'}</span>
               <span>{run.candidates?.length || 0} candidates</span>
               <span>{run.ai?.used ? `Gemini · ${run.ai.model}` : 'Local validation'}</span>
-              <time className="text-gray-500 sm:text-right">{new Date(run.created_at).toLocaleString()}</time>
+              <time className="text-slate-500 sm:text-right">{new Date(run.created_at).toLocaleString()}</time>
             </div>)}
           </div>
         )}
         <Pagination page={runPage} pageSize={pageSize} total={runTotal} onPageChange={setRunPage} label="Generation runs" />
       </section>
 
-      <section className="overflow-hidden rounded-lg bg-white shadow">
-        <div className="border-b px-5 py-4">
-          <h2 className="text-lg font-semibold">Change log</h2>
-          <p className="text-xs text-gray-500">Showing events attributed to {profile?.display_name || profile?.email || 'your account'}.</p>
+      <section className="aka-table-shell">
+        <div className="border-b border-slate-200 px-5 py-4">
+          <p className="eyebrow">Audit trail</p><h2 className="mt-1 text-lg font-black">Change log</h2>
+          <p className="mt-1 text-xs text-slate-500">Showing events attributed to {profile?.display_name || profile?.email || 'your account'}.</p>
         </div>
-        {events.length === 0 ? <p className="p-5 text-sm text-gray-500">No recorded changes yet.</p> : (
+        {events.length === 0 ? <p className="p-5 text-sm text-slate-500">No recorded changes yet.</p> : (
           <div className="overflow-x-auto"><table className="min-w-full divide-y text-sm">
             <caption className="sr-only">Account change log</caption>
-            <thead className="bg-gray-50 text-left text-xs uppercase text-gray-500"><tr><th scope="col" className="px-5 py-3">Time</th><th scope="col" className="px-5 py-3">Action</th><th scope="col" className="px-5 py-3">Entity</th><th scope="col" className="px-5 py-3">Result</th></tr></thead>
+            <thead className="text-left"><tr><th scope="col" className="px-5 py-3">Time</th><th scope="col" className="px-5 py-3">Action</th><th scope="col" className="px-5 py-3">Entity</th><th scope="col" className="px-5 py-3">Result</th></tr></thead>
             <tbody className="divide-y">{events.map(event => <tr key={event.id}>
-              <td className="whitespace-nowrap px-5 py-3 text-gray-500">{new Date(event.created_at).toLocaleString()}</td>
+              <td className="whitespace-nowrap px-5 py-3 text-slate-500">{new Date(event.created_at).toLocaleString()}</td>
               <td className="px-5 py-3 font-medium uppercase">{event.action}</td>
               <td className="px-5 py-3">{event.entity_type}{event.entity_id ? ` · ${event.entity_id}` : ''}</td>
               <td className="px-5 py-3">HTTP {event.metadata?.status_code || '—'}</td>

@@ -169,7 +169,7 @@ class LocalGenerator:
                     "stream": False,
                     "options": {
                         "temperature": temperature,
-                        "num_ctx": 8192,
+                        "num_ctx": self.settings.ollama_context_tokens,
                         "num_predict": max_tokens,
                     },
                     "messages": [

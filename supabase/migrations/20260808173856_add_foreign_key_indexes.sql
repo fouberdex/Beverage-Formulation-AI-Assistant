@@ -1,4 +1,3 @@
-create index if not exists idx_formulation_ingredients_ingredient on public.formulation_ingredients(ingredient_id);
-create index if not exists idx_ai_variants_source on public.ai_variants(source_formulation_id);
-create index if not exists idx_batch_cost_formulation on public.batch_cost_calculations(formulation_id);
-create index if not exists idx_pricing_created_by on public.pricing_history(created_by) where created_by is not null;;
+-- Historical hosted-migration marker.
+-- The equivalent idempotent schema is maintained in 20260817141428_initial_schema.sql.
+-- This no-op file keeps local and hosted Supabase migration histories aligned.

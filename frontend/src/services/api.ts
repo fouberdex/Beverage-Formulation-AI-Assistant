@@ -125,7 +125,7 @@ export const accountAPI = {
 // Regulatory API
 export const regulatoryAPI = {
   checkCompliance: (formulationId: string) =>
-    api.post(`/regulatory/formulations/${formulationId}/check`),
+    api.post(`/regulatory/formulations/${formulationId}/check`, {}),
   getCompliance: (formulationId: string) =>
     api.get(`/regulatory/formulations/${formulationId}/compliance`),
   generateLabels: (formulationId: string, options?: any) =>

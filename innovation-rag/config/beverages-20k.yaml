@@ -86,6 +86,9 @@ indexing:
   sparse_vector_name: "sparse"
 
 retrieval:
+  # Demo-safe local mode: avoids keeping the 2.3 GB dense encoder in RAM beside Ollama.
+  # The existing Qdrant BM25 sparse index remains fully searchable.
+  sparse_only: true
   dense_candidates: 50
   sparse_candidates: 50
   top_k: 6
@@ -110,7 +113,9 @@ generation:
   base_url: "http://localhost:11434"
   temperature: 0.1
   timeout_seconds: 600
-  max_output_tokens: 900
+  max_output_tokens: 700
+  max_context_chars: 8500
+  ollama_context_tokens: 4096
   quality_gate_enabled: false
 
 diagnostics_file: "config/diagnostics.yaml"

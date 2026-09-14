@@ -19,12 +19,14 @@ select lives_ok($$ select public.ensure_profile('33333333-3333-4333-8333-3333333
 select is((select role from public.profiles where id = '33333333-3333-4333-8333-333333333333'),
   'formulator', 'ordinary profile creation never grants admin');
 select throws_ok($$ select public.bootstrap_admin('33333333-3333-4333-8333-333333333333', 'wrong@example.test') $$,
+  'P0001', 'The authenticated user does not match the configured bootstrap administrator',
   'bootstrap rejects an identity mismatch');
 select lives_ok($$ select public.bootstrap_admin('33333333-3333-4333-8333-333333333333', 'BOOTSTRAP@example.test') $$,
   'configured identity can claim the one-time bootstrap');
 select is((select role from public.profiles where id = '33333333-3333-4333-8333-333333333333'),
   'admin', 'configured identity becomes administrator');
 select throws_ok($$ select public.bootstrap_admin('44444444-4444-4444-8444-444444444444', 'other@example.test') $$,
+  'P0001', 'An administrator has already been bootstrapped',
   'a second identity cannot claim administrator bootstrap');
 reset role;
 

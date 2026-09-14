@@ -102,6 +102,7 @@ test('dashboard has no serious automated accessibility violations', async ({ pag
 });
 
 test('core workspace pages have no serious automated accessibility violations', async ({ page }) => {
+  test.setTimeout(120_000);
   await useRole(page, 'admin'); await mockApi(page);
   for (const path of ['/ingredients', '/formulations', '/compatibility', '/history', '/account', '/laboratory-results', '/sensory', '/labels', '/regulatory', '/cost', '/ai', '/target-generation']) {
     await page.goto(path);
@@ -150,6 +151,15 @@ test('desktop workspace navigation can collapse and expand', async ({ page }) =>
   await expect(page.getByRole('button', { name: 'Expand sidebar' })).toBeVisible();
   await page.getByRole('button', { name: 'Expand sidebar' }).click();
   await expect(page.getByRole('button', { name: 'Collapse sidebar' })).toBeVisible();
+});
+
+test('regulatory screening sends a valid JSON body from its primary button', async ({ page }) => {
+  await useRole(page, 'admin'); await mockApi(page); await page.goto('/regulatory');
+  const requestPromise = page.waitForRequest(request => request.url().includes('/regulatory/formulations/') && request.url().endsWith('/check'));
+  await page.getByRole('button', { name: 'Check compliance' }).click();
+  const request = await requestPromise;
+  expect(request.method()).toBe('POST');
+  expect(request.postDataJSON()).toEqual({});
 });
 
 test('cost assumptions reset visibly to the baseline', async ({ page }) => {

@@ -19,6 +19,11 @@
   .hero-kicker { @apply inline-flex items-center gap-2 rounded-full bg-sky-50 px-3 py-1 text-[10px] font-bold uppercase tracking-[.18em] text-sky-700 ring-1 ring-sky-100; }
   .eyebrow { @apply text-[10px] font-bold uppercase tracking-[.18em] text-sky-700; }
   .field-grid { @apply grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4; }
+  .aka-tablist { @apply flex flex-wrap gap-1 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm shadow-slate-200/50; }
+  .aka-tab { @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-bold text-slate-600 transition hover:bg-slate-50 hover:text-slate-950; }
+  .aka-tab-active { @apply bg-sky-50 text-sky-700 ring-1 ring-sky-200; }
+  .aka-table-shell { @apply overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm shadow-slate-200/50; }
+  .aka-empty-state { @apply flex min-h-56 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center; }
 }
 
 * {
@@ -68,6 +73,109 @@ code {
 input, select, textarea {
   font-size: 1rem;
 }
+
+/*
+ * AKA-style compatibility layer.
+ * Some mature workspaces still contain legacy utility classes. These scoped
+ * rules give every nested form, tab set, data table and historical card the
+ * same interaction language while those screens are incrementally refactored.
+ */
+#root input:not([type='checkbox']):not([type='radio']):not([type='file']):not([type='range']),
+#root select,
+#root textarea {
+  border: 1px solid #cbd5e1;
+  border-radius: .75rem;
+  background-color: #fff;
+  color: #0f172a;
+  box-shadow: 0 1px 2px rgb(15 23 42 / .04);
+  outline: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+}
+
+#root input:not([type='checkbox']):not([type='radio']):not([type='file']):not([type='range']):focus,
+#root select:focus,
+#root textarea:focus {
+  border-color: #0284c7;
+  box-shadow: 0 0 0 3px rgb(14 165 233 / .12);
+}
+
+#root input:disabled,
+#root select:disabled,
+#root textarea:disabled {
+  background-color: #f1f5f9;
+  color: #64748b;
+  cursor: not-allowed;
+}
+
+#root input[type='checkbox'],
+#root input[type='radio'] {
+  accent-color: #0284c7;
+}
+
+#main-content [role='tablist'] {
+  border: 1px solid #e2e8f0;
+  border-radius: 1rem;
+  background: #fff;
+  padding: .375rem;
+  box-shadow: 0 1px 2px rgb(15 23 42 / .04);
+}
+
+#main-content [role='tab'] {
+  min-height: 2.75rem;
+  border-radius: .75rem;
+  transition: color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+}
+
+#main-content [role='tab'][aria-selected='true'] {
+  background: #f0f9ff;
+  color: #0369a1;
+  box-shadow: inset 0 0 0 1px #bae6fd;
+}
+
+#main-content table {
+  width: 100%;
+  background: #fff;
+}
+
+#main-content thead {
+  background: #f8fafc;
+}
+
+#main-content th {
+  color: #475569;
+  font-size: .7rem;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+#main-content th,
+#main-content td {
+  border-color: #e2e8f0;
+}
+
+#main-content tbody tr {
+  transition: background-color 140ms ease;
+}
+
+#main-content tbody tr:hover {
+  background: #f8fafc;
+}
+
+#main-content button {
+  border-radius: .75rem;
+}
+
+#main-content .rounded-md { border-radius: .75rem; }
+#main-content .rounded-lg { border-radius: 1rem; }
+#main-content .shadow,
+#main-content .shadow-md,
+#main-content .shadow-lg,
+#main-content .shadow-xl {
+  box-shadow: 0 1px 3px rgb(15 23 42 / .08), 0 1px 2px rgb(15 23 42 / .04);
+}
+#main-content .bg-gray-50 { background-color: #f8fafc; }
+#main-content .text-sky-600 { color: #0369a1; }
 
 /* Fix for mobile zoom on inputs */
 @media screen and (max-width: 768px) {

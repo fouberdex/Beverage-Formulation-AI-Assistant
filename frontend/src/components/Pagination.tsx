@@ -12,16 +12,16 @@ export default function Pagination({ page, pageSize, total, onPageChange, label 
   const first = (page - 1) * pageSize + 1;
   const last = Math.min(page * pageSize, total);
   return (
-    <nav aria-label={`${label} pagination`} className="flex flex-col gap-3 border-t border-gray-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-      <p className="text-sm text-gray-600">Showing {first}–{last} of {total}</p>
+    <nav aria-label={`${label} pagination`} className="flex flex-col gap-3 border-t border-slate-200 bg-slate-50/60 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-sm font-medium text-slate-600">Showing {first}–{last} of {total}</p>
       <div className="flex items-center gap-2">
         <button type="button" onClick={() => onPageChange(page - 1)} disabled={page <= 1}
-          className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50">
+          className="secondary-button min-h-10 px-3 py-1.5">
           Previous
         </button>
-        <span aria-live="polite" className="text-sm text-gray-600">Page {page} of {pageCount}</span>
+        <span aria-live="polite" className="rounded-full bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 ring-1 ring-slate-200">Page {page} of {pageCount}</span>
         <button type="button" onClick={() => onPageChange(page + 1)} disabled={page >= pageCount}
-          className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50">
+          className="secondary-button min-h-10 px-3 py-1.5">
           Next
         </button>
       </div>

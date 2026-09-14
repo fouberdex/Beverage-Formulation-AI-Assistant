@@ -149,7 +149,7 @@ export default function SensoryPage() {
     <StatusMessage error={error} message={message} />
 
     <div className="flex flex-col gap-4 rounded-xl border bg-white p-3 shadow-sm lg:flex-row lg:items-center lg:justify-between">
-      <div role="tablist" aria-label="Sensory workspace" className="grid grid-cols-3 gap-1 rounded-lg bg-slate-100 p-1">
+      <div role="tablist" aria-label="Sensory workspace" className="grid grid-cols-3 gap-1 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
         <WorkspaceTabButton active={tab === 'design'} icon={Settings2} label="Study design" onClick={() => setTab('design')} />
         <WorkspaceTabButton active={tab === 'capture'} icon={ClipboardList} label="Panel data" onClick={() => setTab('capture')} />
         <WorkspaceTabButton active={tab === 'analysis'} icon={BarChart3} label="Analysis" onClick={() => setTab('analysis')} />
@@ -170,7 +170,7 @@ function HeroMetric({ value, label }: { value: number; label: string }) {
 }
 
 function WorkspaceTabButton({ active, icon: Icon, label, onClick }: { active: boolean; icon: typeof Settings2; label: string; onClick: () => void }) {
-  return <button type="button" role="tab" aria-selected={active} onClick={onClick} className={`flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-semibold transition ${active ? 'bg-white text-sky-800 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}><Icon className="h-4 w-4"/>{label}</button>;
+  return <button type="button" role="tab" aria-selected={active} onClick={onClick} className={`flex min-h-12 items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-bold transition ${active ? 'bg-sky-50 text-sky-800 ring-1 ring-sky-200' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-950'}`}><Icon className="h-4 w-4"/>{label}</button>;
 }
 
 function StudyDesigner({ formulations, onCreated, onError }: { formulations: Formulation[]; onCreated: (study: SensoryStudy) => void; onError: (message: string) => void }) {

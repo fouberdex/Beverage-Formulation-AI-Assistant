@@ -16,6 +16,7 @@ class QdrantHybridStore:
         settings: Settings,
         embeddings: EmbeddingModels | SparseEmbeddingModel | None = None,
         initialize_embeddings: bool = True,
+        sparse_only: bool = False,
     ) -> None:
         try:
             from qdrant_client import QdrantClient
@@ -25,6 +26,7 @@ class QdrantHybridStore:
             ) from exc
         self.settings = settings
         self.config = settings.indexing
+        self.sparse_only = sparse_only
         if self.config.qdrant_url == ":memory:":
             self.client = QdrantClient(location=":memory:")
         else:
@@ -34,8 +36,10 @@ class QdrantHybridStore:
             )
         self.embeddings = embeddings
         if self.embeddings is None and initialize_embeddings:
-            self.embeddings = EmbeddingModels(
-                self.config.dense_model, self.config.sparse_model
+            self.embeddings = (
+                SparseEmbeddingModel(self.config.sparse_model)
+                if sparse_only
+                else EmbeddingModels(self.config.dense_model, self.config.sparse_model)
             )
 
     def ensure_collection(self, dense_size: int, recreate: bool = False) -> None:
@@ -165,9 +169,8 @@ class QdrantHybridStore:
     ) -> list[RetrievedChunk]:
         from qdrant_client.http import models
 
-        if self.embeddings is None or not hasattr(self.embeddings, "embed_dense"):
-            raise RuntimeError("Dense embedding model is not initialized")
-        dense = self.embeddings.embed_dense([query])[0]
+        if self.embeddings is None:
+            raise RuntimeError("Embedding model is not initialized")
         sparse_indices, sparse_values = self.embeddings.embed_sparse([query])[0]
         conditions: list[Any] = []
         if source:
@@ -186,9 +189,22 @@ class QdrantHybridStore:
             )
         query_filter = models.Filter(must=conditions) if conditions else None
         retrieval = self.settings.retrieval
-        response = self.client.query_points(
-            collection_name=self.config.collection_name,
-            prefetch=[
+        if self.sparse_only:
+            response = self.client.query_points(
+                collection_name=self.config.collection_name,
+                query=models.SparseVector(indices=sparse_indices, values=sparse_values),
+                using=self.config.sparse_vector_name,
+                query_filter=query_filter,
+                limit=top_k or retrieval.top_k,
+                with_payload=True,
+            )
+        else:
+            if not hasattr(self.embeddings, "embed_dense"):
+                raise RuntimeError("Dense embedding model is not initialized")
+            dense = self.embeddings.embed_dense([query])[0]
+            response = self.client.query_points(
+                collection_name=self.config.collection_name,
+                prefetch=[
                 models.Prefetch(
                     query=dense,
                     using=self.config.dense_vector_name,
@@ -201,11 +217,11 @@ class QdrantHybridStore:
                     limit=retrieval.sparse_candidates,
                     filter=query_filter,
                 ),
-            ],
-            query=models.FusionQuery(fusion=models.Fusion.RRF),
-            limit=top_k or retrieval.top_k,
-            with_payload=True,
-        )
+                ],
+                query=models.FusionQuery(fusion=models.Fusion.RRF),
+                limit=top_k or retrieval.top_k,
+                with_payload=True,
+            )
         return [
             RetrievedChunk(chunk=Chunk.model_validate(point.payload), score=float(point.score))
             for point in response.points

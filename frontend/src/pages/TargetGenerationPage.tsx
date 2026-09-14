@@ -118,7 +118,7 @@ export default function TargetGenerationPage() {
         </div>
       </div>
 
-      <div className="bg-white shadow rounded-lg p-6 mx-4">
+      <div className="surface-card mx-4">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Target Constraints</h2>
         <p className="text-sm text-gray-500 mb-4">Set at least one target constraint for the AI to optimize towards.</p>
         
@@ -133,7 +133,7 @@ export default function TargetGenerationPage() {
               value={constraints.target_calories}
               onChange={(e) => setConstraints({ ...constraints, target_calories: e.target.value })}
               placeholder="e.g., 45"
-              className="w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2"
+              className="input"
             />
             <p className="text-xs text-slate-600 mt-1">Typical: Soda 40-50, Juice 45-60, Water 0</p>
           </div>
@@ -148,7 +148,7 @@ export default function TargetGenerationPage() {
               value={constraints.target_sugar}
               onChange={(e) => setConstraints({ ...constraints, target_sugar: e.target.value })}
               placeholder="e.g., 10"
-              className="w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2"
+              className="input"
             />
             <p className="text-xs text-slate-600 mt-1">Typical: Soda 10-12, Juice 8-12, Diet 0</p>
           </div>
@@ -163,7 +163,7 @@ export default function TargetGenerationPage() {
               value={constraints.target_cost_per_liter}
               onChange={(e) => setConstraints({ ...constraints, target_cost_per_liter: e.target.value })}
               placeholder="e.g., 50"
-              className="w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2"
+              className="input"
             />
             <p className="text-xs text-slate-600 mt-1">Ingredient cost only, before overhead</p>
           </div>
@@ -176,7 +176,7 @@ export default function TargetGenerationPage() {
               aria-label="Beverage type"
               value={constraints.beverage_type}
               onChange={(e) => setConstraints({ ...constraints, beverage_type: e.target.value })}
-              className="w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2"
+              className="input"
             >
               <option value="soft_drink">Soft Drink (Carbonated)</option>
               <option value="juice">Juice</option>
@@ -195,7 +195,7 @@ export default function TargetGenerationPage() {
               max="40"
               value={constraints.min_ingredients}
               onChange={(e) => setConstraints({ ...constraints, min_ingredients: Number(e.target.value) })}
-              className="w-full rounded-md border-gray-300 shadow-sm border p-2"
+              className="input"
             />
           </div>
 
@@ -208,7 +208,7 @@ export default function TargetGenerationPage() {
               max="40"
               value={constraints.max_ingredients}
               onChange={(e) => setConstraints({ ...constraints, max_ingredients: Number(e.target.value) })}
-              className="w-full rounded-md border-gray-300 shadow-sm border p-2"
+              className="input"
             />
           </div>
 
@@ -221,7 +221,7 @@ export default function TargetGenerationPage() {
               max="10"
               value={constraints.count}
               onChange={(e) => setConstraints({ ...constraints, count: Number(e.target.value) })}
-              className="w-full rounded-md border-gray-300 shadow-sm border p-2"
+              className="input"
             />
           </div>
         </div>
@@ -229,7 +229,7 @@ export default function TargetGenerationPage() {
         <button
           onClick={generate}
           disabled={loading}
-          className="mt-6 w-full px-4 py-3 bg-sky-700 text-white rounded-md hover:bg-sky-800 disabled:opacity-50 flex items-center justify-center font-medium"
+          className="primary-button mt-6 w-full justify-center"
         >
           {loading ? (
             <>
@@ -272,7 +272,7 @@ export default function TargetGenerationPage() {
           </h2>
           <div className="space-y-6">
             {results.candidates.map((candidate: any, idx: number) => (
-              <div key={candidate.id} className={`bg-white shadow rounded-lg overflow-hidden ${savedIds.includes(candidate.id) ? 'ring-2 ring-green-500' : ''}`}>
+              <div key={candidate.id} className={`overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm ${savedIds.includes(candidate.id) ? 'ring-2 ring-emerald-500' : ''}`}>
                 {/* Header */}
                 <div className="p-6 border-b">
                   <div className="flex justify-between items-start">
@@ -484,7 +484,7 @@ export default function TargetGenerationPage() {
                     <button
                       onClick={() => saveAsFormulation(candidate, idx)}
                       disabled={savingId === candidate.id}
-                      className="w-full px-4 py-3 bg-sky-700 text-white rounded-md hover:bg-sky-800 disabled:opacity-50 font-medium flex items-center justify-center"
+                      className="primary-button w-full justify-center"
                     >
                       {savingId === candidate.id ? (
                         <>

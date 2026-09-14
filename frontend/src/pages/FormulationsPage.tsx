@@ -257,7 +257,7 @@ export default function FormulationsPage() {
           <p className="text-gray-500 mb-4">{canEdit ? 'No formulations yet. Create your first one!' : 'No formulations found.'}</p>
           {canEdit && <button type="button"
             onClick={openCreateModal}
-            className="inline-flex items-center px-4 py-2 bg-sky-700 text-white rounded-md hover:bg-sky-800"
+            className="primary-button"
           >
             <Plus className="h-4 w-4 mr-2" />
             Create Formulation
@@ -311,7 +311,7 @@ export default function FormulationsPage() {
                         value={formName}
                         onChange={(e) => setFormName(e.target.value)}
                         required
-                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2"
+                        className="input"
                         placeholder="e.g., Orange Soda Classic"
                       />
                     </div>
@@ -324,7 +324,7 @@ export default function FormulationsPage() {
                         disabled={!canEdit}
                         value={formBeverageType}
                         onChange={(e) => setFormBeverageType(e.target.value)}
-                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2"
+                        className="input"
                       >
                         <option value="soft_drink">Soft Drink</option>
                         <option value="juice">Juice</option>
@@ -351,7 +351,7 @@ export default function FormulationsPage() {
                       value={formDescription}
                       onChange={(e) => setFormDescription(e.target.value)}
                       rows={2}
-                      className="w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2"
+                      className="input"
                       placeholder="Brief description of this formulation"
                     />
                   </div>
@@ -396,7 +396,7 @@ export default function FormulationsPage() {
                               disabled={!canEdit}
                               value={fi.ingredient_id}
                               onChange={(e) => updateIngredient(index, 'ingredient_id', e.target.value)}
-                              className="w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2 text-sm"
+                              className="input"
                             >
                               <option value="">Select ingredient...</option>
                               {ingredients.map((ing) => (
@@ -416,7 +416,7 @@ export default function FormulationsPage() {
                               step="0.01"
                               min="0"
                               max="100"
-                              className="w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2 text-sm"
+                              className="input"
                               placeholder="0.00"
                             />
                           </div>
@@ -465,7 +465,7 @@ export default function FormulationsPage() {
                   </button>
                   {canEdit && <button
                     type="submit"
-                    className="px-4 py-2 bg-sky-700 text-white rounded-md hover:bg-sky-800"
+                    className="primary-button"
                   >
                     {selectedFormulation ? 'Update Formulation' : 'Create Formulation'}
                   </button>}

@@ -78,7 +78,7 @@ export default function CompatibilityPage() {
         </div>
       </div>
 
-      <div className="bg-white shadow rounded-lg p-6 mx-4">
+      <div className="surface-card mx-4">
         {loadingFormulations ? (
           <div className="text-center py-8 text-gray-500">Loading formulations...</div>
         ) : formulations.length === 0 ? (
@@ -101,7 +101,7 @@ export default function CompatibilityPage() {
                   setSelectedFormulationId(e.target.value);
                   setResult(null);
                 }}
-                className="w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 border p-2"
+                className="input"
               >
                 {formulations.map((f) => (
                   <option key={f.id} value={f.id}>
@@ -153,7 +153,7 @@ export default function CompatibilityPage() {
             <button
               onClick={evaluateCompatibility}
               disabled={loading || !selectedFormulationId}
-              className="w-full px-4 py-3 bg-sky-700 text-white rounded-md hover:bg-sky-800 disabled:opacity-50 flex items-center justify-center font-medium"
+              className="primary-button w-full justify-center"
             >
               {loading ? (
                 <>

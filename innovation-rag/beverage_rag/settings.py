@@ -73,6 +73,7 @@ class IndexingSettings(BaseModel):
 
 
 class RetrievalSettings(BaseModel):
+    sparse_only: bool = False
     dense_candidates: int = Field(default=30, gt=0)
     sparse_candidates: int = Field(default=30, gt=0)
     top_k: int = Field(default=8, gt=0)
@@ -102,6 +103,7 @@ class GenerationSettings(BaseModel):
     timeout_seconds: float = Field(default=120, gt=0)
     max_output_tokens: int = Field(default=1200, ge=128, le=8192)
     max_context_chars: int = Field(default=18000, ge=2000, le=100000)
+    ollama_context_tokens: int = Field(default=8192, ge=2048, le=131072)
     quality_gate_enabled: bool = False
 
 
