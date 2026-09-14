@@ -360,6 +360,47 @@ const paginationSchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 
+const projectStages = ['brief', 'concept', 'formulation', 'laboratory', 'sensory', 'validation', 'industrialization', 'launched'];
+const projectTransitions = {
+  brief: ['concept'],
+  concept: ['formulation'],
+  formulation: ['laboratory'],
+  laboratory: ['formulation', 'sensory'],
+  sensory: ['formulation', 'validation'],
+  validation: ['formulation', 'industrialization'],
+  industrialization: ['formulation', 'launched'],
+  launched: [],
+};
+const projectInputSchema = z.object({
+  code: z.string().trim().min(1).max(50).optional(),
+  name: z.string().trim().min(2).max(160),
+  business_objective: z.string().trim().max(2000).default(''),
+  target_market: z.string().trim().max(160).default(''),
+  beverage_category: z.string().trim().max(120).default(''),
+  target_claims: z.array(z.string().trim().min(1).max(120)).max(20).default([]),
+  priority: z.enum(['low', 'normal', 'high', 'critical']).default('normal'),
+  due_date: z.string().date().nullable().optional(),
+});
+
+function ensureProjectStorage(request, reply) {
+  if (request.store.featureAvailability?.projects !== false) return true;
+  reply.code(503).send({ error: 'Project storage is not installed. Apply the pending Supabase project migration.' });
+  return false;
+}
+
+function ownedProject(request, id) {
+  return request.store.rdProjects.find(project => project.id === id && isOwnedByRequest(request, project));
+}
+
+function addProjectEvent(request, project, eventType, details = {}) {
+  const event = {
+    id: generateId(), owner_id: request.user?.id, project_id: project.id,
+    event_type: eventType, details, created_at: new Date().toISOString(),
+  };
+  request.store.rdProjectEvents.push(event);
+  return event;
+}
+
 server.get(`${apiPrefix}/auth/me`, async (request) => ({
   data: {
     id: request.user?.id,
@@ -368,6 +409,92 @@ server.get(`${apiPrefix}/auth/me`, async (request) => ({
     role: request.profile?.role || USER_ROLES.ADMIN,
   },
 }));
+
+// ============================================================================
+// R&D PROJECT LIFECYCLE
+// ============================================================================
+
+server.get(`${apiPrefix}/projects`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply)) return;
+  const query = z.object({
+    search: z.string().trim().optional(),
+    status: z.enum(['draft', 'active', 'on_hold', 'completed', 'archived', 'all']).default('all'),
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+    offset: z.coerce.number().int().min(0).default(0),
+  }).parse(request.query);
+  let projects = request.store.rdProjects.filter(item => isOwnedByRequest(request, item));
+  if (query.status !== 'all') projects = projects.filter(item => item.status === query.status);
+  if (query.search) {
+    const needle = query.search.toLowerCase();
+    projects = projects.filter(item => `${item.code} ${item.name} ${item.beverage_category} ${item.target_market}`.toLowerCase().includes(needle));
+  }
+  projects.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+  const data = projects.slice(query.offset, query.offset + query.limit).map(project => ({
+    ...project,
+    event_count: request.store.rdProjectEvents.filter(event => event.project_id === project.id && isOwnedByRequest(request, event)).length,
+  }));
+  return { data, stages: projectStages, pagination: { total: projects.length, limit: query.limit, offset: query.offset, has_more: query.offset + data.length < projects.length } };
+});
+
+server.get(`${apiPrefix}/projects/:id`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const events = request.store.rdProjectEvents
+    .filter(event => event.project_id === project.id && isOwnedByRequest(request, event))
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  return { data: { ...project, events }, allowed_transitions: projectTransitions[project.stage] || [] };
+});
+
+server.post(`${apiPrefix}/projects`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply)) return;
+  const input = projectInputSchema.parse(request.body);
+  const code = input.code || `RD-${new Date().getFullYear()}-${String(request.store.rdProjects.length + 1).padStart(3, '0')}`;
+  if (request.store.rdProjects.some(item => isOwnedByRequest(request, item) && item.code.toLowerCase() === code.toLowerCase())) {
+    return reply.code(409).send({ error: 'Project code already exists' });
+  }
+  const timestamp = new Date().toISOString();
+  const project = {
+    id: generateId(), owner_id: request.user?.id, ...input, code,
+    stage: 'brief', status: 'draft', created_at: timestamp, updated_at: timestamp,
+  };
+  request.store.rdProjects.push(project);
+  addProjectEvent(request, project, 'created', { stage: project.stage, status: project.status });
+  return reply.code(201).send({ data: project, allowed_transitions: projectTransitions.brief });
+});
+
+server.put(`${apiPrefix}/projects/:id`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const updates = projectInputSchema.partial().extend({
+    status: z.enum(['draft', 'active', 'on_hold', 'completed', 'archived']).optional(),
+  }).strict().parse(request.body);
+  if (updates.code && request.store.rdProjects.some(item => item.id !== project.id && isOwnedByRequest(request, item) && item.code.toLowerCase() === updates.code.toLowerCase())) {
+    return reply.code(409).send({ error: 'Project code already exists' });
+  }
+  const beforeStatus = project.status;
+  Object.assign(project, updates, { updated_at: new Date().toISOString() });
+  addProjectEvent(request, project, 'updated', { fields: Object.keys(updates), previous_status: beforeStatus, status: project.status });
+  return { data: project };
+});
+
+server.post(`${apiPrefix}/projects/:id/transition`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const input = z.object({ stage: z.enum(projectStages), note: z.string().trim().max(1000).default('') }).parse(request.body);
+  const allowed = projectTransitions[project.stage] || [];
+  if (!allowed.includes(input.stage)) {
+    return reply.code(409).send({ error: `Invalid transition from ${project.stage} to ${input.stage}`, allowed_transitions: allowed });
+  }
+  const from = project.stage;
+  project.stage = input.stage;
+  project.status = input.stage === 'launched' ? 'completed' : 'active';
+  project.updated_at = new Date().toISOString();
+  addProjectEvent(request, project, 'stage_transition', { from, to: input.stage, note: input.note });
+  return { data: project, allowed_transitions: projectTransitions[project.stage] || [] };
+});
 
 server.put(`${apiPrefix}/auth/profile`, async (request) => {
   const { display_name } = z.object({

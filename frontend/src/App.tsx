@@ -1,6 +1,6 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { Home, Package, FlaskConical, Sparkles, Target, Shield, DollarSign, Menu, X, LogOut, UserRound, History, ClipboardCheck, BarChart3, FileBadge2, BookOpenCheck, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Home, Package, FlaskConical, Sparkles, Target, Shield, DollarSign, Menu, X, LogOut, UserRound, History, ClipboardCheck, BarChart3, FileBadge2, BookOpenCheck, ChevronLeft, ChevronRight, FolderKanban } from 'lucide-react';
 import { useAuth } from './auth/AuthContext';
 import AuthPage from './pages/AuthPage';
 import { hasRole, WORKSPACE_ROLES, type UserRole } from './auth/permissions';
@@ -20,6 +20,7 @@ const LaboratoryResultsPage = React.lazy(() => import('./pages/LaboratoryResults
 const SensoryPage = React.lazy(() => import('./pages/SensoryPage'));
 const LabelsPage = React.lazy(() => import('./pages/LabelsPage'));
 const RagWorkspacePage = React.lazy(() => import('./pages/RagWorkspacePage'));
+const ProjectsPage = React.lazy(() => import('./pages/ProjectsPage'));
 
 function LoadingFallback() {
   return (
@@ -49,6 +50,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { err
 const navSections = [
   { label: 'Workspace', items: [
     { to: '/', icon: Home, label: 'Dashboard' },
+    { to: '/projects', icon: FolderKanban, label: 'R&D Projects', roles: WORKSPACE_ROLES },
     { to: '/ingredients', icon: Package, label: 'Ingredients' },
     { to: '/formulations', icon: FlaskConical, label: 'Formulations' },
   ] },
@@ -158,6 +160,7 @@ function App() {
               <Routes>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/ingredients" element={<IngredientsPage />} />
+                <Route path="/projects" element={<RoleRoute roles={WORKSPACE_ROLES}><ProjectsPage /></RoleRoute>} />
                 <Route path="/formulations" element={<FormulationsPage />} />
                 <Route path="/laboratory-results" element={<RoleRoute roles={WORKSPACE_ROLES}><LaboratoryResultsPage /></RoleRoute>} />
                 <Route path="/sensory" element={<RoleRoute roles={WORKSPACE_ROLES}><SensoryPage /></RoleRoute>} />

@@ -153,6 +153,35 @@ export interface TargetGenerationConstraints {
   count?: number;
 }
 
+export type ProjectStage = 'brief' | 'concept' | 'formulation' | 'laboratory' | 'sensory' | 'validation' | 'industrialization' | 'launched';
+export type ProjectStatus = 'draft' | 'active' | 'on_hold' | 'completed' | 'archived';
+
+export interface RDProjectEvent {
+  id: string;
+  project_id: string;
+  event_type: 'created' | 'updated' | 'stage_transition' | string;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface RDProject {
+  id: string;
+  code: string;
+  name: string;
+  business_objective: string;
+  target_market: string;
+  beverage_category: string;
+  target_claims: string[];
+  priority: 'low' | 'normal' | 'high' | 'critical';
+  due_date?: string | null;
+  stage: ProjectStage;
+  status: ProjectStatus;
+  event_count?: number;
+  events?: RDProjectEvent[];
+  created_at: string;
+  updated_at: string;
+}
+
 export interface LaboratoryResult {
   id: string;
   formulation_id: string;

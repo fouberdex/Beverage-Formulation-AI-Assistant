@@ -86,6 +86,29 @@ test('pagination treats offset and limit as numbers', async () => {
   assert.deepEqual(response.json().pagination, { total: 5, limit: 2, offset: 1, has_more: true });
 });
 
+test('R&D projects persist a controlled lifecycle and reject skipped gates', async () => {
+  const created = await server.inject({
+    method: 'POST', url: '/api/v1/projects',
+    payload: { name: 'Algerian citrus launch', beverage_category: 'carbonated soft drink', target_market: 'Algeria', priority: 'high' },
+  });
+  assert.equal(created.statusCode, 201);
+  assert.equal(created.json().data.stage, 'brief');
+  const id = created.json().data.id;
+
+  const skipped = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/transition`, payload: { stage: 'laboratory' } });
+  assert.equal(skipped.statusCode, 409);
+  assert.deepEqual(skipped.json().allowed_transitions, ['concept']);
+
+  const advanced = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/transition`, payload: { stage: 'concept', note: 'Brief approved' } });
+  assert.equal(advanced.statusCode, 200);
+  assert.equal(advanced.json().data.status, 'active');
+
+  const detail = await server.inject({ method: 'GET', url: `/api/v1/projects/${id}` });
+  assert.equal(detail.statusCode, 200);
+  assert.equal(detail.json().data.events.filter(event => event.event_type === 'stage_transition').length, 1);
+  assert.deepEqual(detail.json().allowed_transitions, ['formulation']);
+});
+
 test('missing resources return HTTP 404', async () => {
   const response = await server.inject({ method: 'GET', url: '/api/v1/formulations/not-real' });
   assert.equal(response.statusCode, 404);

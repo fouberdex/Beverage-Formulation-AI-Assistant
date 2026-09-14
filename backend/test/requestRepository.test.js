@@ -21,6 +21,8 @@ function emptyStore() {
     aiLearningExamples: [],
     sensoryStudies: [],
     sensoryResponses: [],
+    rdProjects: [],
+    rdProjectEvents: [],
   };
 }
 
@@ -48,6 +50,7 @@ test('request change sets do not rewrite unchanged collections', () => {
   store.formulations[0].status = 'active';
   store.aiVariants.push({ id: 'variant-1', owner_id: 'owner-1' });
   store.sensoryStudies.push({ id: 'study-1', owner_id: 'owner-1', status: 'active' });
+  store.rdProjects.push({ id: 'project-1', owner_id: 'owner-1', stage: 'brief' });
   const auditEvent = { owner_id: 'owner-1', action: 'post', entity_type: 'formulations' };
   const changes = buildChangeSet(store, auditEvent);
 
@@ -55,8 +58,9 @@ test('request change sets do not rewrite unchanged collections', () => {
   assert.deepEqual(changes.formulations, [store.formulations[0]]);
   assert.deepEqual(changes.aiVariants, [store.aiVariants[0]]);
   assert.deepEqual(changes.sensoryStudies, [store.sensoryStudies[0]]);
+  assert.deepEqual(changes.rdProjects, [store.rdProjects[0]]);
   assert.deepEqual(changes.auditEvents, [auditEvent]);
-  assert.equal(Object.values(changes).flat().length, 4);
+  assert.equal(Object.values(changes).flat().length, 5);
 });
 
 function createFakeClient(tables) {
@@ -100,6 +104,14 @@ test('Supabase request stores contain only the authenticated owner records', asy
       { owner_id: 'owner-1', payload: { id: 'response-1', study_id: 'study-1' } },
       { owner_id: 'owner-2', payload: { id: 'response-2', study_id: 'study-2' } },
     ],
+    rd_projects: [
+      { owner_id: 'owner-1', payload: { id: 'project-1', name: 'One' } },
+      { owner_id: 'owner-2', payload: { id: 'project-2', name: 'Two' } },
+    ],
+    rd_project_events: [
+      { owner_id: 'owner-1', payload: { id: 'event-1', project_id: 'project-1' } },
+      { owner_id: 'owner-2', payload: { id: 'event-2', project_id: 'project-2' } },
+    ],
   });
 
   const first = await loadRequestStore('owner-1', { mode: 'supabase', client });
@@ -113,6 +125,9 @@ test('Supabase request stores contain only the authenticated owner records', asy
   assert.deepEqual(second.sensoryStudies.map(item => item.id), ['study-2']);
   assert.deepEqual(first.sensoryResponses.map(item => item.id), ['response-1']);
   assert.equal(first.featureAvailability.sensory, true);
+  assert.deepEqual(first.rdProjects.map(item => item.id), ['project-1']);
+  assert.deepEqual(second.rdProjectEvents.map(item => item.id), ['event-2']);
+  assert.equal(first.featureAvailability.projects, true);
 });
 
 test('missing sensory tables are exposed as unavailable instead of an empty successful feature', async () => {
@@ -125,6 +140,17 @@ test('missing sensory tables are exposed as unavailable instead of an empty succ
   assert.equal(store.featureAvailability.sensory, false);
   assert.deepEqual(store.sensoryStudies, []);
   assert.deepEqual(store.sensoryResponses, []);
+});
+
+test('missing project tables are exposed as unavailable without taking down other features', async () => {
+  const missingTable = { code: 'PGRST205', message: 'Could not find the table in the schema cache' };
+  const store = await loadRequestStore('owner-1', {
+    mode: 'supabase',
+    client: createFakeClient({ __errors: { rd_projects: missingTable, rd_project_events: missingTable } }),
+  });
+  assert.equal(store.featureAvailability.projects, false);
+  assert.deepEqual(store.rdProjects, []);
+  assert.deepEqual(store.rdProjectEvents, []);
 });
 
 test('Supabase request stores fall back to the bundled catalog when the shared table is empty', async () => {

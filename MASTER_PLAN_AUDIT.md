@@ -93,7 +93,7 @@ and extraction provenance must remain immutable.
 
 ## 7. Phased implementation plan
 
-### Phase 0 — stabilization (current)
+### Phase 0 — stabilization (completed)
 
 - Keep CI/build/API/browser checks green.
 - Maintain one executable migration chain and prove hosted alignment.
@@ -103,11 +103,16 @@ and extraction provenance must remain immutable.
 
 ### Phase 1 — closed R&D loop
 
-- Add the unified project, decision and milestone model.
+- Add the unified project, decision and milestone model. **Foundation delivered:** owned projects, explicit stages, controlled transitions and append-only event trail.
 - Introduce immutable formulation versions.
 - Link experiments, lab results and sensory studies to project/version.
 - Add project overview, lifecycle timeline and cross-module navigation.
 - Preserve current standalone workflows during migration.
+
+Phase 1 is intentionally being delivered in reviewable tranches. Tranche 1 adds
+the project portfolio and lifecycle without changing existing formulation, lab or
+sensory records. Tranche 2 will add the validated project brief and explicit links
+to immutable formulation versions.
 
 ### Phase 2 — formulation intelligence
 

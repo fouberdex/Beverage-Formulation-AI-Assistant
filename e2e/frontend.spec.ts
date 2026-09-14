@@ -16,6 +16,7 @@ async function mockApi(page: Page, options: { formulationStatus?: number } = {})
     if (path === '/ingredients/meta/stats') return reply({ data: { total_ingredients: 42 } });
     if (path === '/ingredients/meta/categories') return reply({ data: ['base', 'flavor'] });
     if (path === '/ingredients') return reply({ data: [], pagination: { total: 0, limit: 25, offset: 0, has_more: false } });
+    if (path === '/projects') return reply({ data: [], stages: ['brief', 'concept', 'formulation', 'laboratory', 'sensory', 'validation', 'industrialization', 'launched'], pagination: { total: 0, limit: 12, offset: 0, has_more: false } });
     if (path === '/ai/governance') return reply({ data: {
       provider: { provider: 'google-gemini', model: 'test-model', configured: true },
       privacy: { external_processing_enabled: false, include_formulation_name: false, prompt_or_response_content_stored: false },
@@ -102,9 +103,9 @@ test('dashboard has no serious automated accessibility violations', async ({ pag
 });
 
 test('core workspace pages have no serious automated accessibility violations', async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   await useRole(page, 'admin'); await mockApi(page);
-  for (const path of ['/ingredients', '/formulations', '/compatibility', '/history', '/account', '/laboratory-results', '/sensory', '/labels', '/regulatory', '/cost', '/ai', '/target-generation']) {
+  for (const path of ['/projects', '/ingredients', '/formulations', '/compatibility', '/history', '/account', '/laboratory-results', '/sensory', '/labels', '/regulatory', '/cost', '/ai', '/target-generation']) {
     await page.goto(path);
     await expect(page.locator('h1')).toBeVisible();
     const results = await new AxeBuilder({ page }).analyze();
@@ -114,6 +115,9 @@ test('core workspace pages have no serious automated accessibility violations', 
 
 test('new production workspaces are reachable and expose their primary controls', async ({ page }) => {
   await useRole(page, 'admin'); await mockApi(page);
+  await page.goto('/projects');
+  await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'New project' }).first()).toBeVisible();
   await page.goto('/laboratory-results');
   await expect(page.getByRole('heading', { name: 'Laboratory Results' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Import CSV / Excel' })).toBeVisible();

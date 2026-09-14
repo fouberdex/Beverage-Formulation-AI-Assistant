@@ -47,6 +47,19 @@ try {
   const sugar = (await api('/ingredients/code/SWEET-001')).data;
   ok('Ingredient catalog connection');
 
+  const project = (await api('/projects', { method: 'POST', body: {
+    code: `RD-SMOKE-${suffix}`.slice(0, 48), name: 'Demo R&D lifecycle smoke test',
+    beverage_category: 'carbonated soft drink', target_market: 'Algeria', priority: 'high',
+    business_objective: 'Verify durable project lifecycle persistence before demonstration.',
+  } })).data;
+  await api(`/projects/${project.id}`, { method: 'PUT', body: { target_claims: ['low sugar'] } });
+  await api(`/projects/${project.id}/transition`, { method: 'POST', body: { stage: 'concept', note: 'Automated brief approval' } });
+  const projectDetail = (await api(`/projects/${project.id}`)).data;
+  if (projectDetail.stage !== 'concept' || !projectDetail.events.some(event => event.event_type === 'stage_transition')) {
+    throw new Error('R&D project lifecycle was not persisted');
+  }
+  ok('R&D project create, update, transition and event persistence');
+
   const formulation = (await api('/formulations', { method: 'POST', body: {
     code: `SMOKE-${suffix}`.slice(0, 48), name: 'Demo persistence smoke test', beverage_type: 'soft_drink',
     ingredients: [{ ingredient_id: water.id, percentage: 90 }, { ingredient_id: sugar.id, percentage: 10 }],
@@ -119,7 +132,7 @@ try {
     const removed = await admin.auth.admin.deleteUser(userId);
     if (removed.error) console.error(`Cleanup warning: ${removed.error.message}`);
     else {
-      const tables = ['formulations', 'laboratory_results', 'sensory_studies', 'sensory_responses', 'compliance_records', 'batch_cost_calculations', 'target_generation_runs', 'ai_variants'];
+      const tables = ['rd_projects', 'rd_project_events', 'formulations', 'laboratory_results', 'sensory_studies', 'sensory_responses', 'compliance_records', 'batch_cost_calculations', 'target_generation_runs', 'ai_variants'];
       const leftovers = [];
       for (const table of tables) {
         const { count, error } = await admin.from(table).select('*', { head: true, count: 'exact' }).eq('owner_id', userId);

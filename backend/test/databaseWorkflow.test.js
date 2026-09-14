@@ -24,6 +24,7 @@ test('Supabase migrations form an ordered, complete database workflow', async ()
     '20260823142210_laboratory_feedback_tables.sql',
     '20260823142231_laboratory_feedback_commit.sql',
     '20260825202029_sensory_studies_and_responses.sql',
+    '20260914180000_rd_projects_foundation.sql',
   ]);
 
   const bootstrap = await readFile(
@@ -72,6 +73,17 @@ test('sensory migration isolates studies and responses and keeps writes server-c
   assert.match(sensory, /revoke all on function public\.commit_sensory_data\(jsonb\) from public, anon, authenticated/);
 });
 
+test('R&D project migration provides tenant isolation, lifecycle fields and an append-only event commit', async () => {
+  const migration = await readFile(new URL('migrations/20260914180000_rd_projects_foundation.sql', supabaseDirectory), 'utf8');
+  assert.match(migration, /create table public\.rd_projects/);
+  assert.match(migration, /create table public\.rd_project_events/);
+  assert.match(migration, /stage in \('brief'.*'launched'\)/s);
+  assert.match(migration, /foreign key \(owner_id, project_id\)/);
+  assert.match(migration, /enable row level security/g);
+  assert.match(migration, /on conflict \(id\) do nothing/);
+  assert.match(migration, /revoke all on function public\.commit_rd_project_data\(jsonb\) from public, anon, authenticated/);
+});
+
 test('Supabase seed data contains shared catalog rows only', async () => {
   const seed = await readFile(new URL('seed.sql', supabaseDirectory), 'utf8');
   const insertedTables = [...seed.matchAll(/insert\s+into\s+([\w.]+)/gi)].map(match => match[1].toLowerCase());
@@ -110,4 +122,13 @@ test('sensory RLS integration suite covers study, response, RPC and relational i
   assert.match(suite, /authenticated cannot execute sensory commit RPC/);
   assert.match(suite, /composite foreign key rejects a response attached across owners/);
   assert.match(suite, /panelist code is unique within an owned study/);
+});
+
+test('R&D project RLS integration suite covers ownership, server-only writes and relational isolation', async () => {
+  const suite = await readFile(new URL('tests/database/005_rd_projects_rls.test.sql', supabaseDirectory), 'utf8');
+  assert.match(suite, /tenant A sees only its R&D project/);
+  assert.match(suite, /authenticated clients cannot bypass the project API/);
+  assert.match(suite, /authenticated cannot execute project commit RPC/);
+  assert.match(suite, /composite foreign key rejects a project event attached across owners/);
+  assert.match(suite, /project code is unique within an owner workspace/);
 });

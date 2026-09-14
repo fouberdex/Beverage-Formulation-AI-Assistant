@@ -44,6 +44,14 @@ export const ingredientsAPI = {
   getStats: () => api.get('/ingredients/meta/stats'),
 };
 
+export const projectsAPI = {
+  getAll: (filters?: { search?: string; status?: string; limit?: number; offset?: number }) => api.get('/projects', { params: filters }),
+  getById: (id: string) => api.get(`/projects/${id}`),
+  create: (data: any) => api.post('/projects', data),
+  update: (id: string, data: any) => api.put(`/projects/${id}`, data),
+  transition: (id: string, stage: string, note = '') => api.post(`/projects/${id}/transition`, { stage, note }),
+};
+
 // Formulations API
 export const formulationsAPI = {
   getAll: (filters?: any) => api.get('/formulations', { params: filters }),
