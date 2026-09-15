@@ -185,6 +185,13 @@ gaps and an explicit uncertainty statement. These advisory fields cannot alter t
 deterministic candidate composition, feasibility ledger, Pareto rank or recorded
 stability analysis.
 
+Label Studio now resolves a requested shelf-life duration against stability evidence
+for the selected exact formulation version. The server distinguishes observed days
+from validated coverage, where validation requires a completed and fully observed
+program without an observed limit failure. Missing or insufficient coverage blocks
+review readiness while draft generation remains available; no duration is
+extrapolated and evidence identifiers are retained in the generated label record.
+
 ### Phase 5 — suppliers, documents and packaging
 
 - Supplier qualification, supplier-material facts, document provenance/OCR review

@@ -42,6 +42,11 @@ async function mockApi(page: Page, options: { formulationStatus?: number; withPr
       return reply({ data: all.slice(offset, offset + limit), pagination: { total: all.length, limit, offset, has_more: offset + limit < all.length } });
     }
     if (/^\/formulations\/[^/]+\/versions$/.test(path)) return reply({ data: [formulation(1)] });
+    if (/^\/regulatory\/formulations\/[^/]+\/stability-evidence$/.test(path)) return reply({ data: {
+      formulation_version_id: path.split('/')[3], requested_shelf_life: { months: 12, comparison_days: 360, conversion_basis: '30 days per requested label month; comparison only' },
+      observed_coverage_days: 90, validated_coverage_days: 0, gap_days: 360, status: 'not_substantiated',
+      review_gate: { status: 'blocked', reason: 'The requested duration exceeds completed, fully observed stability evidence for this exact formulation version.' },
+    } });
     if (path === '/target-generation/runs' || path === '/audit') return reply({ data: [], pagination: { total: 0, limit: 10, offset: 0, has_more: false } });
     if (path === '/target-generation/generate' && route.request().method() === 'POST') return reply({ data: {
       run_id: 'run-1', feasibility: { feasible: true, blocker_count: 0, feasible_candidate_count: 1, generated_candidate_count: 1 },
@@ -298,6 +303,8 @@ test('Label Studio tabs expose complete recipe, builder, live and report workflo
   await expect(page.getByRole('button', { name: /Formula 1/ }).first()).toBeVisible();
   await page.getByRole('button', { name: /Formula 1/ }).first().click();
   await expect(page.getByRole('tab', { name: 'Label Builder' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText('Shelf-life claim not substantiated')).toBeVisible();
+  await expect(page.getByText('90 days')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Generate and save label draft' })).toBeEnabled();
   await page.getByRole('tab', { name: 'Live Label' }).click();
   await expect(page.getByRole('heading', { name: 'No live label yet' })).toBeVisible();

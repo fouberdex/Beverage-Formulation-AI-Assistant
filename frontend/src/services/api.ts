@@ -183,6 +183,8 @@ export const regulatoryAPI = {
     api.get(`/regulatory/formulations/${formulationId}/compliance`),
   generateLabels: (formulationId: string, options?: any) =>
     api.post(`/regulatory/formulations/${formulationId}/labels`, options || {}),
+  getStabilityEvidence: (formulationId: string, requestedShelfLifeMonths: number) =>
+    api.get(`/regulatory/formulations/${formulationId}/stability-evidence`, { params: { requested_shelf_life_months: requestedShelfLifeMonths } }),
   getLabels: (formulationId: string, language?: string) =>
     api.get(`/regulatory/formulations/${formulationId}/labels`, { params: { language } }),
 };

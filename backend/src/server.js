@@ -42,6 +42,7 @@ import { analyzeSensoryStudy } from './services/sensoryStudyAnalytics.js';
 import { FORMULATION_ENGINE_VERSION, generateFormulationCandidates } from './services/formulationIntelligence.js';
 import { DOE_ENGINE_VERSION, analyzeDoeDesign, buildDoeReportCsv, generateDoeDesign } from './services/doeEngine.js';
 import { analyzeStabilityProgram } from './services/stabilityEngine.js';
+import { buildLabelStabilityEvidence } from './services/labelStabilityEvidence.js';
 import { analyzePackagingConfiguration } from './services/packagingEngine.js';
 import { analyzeProductionTrial, evaluateQcRelease } from './services/industrialQualityEngine.js';
 import { buildProductPassport, structuredWorkspaceSearch } from './services/productPassportEngine.js';
@@ -3567,6 +3568,25 @@ server.get(`${apiPrefix}/regulatory/formulations/:id/compliance`, async (request
   return { data: compliance };
 });
 
+function labelStabilityEvidence(request, formulation, requestedShelfLifeMonths) {
+  return buildLabelStabilityEvidence({
+    formulationVersionId: formulation.id,
+    requestedShelfLifeMonths,
+    programs: request.store.rdStabilityPrograms.filter(item => isOwnedByRequest(request, item)),
+    observations: request.store.rdStabilityObservations.filter(item => isOwnedByRequest(request, item)),
+    evidenceStorageAvailable: request.store.featureAvailability?.stability !== false,
+  });
+}
+
+server.get(`${apiPrefix}/regulatory/formulations/:id/stability-evidence`, async (request, reply) => {
+  const formulation = findAccessibleFormulation(request, request.params.id);
+  if (!formulation) return reply.code(404).send({ error: 'Formulation not found' });
+  const query = z.object({
+    requested_shelf_life_months: z.coerce.number().int().positive().max(120).default(12),
+  }).parse(request.query);
+  return { data: labelStabilityEvidence(request, formulation, query.requested_shelf_life_months) };
+});
+
 server.post(`${apiPrefix}/regulatory/formulations/:id/labels`, async (request, reply) => {
   const formulation = findAccessibleFormulation(request, request.params.id);
   if (!formulation) {
@@ -3618,12 +3638,14 @@ server.post(`${apiPrefix}/regulatory/formulations/:id/labels`, async (request, r
   };
   const ingredientNames = (formulation.ingredients || []).map(fi => getIngredientById(request, fi.ingredient_id)?.name || '');
   const allergens = Object.entries(allergenPatterns).filter(([, pattern]) => ingredientNames.some(name => pattern.test(name))).map(([name]) => name);
+  const stabilityEvidence = labelStabilityEvidence(request, formulation, options.shelf_life_months);
   const common = {
     market: options.market, serving_size_ml: options.serving_size_ml, servings_per_container: options.servings_per_container,
     net_volume_ml: options.net_volume_ml, manufacturer: { name: options.manufacturer_name, address: options.manufacturer_address },
     country_of_origin: options.country_of_origin, storage_instructions: options.storage_instructions,
     shelf_life_months: options.shelf_life_months, lot: options.lot_placeholder, allergens,
-    claims: options.claims, status: 'draft_requires_regulatory_review', generated_at: new Date().toISOString(),
+    claims: options.claims, status: 'draft_requires_regulatory_review', stability_evidence: stabilityEvidence,
+    generated_at: new Date().toISOString(),
   };
   
   const labels = {

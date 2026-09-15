@@ -7,6 +7,15 @@ import StatusMessage from '../components/StatusMessage';
 import type { Formulation } from '../types';
 
 type StudioTab = 'recipes' | 'builder' | 'live' | 'reports';
+type LabelStabilityEvidence = {
+  formulation_version_id: string;
+  requested_shelf_life: { months: number; comparison_days: number; conversion_basis: string };
+  observed_coverage_days: number;
+  validated_coverage_days: number;
+  gap_days: number;
+  status: 'substantiated' | 'not_substantiated' | 'evidence_storage_unavailable';
+  review_gate: { status: 'eligible_after_regulatory_review' | 'blocked'; reason: string };
+};
 const claimOptions = ['No added sugar', 'Sugar free', 'Low calorie', 'Vegan', 'Halal', 'Natural flavours', 'Source of vitamin C', 'Preservative free'];
 const defaultOptions = { market: 'algeria', language: 'fr', serving_size_ml: 250, servings_per_container: 1, net_volume_ml: 250, manufacturer_name: '', manufacturer_address: '', country_of_origin: 'Algeria', storage_instructions: 'Store in a cool, dry place away from direct sunlight.', shelf_life_months: 12, lot_placeholder: 'LOT: ______', claims: [] as string[] };
 
@@ -18,6 +27,8 @@ export default function LabelsPage() {
   const [options, setOptions] = useState({ ...defaultOptions });
   const [labels, setLabels] = useState<any>(null);
   const [insight, setInsight] = useState<any>(null);
+  const [stabilityEvidence, setStabilityEvidence] = useState<LabelStabilityEvidence | null>(null);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [error, setError] = useState('');
@@ -25,6 +36,20 @@ export default function LabelsPage() {
 
   useEffect(() => { void loadFormulations(); }, []);
   useEffect(() => { if (formulationId) void loadSavedLabel(formulationId); }, [formulationId]);
+  useEffect(() => {
+    if (!formulationId || !options.shelf_life_months) { setStabilityEvidence(null); return; }
+    let active = true;
+    const timer = window.setTimeout(async () => {
+      setEvidenceLoading(true);
+      try {
+        const response = await regulatoryAPI.getStabilityEvidence(formulationId, options.shelf_life_months);
+        if (active) setStabilityEvidence(response.data.data);
+      } catch (reason) {
+        if (active) { setStabilityEvidence(null); setError(getErrorMessage(reason, 'Unable to assess stability evidence.')); }
+      } finally { if (active) setEvidenceLoading(false); }
+    }, 200);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [formulationId, options.shelf_life_months]);
 
   async function loadFormulations() {
     try {
@@ -46,6 +71,7 @@ export default function LabelsPage() {
     try {
       const response = await regulatoryAPI.generateLabels(formulationId, options);
       setLabels(response.data.data);
+      setStabilityEvidence(response.data.data?.[options.language]?.stability_evidence || null);
       setMessage('Draft label generated and saved with the formulation.');
       setTab('builder');
     } catch (reason) { setError(getErrorMessage(reason, 'Unable to generate the label.')); }
@@ -96,7 +122,8 @@ export default function LabelsPage() {
         <div className="grid gap-4 sm:grid-cols-3"><NumberField label="Net volume (mL)" value={options.net_volume_ml} onChange={value => setOptions({ ...options, net_volume_ml: value })}/><NumberField label="Serving (mL)" value={options.serving_size_ml} onChange={value => setOptions({ ...options, serving_size_ml: value })}/><NumberField label="Servings / pack" value={options.servings_per_container} onChange={value => setOptions({ ...options, servings_per_container: value })}/></div>
         <div className="grid gap-4 sm:grid-cols-2"><Field label="Manufacturer / responsible operator"><input className="input" value={options.manufacturer_name} onChange={event => setOptions({ ...options, manufacturer_name: event.target.value })}/></Field><Field label="Country of origin"><input className="input" value={options.country_of_origin} onChange={event => setOptions({ ...options, country_of_origin: event.target.value })}/></Field></div>
         <Field label="Address"><textarea className="input" rows={2} value={options.manufacturer_address} onChange={event => setOptions({ ...options, manufacturer_address: event.target.value })}/></Field>
-        <div className="grid gap-4 sm:grid-cols-2"><NumberField label="Shelf life (months)" value={options.shelf_life_months} onChange={value => setOptions({ ...options, shelf_life_months: value })}/><Field label="Lot placeholder"><input className="input" value={options.lot_placeholder} onChange={event => setOptions({ ...options, lot_placeholder: event.target.value })}/></Field></div>
+        <div className="grid gap-4 sm:grid-cols-2"><NumberField label="Requested shelf life (months)" value={options.shelf_life_months} onChange={value => setOptions({ ...options, shelf_life_months: value })}/><Field label="Lot placeholder"><input className="input" value={options.lot_placeholder} onChange={event => setOptions({ ...options, lot_placeholder: event.target.value })}/></Field></div>
+        <StabilityEvidencePanel evidence={stabilityEvidence} loading={evidenceLoading}/>
         <Field label="Storage instructions"><textarea className="input" rows={2} value={options.storage_instructions} onChange={event => setOptions({ ...options, storage_instructions: event.target.value })}/></Field>
         <div><span className="text-sm font-bold text-slate-700">Proposed claims</span><div className="mt-2 flex flex-wrap gap-2">{claimOptions.map(claim => <button key={claim} type="button" aria-pressed={options.claims.includes(claim)} onClick={() => toggleClaim(claim)} className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${options.claims.includes(claim) ? 'border-emerald-600 bg-emerald-50 text-emerald-800' : 'border-slate-300 text-slate-600 hover:border-slate-500'}`}>{options.claims.includes(claim) && <CheckCircle2 className="mr-1 inline h-3 w-3"/>}{claim}</button>)}</div></div>
         <button type="button" disabled={loading || !formulationId} onClick={() => void generate()} className="primary-button w-full justify-center"><Sparkles className="h-4 w-4"/>{loading ? 'Generating…' : 'Generate and save label draft'}</button>
@@ -123,13 +150,23 @@ function LabelPreview({ label, language }: { label: any; language: string }) {
 
 function LiveLabel({ label, formulation, previewUrl, onCopy, onPrint, onDownload, onBuild }: any) {
   if (!label) return <Empty title="No live label yet" detail="Generate a saved label draft before creating its QR preview." action="Open Label Builder" onAction={onBuild}/>;
-  return <section className="grid gap-6 lg:grid-cols-[22rem_1fr]"><div className="surface-card flex flex-col items-center text-center"><div className="rounded-2xl border border-slate-200 bg-white p-4"><QRCodeSVG value={previewUrl} size={220} level="M" title={`QR preview for ${formulation?.name || 'product'}`}/></div><span className="mt-4 inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">● WORKSPACE LIVE</span><h2 className="mt-3 text-xl font-black">{formulation?.name}</h2><p className="mt-2 break-all text-xs text-sky-700">{previewUrl}</p></div><div className="surface-card"><p className="eyebrow">Live Label</p><h2 className="mt-1 text-2xl font-black">Digital product preview</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">The QR points to the authenticated BeverageAI workspace preview. A public hosted URL requires deployment and an explicit publication workflow.</p><div className="mt-6 grid gap-3 sm:grid-cols-3"><button type="button" onClick={onCopy} className="secondary-button justify-center"><Clipboard className="h-4 w-4"/>Copy link</button><button type="button" onClick={onPrint} className="secondary-button justify-center"><Printer className="h-4 w-4"/>Print / PDF</button><button type="button" onClick={onDownload} className="primary-button justify-center"><Download className="h-4 w-4"/>Download data</button></div><div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><strong>Publication gate:</strong> this draft remains internal until legal review, missing nutrient values and proposed claims are validated.</div></div></section>;
+  const evidenceBlocked = label.stability_evidence?.review_gate?.status !== 'eligible_after_regulatory_review';
+  return <section className="grid gap-6 lg:grid-cols-[22rem_1fr]"><div className="surface-card flex flex-col items-center text-center"><div className="rounded-2xl border border-slate-200 bg-white p-4"><QRCodeSVG value={previewUrl} size={220} level="M" title={`QR preview for ${formulation?.name || 'product'}`}/></div><span className="mt-4 inline-flex rounded-full bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700">● INTERNAL PREVIEW</span><h2 className="mt-3 text-xl font-black">{formulation?.name}</h2><p className="mt-2 break-all text-xs text-sky-700">{previewUrl}</p></div><div className="surface-card"><p className="eyebrow">Live Label</p><h2 className="mt-1 text-2xl font-black">Digital product preview</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">The QR points to the authenticated BeverageAI workspace preview. A public hosted URL requires deployment and an explicit publication workflow.</p><div className="mt-6 grid gap-3 sm:grid-cols-3"><button type="button" onClick={onCopy} className="secondary-button justify-center"><Clipboard className="h-4 w-4"/>Copy link</button><button type="button" onClick={onPrint} className="secondary-button justify-center"><Printer className="h-4 w-4"/>Print / PDF</button><button type="button" onClick={onDownload} className="primary-button justify-center"><Download className="h-4 w-4"/>Download data</button></div><div className={`mt-6 rounded-xl border p-4 text-sm ${evidenceBlocked ? 'border-rose-200 bg-rose-50 text-rose-950' : 'border-amber-200 bg-amber-50 text-amber-950'}`}><strong>Publication gate:</strong> {evidenceBlocked ? 'requested shelf life is not substantiated for this exact formulation version. ' : ''}This draft remains internal until legal review, missing nutrient values and proposed claims are validated.</div></div></section>;
 }
 
 function Reports({ label, formulation, onBuild, onGemini, aiLoading, insight }: any) {
   if (!label) return <Empty title="No label report available" detail="Generate a label draft to calculate readiness." action="Open Label Builder" onAction={onBuild}/>;
-  const issues = label.nutrition.data_gaps.length + (label.claims?.length || 0) + Number(!label.manufacturer.name) + Number(!label.manufacturer.address);
-  return <section className="space-y-5"><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><ReportMetric label="Readiness" value={issues ? 'Review required' : 'Ready for review'} tone={issues ? 'amber' : 'green'}/><ReportMetric label="Nutrition gaps" value={label.nutrition.data_gaps.length}/><ReportMetric label="Detected allergens" value={label.allergens.length}/><ReportMetric label="Claims to validate" value={label.claims.length}/></div><div className="grid gap-6 lg:grid-cols-[1fr_22rem]"><div className="surface-card"><p className="eyebrow">Compliance report</p><h2 className="mt-1 text-xl font-black">{formulation?.name}</h2><div className="mt-5 divide-y divide-slate-100"><ReportRow title="Market" value={String(label.market).toUpperCase()}/><ReportRow title="Nutrition data" value={label.nutrition.data_gaps.length ? `Missing: ${label.nutrition.data_gaps.join(', ')}` : 'Complete for configured fields'}/><ReportRow title="Allergen screen" value={label.allergens.length ? label.allergens.join(', ') : 'No name-based match; supplier verification required'}/><ReportRow title="Claims" value={label.claims.length ? label.claims.join(', ') : 'No claims proposed'}/><ReportRow title="Operator" value={label.manufacturer.name || 'Missing'}/><ReportRow title="Status" value={label.status.replace(/_/g, ' ')}/></div></div><aside className="surface-card"><Bot className="h-8 w-8 text-violet-700"/><h2 className="mt-3 text-lg font-black">Gemini second pass</h2><p className="mt-2 text-sm leading-6 text-slate-600">Review only the saved formulation and label data; no legal approval is inferred.</p><button type="button" disabled={aiLoading} onClick={onGemini} className="primary-button mt-5 w-full justify-center">{aiLoading ? 'Reviewing…' : 'Review with Gemini'}</button></aside></div>{insight && <Insight insight={insight}/>}</section>;
+  const evidence = label.stability_evidence as LabelStabilityEvidence | undefined;
+  const evidenceBlocked = evidence?.review_gate?.status !== 'eligible_after_regulatory_review';
+  const issues = label.nutrition.data_gaps.length + (label.claims?.length || 0) + Number(!label.manufacturer.name) + Number(!label.manufacturer.address) + Number(evidenceBlocked);
+  return <section className="space-y-5"><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><ReportMetric label="Readiness" value={issues ? 'Review required' : 'Ready for review'} tone={issues ? 'amber' : 'green'}/><ReportMetric label="Validated stability" value={`${evidence?.validated_coverage_days || 0} days`}/><ReportMetric label="Nutrition gaps" value={label.nutrition.data_gaps.length}/><ReportMetric label="Claims to validate" value={label.claims.length}/></div>{evidence && <StabilityEvidencePanel evidence={evidence} loading={false}/>}<div className="grid gap-6 lg:grid-cols-[1fr_22rem]"><div className="surface-card"><p className="eyebrow">Compliance report</p><h2 className="mt-1 text-xl font-black">{formulation?.name}</h2><div className="mt-5 divide-y divide-slate-100"><ReportRow title="Market" value={String(label.market).toUpperCase()}/><ReportRow title="Nutrition data" value={label.nutrition.data_gaps.length ? `Missing: ${label.nutrition.data_gaps.join(', ')}` : 'Complete for configured fields'}/><ReportRow title="Allergen screen" value={label.allergens.length ? label.allergens.join(', ') : 'No name-based match; supplier verification required'}/><ReportRow title="Claims" value={label.claims.length ? label.claims.join(', ') : 'No claims proposed'}/><ReportRow title="Operator" value={label.manufacturer.name || 'Missing'}/><ReportRow title="Stability evidence" value={evidence ? evidence.status.replace(/_/g, ' ') : 'Missing — regenerate this legacy draft'}/><ReportRow title="Status" value={label.status.replace(/_/g, ' ')}/></div></div><aside className="surface-card"><Bot className="h-8 w-8 text-violet-700"/><h2 className="mt-3 text-lg font-black">Gemini second pass</h2><p className="mt-2 text-sm leading-6 text-slate-600">Review only the saved formulation and label data; no legal approval is inferred.</p><button type="button" disabled={aiLoading} onClick={onGemini} className="primary-button mt-5 w-full justify-center">{aiLoading ? 'Reviewing…' : 'Review with Gemini'}</button></aside></div>{insight && <Insight insight={insight}/>}</section>;
+}
+
+function StabilityEvidencePanel({ evidence, loading }: { evidence: LabelStabilityEvidence | null; loading: boolean }) {
+  if (loading) return <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-600">Checking exact-version stability evidence…</div>;
+  if (!evidence) return <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-950"><strong>Stability evidence unavailable.</strong><p className="mt-1">The requested shelf life cannot be treated as substantiated.</p></div>;
+  const blocked = evidence.review_gate.status === 'blocked';
+  return <div aria-live="polite" className={`rounded-2xl border p-4 ${blocked ? 'border-rose-300 bg-rose-50 text-rose-950' : 'border-emerald-300 bg-emerald-50 text-emerald-950'}`}><div className="flex gap-3"><AlertTriangle className={`mt-0.5 h-5 w-5 shrink-0 ${blocked ? 'text-rose-700' : 'text-emerald-700'}`}/><div className="min-w-0"><strong>{blocked ? 'Shelf-life claim not substantiated' : 'Recorded stability coverage meets the request'}</strong><div className="mt-3 grid gap-2 text-xs sm:grid-cols-3"><Mini label="Requested" value={`${evidence.requested_shelf_life.months} months (${evidence.requested_shelf_life.comparison_days} d)`}/><Mini label="Observed" value={`${evidence.observed_coverage_days} days`}/><Mini label="Validated" value={`${evidence.validated_coverage_days} days`}/></div><p className="mt-3 text-sm">{evidence.review_gate.reason}</p><p className="mt-1 text-xs opacity-80">No extrapolation is performed; the comparison uses only evidence from this exact formulation version.</p></div></div></div>;
 }
 
 function StudioTabButton({ active, icon: Icon, label, onClick }: { active: boolean; icon: typeof Package; label: string; onClick: () => void }) { return <button type="button" role="tab" aria-selected={active} onClick={onClick} className={`flex min-h-12 items-center justify-center gap-2 rounded-xl px-4 text-sm font-bold transition ${active ? 'bg-sky-50 text-sky-700 ring-1 ring-sky-200' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-950'}`}><Icon className="h-4 w-4"/>{label}</button>; }

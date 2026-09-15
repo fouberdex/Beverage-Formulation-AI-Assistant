@@ -756,6 +756,14 @@ test('regulatory checks and generated labels can be retrieved', async () => {
 
   const labelsResponse = await server.inject({ method: 'POST', url: '/api/v1/regulatory/formulations/form-001/labels' });
   assert.equal(labelsResponse.statusCode, 201);
+  assert.equal(labelsResponse.json().data.en.stability_evidence.formulation_version_id, 'form-001');
+  assert.equal(labelsResponse.json().data.en.stability_evidence.status, 'not_substantiated');
+  assert.equal(labelsResponse.json().data.en.stability_evidence.review_gate.status, 'blocked');
+  assert.equal(labelsResponse.json().data.en.status, 'draft_requires_regulatory_review');
+  const evidenceResponse = await server.inject({ method: 'GET', url: '/api/v1/regulatory/formulations/form-001/stability-evidence?requested_shelf_life_months=6' });
+  assert.equal(evidenceResponse.statusCode, 200);
+  assert.equal(evidenceResponse.json().data.requested_shelf_life.comparison_days, 180);
+  assert.equal(evidenceResponse.json().data.validated_coverage_days, 0);
   const englishResponse = await server.inject({ method: 'GET', url: '/api/v1/regulatory/formulations/form-001/labels?language=en' });
   assert.equal(englishResponse.statusCode, 200);
   assert.equal(englishResponse.json().data.name, 'Classic Orange Soda');

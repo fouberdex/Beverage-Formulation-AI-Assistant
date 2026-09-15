@@ -92,6 +92,11 @@ stability risks, possible failure modes, recommended tests, evidence gaps and
 uncertainty; the provider contract contains no numeric shelf-life or validated
 storage-duration field.
 
+Label shelf-life evidence is calculated server-side from exact-version stability
+programs and observations. Observed coverage includes recorded timepoints, while
+validated coverage includes only completed, fully observed programs without a
+declared-limit failure. The label gate never extrapolates beyond recorded days.
+
 ## Persistence model
 
 Supabase is the supported shared/deployed persistence mode. A JSON/in-memory
