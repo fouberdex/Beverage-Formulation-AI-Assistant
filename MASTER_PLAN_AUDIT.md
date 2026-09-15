@@ -314,6 +314,15 @@ target version. If an older or incomplete API response omits the state contract,
 the UI fails visibly closed and asks for a refresh instead of reconstructing an
 independent answer.
 
+The reformulation loop is now explicit and causal. `reformulation_required` is a
+structured assessment containing `required`, `trigger`, `recommended_path`,
+`reason` and exact evidence identifiers. Only an explicit target-version rework
+decision requires a new formulation version. Rejected pilots, QC/OOS, process and
+packaging warnings instead route to their corresponding investigation because the
+persisted evidence does not by itself establish a formulation cause. An observed
+stability limit failure deterministically blocks progression and routes to stability
+investigation without inventing a reformulation decision.
+
 Acceptance evidence: the production build succeeds; the expanded Playwright suite
 covers the responsive brief, deterministic workflow, exact-version context and
 linked formulation creation. The complete pre-existing functional/accessibility
@@ -323,8 +332,8 @@ form led to explicit vertical field layout/width rules, and brief validation now
 reloads the canonical project response after persistence so a stale draft cannot
 keep the experimental-plan warning visible. The suite now contains 21 passing
 browser tests from that tranche; the current repository suite contains 22 after
-the controlled material-approval coverage added in Stage 1. Tranches C–F remain
-open.
+the controlled material-approval coverage added in Stage 1. The remaining Stage 1
+scientific and authorization tranches remain open.
 
 ## 8. Branch strategy
 

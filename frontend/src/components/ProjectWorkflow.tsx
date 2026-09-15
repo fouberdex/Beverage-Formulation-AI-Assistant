@@ -10,6 +10,7 @@ export type ProjectWorkflowState = {
   nextAction: { label: string; detail: string; to: string };
   activeVersion: NonNullable<RDProject['traceability']>['formulations'][number] | null;
   blockers: string[];
+  reformulation: NonNullable<RDProject['development_state']>['reformulation_required'] | null;
 };
 
 function routeForAction(project: RDProject, key: string, targetId: string | null) {
@@ -17,6 +18,7 @@ function routeForAction(project: RDProject, key: string, targetId: string | null
   if (key === 'approved_formulation') return `/formulations?project=${project.id}`;
   if (key === 'laboratory_evidence') return `/laboratory-results?project=${project.id}&formulation=${targetId || ''}`;
   if (key === 'sensory_evidence') return `/sensory?project=${project.id}`;
+  if (key === 'reformulation_review') return `/formulations?project=${project.id}`;
   return `/projects?project=${project.id}#project-execution`;
 }
 
@@ -33,6 +35,7 @@ export function adaptProjectDevelopmentState(project: RDProject): ProjectWorkflo
     nextAction: { label: 'Refresh project state', detail: 'The authoritative backend development state is unavailable; no local workflow inference was substituted.', to: `/projects?project=${project.id}` },
     activeVersion: null,
     blockers: ['Authoritative project state unavailable. Refresh the project before making a controlled decision.'],
+    reformulation: null,
   };
   const activeVersion = project.traceability?.formulations.find(version => version.id === state.target_formulation_version_id) || null;
   const blockers = state.blockers.map(item => item.message);
@@ -48,6 +51,7 @@ export function adaptProjectDevelopmentState(project: RDProject): ProjectWorkflo
     nextAction: { ...state.next_controlled_action, to: routeForAction(project, state.next_controlled_action.key, state.target_formulation_version_id) },
     activeVersion,
     blockers,
+    reformulation: state.reformulation_required,
   };
 }
 
@@ -75,9 +79,10 @@ export default function ProjectWorkflow({ project }: { project: RDProject }) {
         <p className="mt-2 text-xs font-semibold">{step.detail}</p><span className="sr-only">Status: {meta.label}</span>
       </li>; })}
     </ol>}
-    <div className="mt-4 grid gap-3 md:grid-cols-2">
+    <div className={`mt-4 grid gap-3 ${workflow.reformulation?.trigger ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
       <div className="rounded-xl bg-secondary p-3"><p className="text-xs font-bold text-secondary">Exact formulation under evaluation</p><p className="mt-1 font-black text-primary">{workflow.activeVersion ? `${workflow.activeVersion.name} · v${workflow.activeVersion.version} · ${workflow.activeVersion.code}` : workflow.available ? 'No target version selected by the backend state engine' : 'Unavailable until project state is refreshed'}</p></div>
       <div className={`rounded-xl border p-3 ${workflow.blockers.length ? 'border-rose-200 bg-rose-50' : 'border-emerald-200 bg-emerald-50'}`}><p className="flex items-center gap-2 text-xs font-black uppercase tracking-wide"><AlertTriangle className="h-4 w-4"/>{workflow.blockers.length ? `${workflow.blockers.length} unresolved blocker${workflow.blockers.length === 1 ? '' : 's'}` : 'No unresolved target-version blocker'}</p>{workflow.blockers.length > 0 && <ul className="mt-2 list-disc space-y-1 pl-5 text-xs">{workflow.blockers.slice(0, 3).map(item => <li key={item}>{item}</li>)}</ul>}</div>
+      {workflow.reformulation?.trigger && <div className={`rounded-xl border p-3 ${workflow.reformulation.required ? 'border-rose-200 bg-rose-50' : 'border-amber-200 bg-amber-50'}`}><p className="text-xs font-black uppercase tracking-wide">{workflow.reformulation.required ? 'Reformulation required' : 'Do not reformulate automatically'}</p><p className="mt-1 text-xs font-semibold">{workflow.reformulation.reason}</p><p className="mt-2 text-[11px] font-black uppercase">Path · {workflow.reformulation.recommended_path.replaceAll('_',' ')}</p></div>}
     </div>
   </section>;
 }

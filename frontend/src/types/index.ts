@@ -219,7 +219,7 @@ export interface RDProjectDevelopmentState {
   blockers: Array<{ code: string; message: string; entity_type: string; entity_id: string }>;
   evidence_chain: Record<string, string[]>;
   readiness: { status: 'blocked' | 'in_progress' | 'evidence_complete'; score_percent: number; passed_gates: number; total_gates: number; gates: Array<{ key: string; label: string; status: 'pass' | 'missing'; entity_ids: string[] }> };
-  reformulation_required: boolean;
+  reformulation_required: { required: boolean; trigger: 'explicit_rework_decision'|'stability_failure'|'quality_issue'|'process_issue'|'pilot_rejection'|'packaging_issue'|null; recommended_path: 'formulation_review'|'stability_investigation'|'quality_investigation'|'process_review'|'pilot_investigation'|'packaging_review'|'continue_controlled_workflow'; reason: string; entity_ids: string[] };
   release_eligible: boolean;
 }
 

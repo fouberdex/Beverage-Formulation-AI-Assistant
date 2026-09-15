@@ -1,4 +1,6 @@
-export const PROJECT_STATE_ENGINE_VERSION = '1.0.0';
+import { analyzeStabilityProgram } from './stabilityEngine.js';
+
+export const PROJECT_STATE_ENGINE_VERSION = '1.1.0';
 
 const list = (trace, key) => Array.isArray(trace?.[key]) ? trace[key] : [];
 const approvedVersion = version => version?.status === 'approved' || Boolean(version?.locked_at);
@@ -25,6 +27,24 @@ export function selectTargetFormulationVersion(inputTraceability) {
 
 const ids = records => records.map(item => item.id);
 const gate = (key, label, records, passed = records.length > 0) => ({ key, label, status: passed ? 'pass' : 'missing', entity_ids: ids(records) });
+
+function failedStabilityPrograms(programs, observations) {
+  return programs.filter(program => {
+    if (!Array.isArray(program.storage_conditions) || !Array.isArray(program.parameters) || !Array.isArray(program.timepoints_days)) return false;
+    const programObservations = observations.filter(item => item.program_id === program.id);
+    return analyzeStabilityProgram(program, programObservations).overall_status === 'fail';
+  });
+}
+
+function buildReformulationAssessment({ reworkDecisions, failedStability, adverseQc, openEvents, processIssues, rejectedBatches, packagingIssues }) {
+  if (reworkDecisions.length) return { required: true, trigger: 'explicit_rework_decision', recommended_path: 'formulation_review', reason: reworkDecisions[0].rationale || 'A controlled decision explicitly requires reformulation.', entity_ids: ids(reworkDecisions) };
+  if (failedStability.length) return { required: false, trigger: 'stability_failure', recommended_path: 'stability_investigation', reason: 'An observed stability limit failed. Investigate formulation, process and packaging causes before deciding whether to reformulate.', entity_ids: ids(failedStability) };
+  if (adverseQc.length || openEvents.length) return { required: false, trigger: 'quality_issue', recommended_path: 'quality_investigation', reason: 'A target-version quality issue requires root-cause investigation before selecting formulation, process, supplier or packaging corrective action.', entity_ids: ids([...adverseQc, ...openEvents]) };
+  if (processIssues.length) return { required: false, trigger: 'process_issue', recommended_path: 'process_review', reason: 'Recorded production controls require review; the available evidence does not establish that the formulation must change.', entity_ids: ids(processIssues) };
+  if (rejectedBatches.length) return { required: false, trigger: 'pilot_rejection', recommended_path: 'pilot_investigation', reason: 'A pilot batch was rejected. Determine whether formulation or execution caused the rejection before creating a new version.', entity_ids: ids(rejectedBatches) };
+  if (packagingIssues.length) return { required: false, trigger: 'packaging_issue', recommended_path: 'packaging_review', reason: 'Packaging warnings exist; review the package and stability evidence before changing the formulation.', entity_ids: ids(packagingIssues) };
+  return { required: false, trigger: null, recommended_path: 'continue_controlled_workflow', reason: 'No persisted evidence currently requires reformulation.', entity_ids: [] };
+}
 
 export function buildProjectDevelopmentState(project, inputTraceability) {
   const trace = inputTraceability || {};
@@ -58,18 +78,25 @@ export function buildProjectDevelopmentState(project, inputTraceability) {
   const unresolvedCapas = capaActions.filter(item => !['effectiveness_verified', 'cancelled'].includes(item.status));
   const adverseQc = qcReleases.filter(item => ['hold', 'rejected', 'out_of_specification'].includes(item.disposition) && !qualityEvents.some(event => event.qc_release_id === item.id && event.status === 'closed'));
   const reworkDecisions = decisions.filter(item => item.outcome === 'rework');
+  const rejectedBatches = batches.filter(item => item.status === 'rejected');
+  const failedStability = failedStabilityPrograms(stabilityPrograms, stabilityObservations);
+  const packagingIssues = packagingConfigurations.filter(item => item.analysis?.readiness === 'review_required' || item.analysis?.warnings?.length > 0);
+  const processIssues = productionTrials.filter(item => item.analysis?.status === 'review_required' || item.analysis?.warnings?.length > 0);
+  const reformulation = buildReformulationAssessment({ reworkDecisions, failedStability, adverseQc, openEvents, processIssues, rejectedBatches, packagingIssues });
   const blockers = [
     ...openEvents.map(item => ({ code: 'OPEN_QUALITY_EVENT', message: `${item.severity} ${item.event_type}: ${item.title}`, entity_type: 'quality_event', entity_id: item.id })),
     ...unresolvedCapas.map(item => ({ code: 'UNRESOLVED_CAPA', message: `CAPA ${item.status}: ${item.title}`, entity_type: 'capa', entity_id: item.id })),
     ...adverseQc.map(item => ({ code: 'ADVERSE_QC_DISPOSITION', message: `QC disposition remains ${item.disposition.replaceAll('_', ' ')}`, entity_type: 'qc_release', entity_id: item.id })),
     ...reworkDecisions.map(item => ({ code: 'REFORMULATION_REQUIRED', message: item.rationale || 'A controlled rework decision requires a new formulation version.', entity_type: 'decision', entity_id: item.id })),
+    ...failedStability.map(item => ({ code: 'STABILITY_LIMIT_FAILURE', message: `Observed stability limits failed in ${item.name || item.id}; investigate the failure before progression.`, entity_type: 'stability_program', entity_id: item.id })),
     ...incoherentQcReleases.map(item => ({ code: 'INCOHERENT_QC_EVIDENCE', message: 'QC evidence crosses formulation versions or omits exact-version laboratory evidence.', entity_type: 'qc_release', entity_id: item.id })),
   ];
 
   const controlledPlans = plans.filter(item => item.status !== 'cancelled');
   const completedBatches = batches.filter(item => item.status === 'completed');
   const completedSensory = sensoryStudies.filter(item => item.status === 'completed');
-  const completedStability = stabilityPrograms.filter(item => item.status === 'completed');
+  const failedStabilityIds = new Set(ids(failedStability));
+  const completedStability = stabilityPrograms.filter(item => item.status === 'completed' && !failedStabilityIds.has(item.id));
   const goDecisions = decisions.filter(item => item.outcome === 'go');
   const approvedSpecifications = productSpecifications.filter(item => item.status === 'approved');
   const approvedPackaging = packagingConfigurations.filter(item => item.status === 'approved');
@@ -109,7 +136,12 @@ export function buildProjectDevelopmentState(project, inputTraceability) {
     released_qc: ['Complete deterministic QC disposition', 'Evaluate target-version laboratory evidence against its approved specification.'],
     quality_clearance: ['Resolve target-version quality blockers', 'Close quality events and verify their CAPA before release.'],
   };
-  const [label, detail] = controllingGate ? actionByGate[controllingGate.key] : ['Review released evidence', 'The exact-version evidence chain is complete.'];
+  const controlledOverride = reformulation.required
+    ? { key: 'reformulation_review', label: 'Create a new controlled formulation version', detail: reformulation.reason, stage: 'formulation_review' }
+    : failedStability.length
+      ? { key: 'stability_review', label: 'Investigate the observed stability failure', detail: reformulation.reason, stage: 'stability' }
+      : null;
+  const [label, detail] = controlledOverride ? [controlledOverride.label, controlledOverride.detail] : controllingGate ? actionByGate[controllingGate.key] : ['Review released evidence', 'The exact-version evidence chain is complete.'];
   const releasePrerequisites = gates.filter(item => !['released_qc', 'quality_clearance'].includes(item.key));
 
   return {
@@ -117,14 +149,14 @@ export function buildProjectDevelopmentState(project, inputTraceability) {
     calculated_at: new Date().toISOString(),
     project_id: project.id,
     target_formulation_version_id: targetId,
-    current_stage: controllingGate ? stageByGate[controllingGate.key] : 'released',
-    next_controlled_action: { key: controllingGate?.key || 'evidence_complete', label, detail },
+    current_stage: controlledOverride?.stage || (controllingGate ? stageByGate[controllingGate.key] : 'released'),
+    next_controlled_action: { key: controlledOverride?.key || controllingGate?.key || 'evidence_complete', label, detail },
     blockers,
     evidence_chain: {
       formulation: ids(formulations), experimental_plans: ids(plans), pilot_batches: ids(batches), laboratory_results: ids(laboratoryResults), sensory_studies: ids(sensoryStudies), stability_programs: ids(stabilityPrograms), stability_observations: ids(stabilityObservations), decisions: ids(decisions), product_specifications: ids(productSpecifications), documents: ids(documents), packaging_configurations: ids(packagingConfigurations), production_trials: ids(productionTrials), qc_releases: ids(qcReleases), quality_events: ids(qualityEvents), capa_actions: ids(capaActions),
     },
     readiness: { status: blockers.length ? 'blocked' : passedGates === gates.length ? 'evidence_complete' : 'in_progress', score_percent: Math.round(passedGates / gates.length * 100), passed_gates: passedGates, total_gates: gates.length, gates },
-    reformulation_required: reworkDecisions.length > 0,
+    reformulation_required: reformulation,
     release_eligible: Boolean(targetId) && blockers.length === 0 && releasePrerequisites.every(item => item.status === 'pass'),
   };
 }

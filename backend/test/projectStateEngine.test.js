@@ -65,8 +65,53 @@ test('only an explicit target-version rework decision requires reformulation', (
     pilot_batches: [{ id: 'b2', formulation_version_id: 'f2', status: 'rejected' }],
     decisions: [{ id: 'd2', formulation_version_id: 'f2', outcome: 'rework', rationale: 'Revise the acid system before another trial.' }],
   });
-  assert.equal(state.reformulation_required, true);
-  assert.equal(state.current_stage, 'quality');
-  assert.equal(state.next_controlled_action.key, 'quality_clearance');
+  assert.equal(state.reformulation_required.required, true);
+  assert.equal(state.reformulation_required.trigger, 'explicit_rework_decision');
+  assert.equal(state.reformulation_required.recommended_path, 'formulation_review');
+  assert.deepEqual(state.reformulation_required.entity_ids, ['d2']);
+  assert.equal(state.current_stage, 'formulation_review');
+  assert.equal(state.next_controlled_action.key, 'reformulation_review');
   assert.ok(state.blockers.some(item => item.code === 'REFORMULATION_REQUIRED' && item.entity_id === 'd2'));
+});
+
+test('a rejected pilot or packaging warning does not automatically require reformulation', () => {
+  const rejectedPilot = buildProjectDevelopmentState(project, {
+    formulations: [{ id: 'f2', version: 2, status: 'approved' }],
+    experimental_plans: [{ id: 'e2', formulation_version_id: 'f2', status: 'running' }],
+    pilot_batches: [{ id: 'b2', formulation_version_id: 'f2', status: 'rejected' }],
+  });
+  assert.equal(rejectedPilot.reformulation_required.required, false);
+  assert.equal(rejectedPilot.reformulation_required.trigger, 'pilot_rejection');
+  assert.equal(rejectedPilot.reformulation_required.recommended_path, 'pilot_investigation');
+
+  const packagingWarning = buildProjectDevelopmentState(project, {
+    formulations: [{ id: 'f2', version: 2, status: 'approved' }],
+    packaging_configurations: [{ id: 'pk2', formulation_version_id: 'f2', status: 'draft', analysis: { readiness: 'review_required', warnings: ['Stability coverage is insufficient.'] } }],
+  });
+  assert.equal(packagingWarning.reformulation_required.required, false);
+  assert.equal(packagingWarning.reformulation_required.trigger, 'packaging_issue');
+  assert.equal(packagingWarning.reformulation_required.recommended_path, 'packaging_review');
+});
+
+test('an observed stability limit failure blocks progression without inventing a reformulation decision', () => {
+  const state = buildProjectDevelopmentState(project, {
+    formulations: [{ id: 'f2', version: 2, status: 'approved' }],
+    stability_programs: [{
+      id: 'st2', formulation_version_id: 'f2', name: 'Ambient study', status: 'completed',
+      storage_conditions: [{ id: 'ambient', label: 'Ambient', temperature_c: 25 }],
+      timepoints_days: [0, 30], replicates_per_timepoint: 1,
+      parameters: [{ key: 'ph', label: 'pH', unit: 'pH', lower: 2.8, upper: 3.5 }],
+    }],
+    stability_observations: [
+      { id: 'o1', program_id: 'st2', formulation_version_id: 'f2', condition_id: 'ambient', timepoint_days: 0, replicate: 1, values: { ph: 3.2 } },
+      { id: 'o2', program_id: 'st2', formulation_version_id: 'f2', condition_id: 'ambient', timepoint_days: 30, replicate: 1, values: { ph: 3.7 } },
+    ],
+  });
+  assert.equal(state.reformulation_required.required, false);
+  assert.equal(state.reformulation_required.trigger, 'stability_failure');
+  assert.equal(state.reformulation_required.recommended_path, 'stability_investigation');
+  assert.equal(state.current_stage, 'stability');
+  assert.equal(state.next_controlled_action.key, 'stability_review');
+  assert.equal(state.readiness.gates.find(item => item.key === 'stability_evidence').status, 'missing');
+  assert.ok(state.blockers.some(item => item.code === 'STABILITY_LIMIT_FAILURE' && item.entity_id === 'st2'));
 });
