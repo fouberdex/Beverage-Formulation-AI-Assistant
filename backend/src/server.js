@@ -1101,9 +1101,13 @@ server.post(`${apiPrefix}/supply-chain/material-specifications/:specificationId/
   if (!specification) return reply.code(404).send({ error: 'Material specification not found' });
   if (specification.status !== 'draft') return reply.code(409).send({ error: 'Only a draft material specification can be approved', code: 'MATERIAL_SPECIFICATION_LOCKED' });
   const input = z.object({ rationale: z.string().trim().min(10).max(3000), evidence_refs: z.array(z.string().trim().min(1).max(200)).min(1).max(30) }).parse(request.body);
+  const evidenceDocuments = input.evidence_refs.map(reference => request.store.rdDocuments.find(item => item.id === reference && isOwnedByRequest(request, item)));
+  if (evidenceDocuments.some(item => !item)) return reply.code(400).send({ error: 'Every evidence reference must identify an existing controlled document', code: 'MATERIAL_SPECIFICATION_EVIDENCE_NOT_FOUND' });
+  if (evidenceDocuments.some(item => item.review_status !== 'accepted')) return reply.code(400).send({ error: 'Every evidence document must be accepted before it can support an approval', code: 'MATERIAL_SPECIFICATION_EVIDENCE_NOT_ACCEPTED' });
+  if (evidenceDocuments.some(item => item.supplier_material_id !== specification.supplier_material_id)) return reply.code(400).send({ error: 'Every evidence document must be linked to the supplier material covered by this specification', code: 'MATERIAL_SPECIFICATION_EVIDENCE_MISMATCH' });
   const timestamp = new Date().toISOString();
   request.store.rdMaterialSpecifications.filter(item => item.supplier_material_id === specification.supplier_material_id && item.status === 'approved' && isOwnedByRequest(request, item)).forEach(item => { item.status = 'superseded'; item.updated_at = timestamp; });
-  Object.assign(specification, { status: 'approved', approved_at: timestamp, approved_by: request.user?.id, approval_rationale: input.rationale, evidence_refs: input.evidence_refs, updated_at: timestamp });
+  Object.assign(specification, { status: 'approved', approved_at: timestamp, approved_by: request.user?.id, rationale: input.rationale, evidence_refs: input.evidence_refs, updated_at: timestamp });
   return { data: specification };
 });
 

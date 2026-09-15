@@ -199,9 +199,11 @@ test('R&D projects persist a controlled lifecycle and reject skipped gates', asy
   } });
   assert.equal(materialSpecResponse.statusCode, 201);
   const materialSpec = materialSpecResponse.json().data;
-  const approvedMaterialSpec = await server.inject({ method: 'POST', url: `/api/v1/supply-chain/material-specifications/${materialSpec.id}/approve`, payload: { rationale: 'Incoming limits match the qualified supplier technical dossier.', evidence_refs: ['TDS-CITRIC-2026'] } });
-  assert.equal(approvedMaterialSpec.statusCode, 200);
-  assert.equal(approvedMaterialSpec.json().data.status, 'approved');
+  const materialApprovalWithoutEvidence = await server.inject({ method: 'POST', url: `/api/v1/supply-chain/material-specifications/${materialSpec.id}/approve`, payload: { rationale: 'Incoming limits were reviewed by the technical team.', evidence_refs: [] } });
+  assert.equal(materialApprovalWithoutEvidence.statusCode, 400);
+  const materialApprovalWithInventedEvidence = await server.inject({ method: 'POST', url: `/api/v1/supply-chain/material-specifications/${materialSpec.id}/approve`, payload: { rationale: 'Incoming limits match the qualified supplier technical dossier.', evidence_refs: ['TDS-CITRIC-2026'] } });
+  assert.equal(materialApprovalWithInventedEvidence.statusCode, 400);
+  assert.equal(materialApprovalWithInventedEvidence.json().code, 'MATERIAL_SPECIFICATION_EVIDENCE_NOT_FOUND');
 
   const bottleResponse = await server.inject({ method: 'POST', url: '/api/v1/supply-chain/packaging-components', payload: {
     supplier_id: supplier.id, code: 'PET-330-01', name: '330 mL PET bottle', component_type: 'bottle', material: 'PET', status: 'approved', capacity_ml: 330, mass_g: 18, recycled_content_percent: 25, unit_cost: 12, currency: 'DZD', barrier: { oxygen_transmission_rate_cc_m2_day: 0.8, light_transmission_percent: 90 }, food_contact_compliant: true, markets: ['Algeria'],
@@ -217,11 +219,21 @@ test('R&D projects persist a controlled lifecycle and reject skipped gates', asy
   } });
   assert.equal(documentResponse.statusCode, 201);
   const document = documentResponse.json().data;
+  const materialApprovalWithPendingEvidence = await server.inject({ method: 'POST', url: `/api/v1/supply-chain/material-specifications/${materialSpec.id}/approve`, payload: { rationale: 'Incoming limits match the qualified supplier technical dossier.', evidence_refs: [document.id] } });
+  assert.equal(materialApprovalWithPendingEvidence.statusCode, 400);
+  assert.equal(materialApprovalWithPendingEvidence.json().code, 'MATERIAL_SPECIFICATION_EVIDENCE_NOT_ACCEPTED');
   const reviewedDocument = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/documents/${document.id}/review`, payload: { outcome: 'accepted', review_notes: 'Checksum, supplier provenance and technical limits verified.' } });
   assert.equal(reviewedDocument.statusCode, 200);
   assert.equal(reviewedDocument.json().data.review_status, 'accepted');
   const lockedDocument = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/documents/${document.id}/review`, payload: { outcome: 'rejected', review_notes: 'Attempted second review must not replace the audit state.' } });
   assert.equal(lockedDocument.statusCode, 409);
+  const approvedMaterialSpec = await server.inject({ method: 'POST', url: `/api/v1/supply-chain/material-specifications/${materialSpec.id}/approve`, payload: { rationale: 'Incoming limits match the qualified supplier technical dossier.', evidence_refs: [document.id] } });
+  assert.equal(approvedMaterialSpec.statusCode, 200);
+  assert.equal(approvedMaterialSpec.json().data.status, 'approved');
+  assert.equal(approvedMaterialSpec.json().data.rationale, 'Incoming limits match the qualified supplier technical dossier.');
+  assert.deepEqual(approvedMaterialSpec.json().data.evidence_refs, [document.id]);
+  assert.equal(approvedMaterialSpec.json().data.approved_by, '00000000-0000-4000-8000-000000000001');
+  assert.ok(!Number.isNaN(Date.parse(approvedMaterialSpec.json().data.approved_at)));
 
   const packagingResponse = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/packaging-configurations`, payload: {
     formulation_version_id: version.id, name: '330 mL PET retail pack', currency: 'DZD', intended_shelf_life_days: 180, filling_process: 'Cold fill', components: [

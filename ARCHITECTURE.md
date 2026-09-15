@@ -120,3 +120,9 @@ API boundaries require schemas. Safety, regulatory thresholds, approvals,
 permissions and release decisions remain deterministic. New major domains need
 unit/API/database/RLS/E2E tests and reviewed migrations before navigation links
 are exposed.
+
+Material-specification approval is evidence-gated at the API boundary. A caller
+must provide a rationale and identifiers for accepted controlled documents linked
+to the exact supplier material; free-form or generated evidence identifiers are
+rejected. Reviewer identity and approval time are server-derived. These fields are
+stored in the existing JSON payload, so this control requires no schema migration.

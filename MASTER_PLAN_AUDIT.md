@@ -194,7 +194,12 @@ a deterministic server-side engine using component cost, mass, recycled content,
 barrier data and recorded stability coverage. Warnings cannot disappear during
 approval: they must either be resolved or explicitly accepted with rationale and
 evidence references. Approved material specifications and packaging configurations
-are immutable and superseded only through a new version.
+are immutable and superseded only through a new version. Material-specification
+approval no longer creates a synthetic rationale or evidence identifier: the user
+must enter a meaningful rationale and select at least one accepted controlled
+document linked to the exact supplier material. The backend independently verifies
+those records and derives `approved_by` from the authenticated user and `approved_at`
+from the server clock before persisting the approval payload.
 
 ### Phase 6 — industrialization and quality
 
@@ -267,7 +272,7 @@ browser acceptance test. Focus indicators and reduced-motion behavior are define
 globally. Project-list loading uses the shared skeleton rather than an unstructured
 text placeholder.
 
-Acceptance evidence: the frontend production build succeeds and all 19 Playwright
+Acceptance evidence: the frontend production build succeeds and all 22 Playwright
 tests pass, including automated serious/critical accessibility checks across the
 core workspace, theme persistence, mobile navigation keyboard behavior, skip-link
 focus and the unknown-route fallback. Tranches B–F remain intentionally open.
