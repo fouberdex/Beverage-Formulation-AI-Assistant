@@ -172,13 +172,29 @@ export interface RDExperimentalPlan {
   id: string; project_id: string; formulation_version_id: string; name: string; objective: string; hypothesis: string;
   status: 'draft' | 'ready' | 'running' | 'completed' | 'cancelled'; planned_runs: number; due_date?: string | null;
   protocol: { method: string; variables: string[]; controls: string[]; procedure_steps: string[]; acceptance_criteria: string[] };
+  design?: RDDesign;
   created_at: string; updated_at: string;
+}
+
+export interface RDDesign {
+  engine_version: string; signature: string; design_type: 'full_factorial' | 'response_surface'; run_count: number; center_points: number; replicates: number;
+  factors: Array<{ key: string; label: string; low: number; high: number; unit: string }>;
+  responses: Array<{ key: string; label: string; goal: 'maximize' | 'minimize' | 'target'; target?: number | null; unit: string }>;
+  runs: Array<{ id: string; standard_order: number; replicate: number; factor_settings: Record<string, { coded: number; value: number; unit: string }> }>;
+}
+
+export interface RDDesignAnalysis {
+  engine_version: string; design_signature: string; observation_count: number; completed_run_count: number; remaining_run_count: number;
+  models: Record<string, { status: string; observations: number; required?: number; coefficients?: Record<string, number>; diagnostics?: { r_squared: number; adjusted_r_squared: number | null; rmse: number; residual_degrees_of_freedom: number }; anova?: { f_statistic: number | null; p_value: null; note: string } }>;
+  next_run: null | { run_id: string; standard_order: number; factor_settings: Record<string, { coded: number; value: number; unit: string }>; predicted_primary_response: number | null; response_key: string; basis: string; warning: string };
+  applicability: { inferential_claims_allowed: false; reason: string };
 }
 
 export interface RDPilotBatch {
   id: string; project_id: string; experimental_plan_id: string; formulation_version_id: string; batch_code: string; batch_size_liters: number;
   status: 'planned' | 'in_progress' | 'completed' | 'rejected'; scheduled_at?: string | null; produced_at?: string | null;
   actual_quantities: Array<{ material_name: string; ingredient_id?: string; quantity: number; unit: 'g' | 'kg' | 'ml' | 'l'; lot_code: string }>;
+  doe_run_id?: string | null; factor_settings?: Record<string, { coded: number; value: number; unit: string }>; response_values?: Record<string, number>;
   procedure_notes: string; deviations: string[]; observations: string; conclusion: string; created_at: string; updated_at: string;
 }
 

@@ -40,6 +40,7 @@ import { authorizeApiRequest, USER_ROLES } from './services/authorization.js';
 import { analyzeSensoryResults } from './services/sensoryAnalytics.js';
 import { analyzeSensoryStudy } from './services/sensoryStudyAnalytics.js';
 import { FORMULATION_ENGINE_VERSION, generateFormulationCandidates } from './services/formulationIntelligence.js';
+import { DOE_ENGINE_VERSION, analyzeDoeDesign, generateDoeDesign } from './services/doeEngine.js';
 import { validateRuntimeConfiguration } from './services/runtimeConfiguration.js';
 import {
   createRequestId,
@@ -439,6 +440,32 @@ const experimentalPlanSchema = z.object({
     acceptance_criteria: z.array(z.string().trim().min(3).max(300)).min(1).max(30),
   }),
 });
+const doeDesignSchema = z.object({
+  type: z.enum(['full_factorial', 'response_surface']).default('full_factorial'),
+  factors: z.array(z.object({
+    key: z.string().trim().regex(/^[a-z][a-z0-9_]*$/).max(40),
+    label: z.string().trim().min(2).max(120),
+    low: z.coerce.number().finite(),
+    high: z.coerce.number().finite(),
+    unit: z.string().trim().max(30).default(''),
+  }).refine(value => value.high > value.low, { message: 'Factor high level must be greater than low level' })).min(1).max(5)
+    .refine(items => new Set(items.map(item => item.key)).size === items.length, { message: 'Factor keys must be unique' }),
+  responses: z.array(z.object({
+    key: z.string().trim().regex(/^[a-z][a-z0-9_]*$/).max(40),
+    label: z.string().trim().min(2).max(120),
+    goal: z.enum(['maximize', 'minimize', 'target']),
+    target: z.coerce.number().finite().nullable().optional(),
+    unit: z.string().trim().max(30).default(''),
+  }).superRefine((value, context) => {
+    if (value.goal === 'target' && value.target == null) context.addIssue({ code: z.ZodIssueCode.custom, path: ['target'], message: 'A target value is required for a target response' });
+  })).min(1).max(10).refine(items => new Set(items.map(item => item.key)).size === items.length, { message: 'Response keys must be unique' }),
+  center_points: z.coerce.number().int().min(0).max(10).default(1),
+  replicates: z.coerce.number().int().min(1).max(5).default(1),
+}).superRefine((value, context) => {
+  const base = 2 ** value.factors.length;
+  const axial = value.type === 'response_surface' ? 2 * value.factors.length : 0;
+  if ((base + axial + value.center_points) * value.replicates > 100) context.addIssue({ code: z.ZodIssueCode.custom, message: 'The DOE cannot exceed 100 runs' });
+});
 const pilotBatchSchema = z.object({
   batch_code: z.string().trim().min(2).max(80),
   formulation_version_id: z.string().trim().min(1),
@@ -454,6 +481,9 @@ const pilotBatchSchema = z.object({
   deviations: z.array(z.string().trim().min(2).max(500)).max(30).default([]),
   observations: z.string().trim().max(5000).default(''),
   conclusion: z.string().trim().max(3000).default(''),
+  doe_run_id: z.string().trim().max(80).nullable().optional(),
+  factor_settings: z.record(z.string(), z.object({ coded: z.coerce.number().min(-1).max(1), value: z.coerce.number().finite(), unit: z.string().max(30).default('') })).default({}),
+  response_values: z.record(z.string(), z.coerce.number().finite()).default({}),
 });
 const milestoneSchema = z.object({
   title: z.string().trim().min(3).max(160),
@@ -667,6 +697,37 @@ server.put(`${apiPrefix}/projects/:id/experimental-plans/:planId`, async (reques
   return { data: plan };
 });
 
+server.post(`${apiPrefix}/projects/:id/experimental-plans/:planId/design`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply)) return;
+  if (!ensureProjectExecutionStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const plan = request.store.rdExperimentalPlans.find(item => item.id === request.params.planId && item.project_id === project.id && isOwnedByRequest(request, item));
+  if (!plan) return reply.code(404).send({ error: 'Experimental plan not found' });
+  if (request.store.rdPilotBatches.some(item => item.experimental_plan_id === plan.id && item.doe_run_id)) {
+    return reply.code(409).send({ error: 'The DOE design is locked after its first linked pilot batch. Create a new experimental plan to change factors or levels.', code: 'DOE_DESIGN_LOCKED' });
+  }
+  const input = doeDesignSchema.parse(request.body);
+  const design = generateDoeDesign(input);
+  plan.design = design;
+  plan.planned_runs = design.run_count;
+  plan.updated_at = new Date().toISOString();
+  addProjectEvent(request, project, 'doe_design_generated', { plan_id: plan.id, engine_version: DOE_ENGINE_VERSION, signature: design.signature, design_type: design.design_type, run_count: design.run_count });
+  return reply.code(201).send({ data: design });
+});
+
+server.get(`${apiPrefix}/projects/:id/experimental-plans/:planId/analysis`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply)) return;
+  if (!ensureProjectExecutionStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const plan = request.store.rdExperimentalPlans.find(item => item.id === request.params.planId && item.project_id === project.id && isOwnedByRequest(request, item));
+  if (!plan) return reply.code(404).send({ error: 'Experimental plan not found' });
+  if (!plan.design) return reply.code(409).send({ error: 'Generate a deterministic DOE design before requesting analysis', code: 'DOE_DESIGN_REQUIRED' });
+  const batches = request.store.rdPilotBatches.filter(item => item.experimental_plan_id === plan.id && isOwnedByRequest(request, item));
+  return { data: analyzeDoeDesign(plan.design, batches) };
+});
+
 server.post(`${apiPrefix}/projects/:id/experimental-plans/:planId/pilot-batches`, async (request, reply) => {
   if (!ensureProjectStorage(request, reply)) return;
   if (!ensureProjectExecutionStorage(request, reply)) return;
@@ -677,6 +738,16 @@ server.post(`${apiPrefix}/projects/:id/experimental-plans/:planId/pilot-batches`
   const input = pilotBatchSchema.parse(request.body);
   if (input.formulation_version_id !== plan.formulation_version_id || !projectFormulationVersion(request, project, input.formulation_version_id)) {
     return reply.code(400).send({ error: 'The pilot batch must use the exact formulation version defined by its experimental plan' });
+  }
+  if (input.doe_run_id) {
+    const run = plan.design?.runs?.find(item => item.id === input.doe_run_id);
+    if (!run) return reply.code(400).send({ error: 'DOE run does not belong to this experimental plan', code: 'DOE_RUN_INVALID' });
+    if (request.store.rdPilotBatches.some(item => item.experimental_plan_id === plan.id && item.doe_run_id === input.doe_run_id)) return reply.code(409).send({ error: 'A pilot batch already exists for this DOE run', code: 'DOE_RUN_ALREADY_LINKED' });
+    input.factor_settings = run.factor_settings;
+    const responseKeys = new Set(plan.design.responses.map(item => item.key));
+    if (Object.keys(input.response_values).some(key => !responseKeys.has(key))) return reply.code(400).send({ error: 'A response value is not declared in the DOE design', code: 'DOE_RESPONSE_INVALID' });
+  } else if (Object.keys(input.response_values).length) {
+    return reply.code(400).send({ error: 'Response values require a linked DOE run', code: 'DOE_RUN_REQUIRED' });
   }
   if (request.store.rdPilotBatches.some(item => item.project_id === project.id && item.batch_code.toLowerCase() === input.batch_code.toLowerCase())) return reply.code(409).send({ error: 'Pilot batch code already exists in this project' });
   const timestamp = new Date().toISOString();
@@ -693,7 +764,13 @@ server.put(`${apiPrefix}/projects/:id/pilot-batches/:batchId`, async (request, r
   if (!project) return reply.code(404).send({ error: 'Project not found' });
   const batch = request.store.rdPilotBatches.find(item => item.id === request.params.batchId && item.project_id === project.id && isOwnedByRequest(request, item));
   if (!batch) return reply.code(404).send({ error: 'Pilot batch not found' });
-  const updates = pilotBatchSchema.omit({ formulation_version_id: true, batch_code: true }).partial().parse(request.body);
+  const updates = pilotBatchSchema.omit({ formulation_version_id: true, batch_code: true, doe_run_id: true, factor_settings: true }).partial().parse(request.body);
+  if (updates.response_values) {
+    if (!batch.doe_run_id) return reply.code(400).send({ error: 'Response values require a linked DOE run', code: 'DOE_RUN_REQUIRED' });
+    const plan = request.store.rdExperimentalPlans.find(item => item.id === batch.experimental_plan_id && item.project_id === project.id && isOwnedByRequest(request, item));
+    const responseKeys = new Set((plan?.design?.responses || []).map(item => item.key));
+    if (Object.keys(updates.response_values).some(key => !responseKeys.has(key))) return reply.code(400).send({ error: 'A response value is not declared in the DOE design', code: 'DOE_RESPONSE_INVALID' });
+  }
   Object.assign(batch, updates, { updated_at: new Date().toISOString() });
   addProjectEvent(request, project, 'pilot_batch_updated', { batch_id: batch.id, batch_code: batch.batch_code, fields: Object.keys(updates), status: batch.status });
   return { data: batch };
@@ -2446,6 +2523,8 @@ server.post(`${apiPrefix}/target-generation/generate`, async (request, reply) =>
   return reply.code(201).send({ data: payload, message: `Generated ${result.candidates.length} reproducible candidates with engine ${FORMULATION_ENGINE_VERSION}` });
 });
 
+/* Historical target generator retained temporarily for audit comparison only.
+   It is deliberately not registered as an HTTP route and cannot execute.
 server.post(`${apiPrefix}/target-generation/generate-legacy`, async (request, reply) => {
   const targetInput = z.object({
     target_calories: z.coerce.number().finite().nonnegative().optional(),
@@ -2758,6 +2837,7 @@ server.post(`${apiPrefix}/target-generation/generate-legacy`, async (request, re
     message: `Generated ${candidates.length} candidates`,
   });
 });
+*/
 
 // Save target-generated candidate as formulation
 server.post(`${apiPrefix}/target-generation/save`, async (request, reply) => {

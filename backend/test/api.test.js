@@ -170,6 +170,36 @@ test('R&D projects persist a controlled lifecycle and reject skipped gates', asy
   assert.equal(planResponse.json().data.formulation_version_id, version.id);
   const plan = planResponse.json().data;
 
+  const designResponse = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/experimental-plans/${plan.id}/design`, payload: {
+    type: 'full_factorial', center_points: 1, replicates: 1,
+    factors: [{ key: 'temperature', label: 'Storage temperature', low: 20, high: 35, unit: '°C' }],
+    responses: [{ key: 'stability', label: 'Stability score', goal: 'maximize', unit: '/10' }],
+  } });
+  assert.equal(designResponse.statusCode, 201);
+  assert.equal(designResponse.json().data.run_count, 3);
+  assert.equal(designResponse.json().data.engine_version, '1.0.0');
+  const doeRun = designResponse.json().data.runs[0];
+
+  const doeBatchResponse = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/experimental-plans/${plan.id}/pilot-batches`, payload: {
+    batch_code: 'PILOT-DOE-001', formulation_version_id: version.id, batch_size_liters: 25, doe_run_id: doeRun.id,
+    factor_settings: { temperature: { coded: 1, value: 999, unit: '°C' } }, response_values: { stability: 8.1 },
+  } });
+  assert.equal(doeBatchResponse.statusCode, 201);
+  assert.equal(doeBatchResponse.json().data.factor_settings.temperature.value, 20);
+
+  const analysisResponse = await server.inject({ method: 'GET', url: `/api/v1/projects/${id}/experimental-plans/${plan.id}/analysis` });
+  assert.equal(analysisResponse.statusCode, 200);
+  assert.equal(analysisResponse.json().data.observation_count, 1);
+  assert.equal(analysisResponse.json().data.next_run.basis, 'deterministic_design_order');
+  assert.equal(analysisResponse.json().data.applicability.inferential_claims_allowed, false);
+
+  const lockedDesign = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/experimental-plans/${plan.id}/design`, payload: {
+    type: 'full_factorial', factors: [{ key: 'temperature', label: 'Storage temperature', low: 15, high: 40 }],
+    responses: [{ key: 'stability', label: 'Stability score', goal: 'maximize' }],
+  } });
+  assert.equal(lockedDesign.statusCode, 409);
+  assert.equal(lockedDesign.json().code, 'DOE_DESIGN_LOCKED');
+
   const batchResponse = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/experimental-plans/${plan.id}/pilot-batches`, payload: {
     batch_code: 'PILOT-CITRUS-001', formulation_version_id: version.id, batch_size_liters: 25,
     status: 'planned', actual_quantities: [], procedure_notes: 'Use sanitized 30 L pilot tank.', deviations: [], observations: '', conclusion: '',
@@ -209,7 +239,7 @@ test('R&D projects persist a controlled lifecycle and reject skipped gates', asy
   assert.equal(traced.json().data.traceability.laboratory_results[0].formulation_version_id, version.id);
   assert.deepEqual(traced.json().data.traceability.sensory_studies[0].formulation_version_ids, [version.id]);
   assert.equal(traced.json().data.traceability.experimental_plans.length, 1);
-  assert.equal(traced.json().data.traceability.pilot_batches.length, 1);
+  assert.equal(traced.json().data.traceability.pilot_batches.length, 2);
   assert.equal(traced.json().data.traceability.milestones.length, 1);
   assert.equal(traced.json().data.traceability.decisions.length, 1);
   assert.ok(traced.json().data.events.some(event => event.event_type === 'decision_recorded' && event.actor_id));
@@ -460,6 +490,11 @@ test('formulation intelligence rejects impossible constraints with structured bl
   assert.equal(response.statusCode, 422);
   assert.equal(response.json().code, 'FORMULATION_CONSTRAINTS_INFEASIBLE');
   assert.ok(response.json().data.feasibility.blockers.some(item => item.code === 'REQUIRED_AND_FORBIDDEN'));
+});
+
+test('legacy target generator is not exposed', async () => {
+  const response = await server.inject({ method: 'POST', url: '/api/v1/target-generation/generate-legacy', payload: {} });
+  assert.equal(response.statusCode, 404);
 });
 
 test('required and forbidden ingredients are deterministically enforced and saved from the owned run', async () => {

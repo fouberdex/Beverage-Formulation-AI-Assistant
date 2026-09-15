@@ -90,15 +90,22 @@ try {
       procedure_steps: ['Weigh the approved formula', 'Mix, process and fill'],
       acceptance_criteria: ['pH remains between 2.8 and 3.5', 'Overall acceptance reaches at least 7/10'] },
   } })).data;
+  const doeDesign = (await api(`/projects/${project.id}/experimental-plans/${experimentalPlan.id}/design`, { method: 'POST', body: {
+    type: 'full_factorial', center_points: 1, replicates: 1,
+    factors: [{ key: 'temperature', label: 'Pasteurization temperature', low: 75, high: 85, unit: '°C' }],
+    responses: [{ key: 'acceptance', label: 'Overall acceptance', goal: 'maximize', unit: '/10' }],
+  } })).data;
   const pilotBatch = (await api(`/projects/${project.id}/experimental-plans/${experimentalPlan.id}/pilot-batches`, { method: 'POST', body: {
     batch_code: `PILOT-${suffix}`.slice(0, 76), formulation_version_id: formulation.id, batch_size_liters: 20,
-    status: 'planned', actual_quantities: [], procedure_notes: 'Automated smoke test protocol', deviations: [], observations: '', conclusion: '',
+    status: 'planned', doe_run_id: doeDesign.runs[0].id, actual_quantities: [], procedure_notes: 'Automated smoke test protocol', deviations: [], observations: '', conclusion: '',
   } })).data;
   await api(`/projects/${project.id}/pilot-batches/${pilotBatch.id}`, { method: 'PUT', body: {
     status: 'completed', produced_at: new Date().toISOString(),
     actual_quantities: [{ material_name: water.name, ingredient_id: water.id, quantity: 18, unit: 'l', lot_code: 'SMOKE-WATER-LOT' }],
-    deviations: [], observations: 'Automated pilot execution record completed.', conclusion: 'Ready for laboratory testing.',
+    deviations: [], observations: 'Automated pilot execution record completed.', conclusion: 'Ready for laboratory testing.', response_values: { acceptance: 8 },
   } });
+  const doeAnalysis = (await api(`/projects/${project.id}/experimental-plans/${experimentalPlan.id}/analysis`)).data;
+  if (doeAnalysis.observation_count !== 1 || !doeAnalysis.next_run) throw new Error('DOE analysis or next-run recommendation is incomplete');
   const milestone = (await api(`/projects/${project.id}/milestones`, { method: 'POST', body: {
     title: 'Demo evidence gate', stage: 'laboratory', status: 'planned', responsible: 'Automated smoke test',
     success_criteria: ['Protocol, pilot batch, laboratory and sensory evidence are linked'],
@@ -107,7 +114,7 @@ try {
     title: 'Demo execution decision', outcome: 'go', rationale: 'The automated workflow created every required traceability object.',
     evidence_refs: [pilotBatch.batch_code], formulation_version_id: formulation.id, milestone_id: milestone.id,
   } });
-  ok('Experimental plan, pilot batch, milestone and immutable decision persistence');
+  ok('Deterministic DOE, linked pilot batch, next run, milestone and immutable decision persistence');
 
   const lab = (await api(`/formulations/${formulation.id}/laboratory-results`, { method: 'POST', body: {
     batch_code: 'SMOKE-LAB-1', tested_at: new Date().toISOString(), measurements: { ph: 3.2, brix: 10.1 },

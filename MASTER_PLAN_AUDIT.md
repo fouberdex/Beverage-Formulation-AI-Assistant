@@ -145,6 +145,16 @@ is advisory-only and cannot alter feasibility, constraint results or Pareto rank
 - Deterministic design generators, linked runs, ANOVA, diagnostics and response
   surfaces; recommend the next run only from the recorded design/data.
 
+Tranche 1 is now implemented without a risky schema change: signed full-factorial
+and face-centred response-surface matrices are stored in the existing controlled
+experimental-plan JSONB, while server-owned factor settings and measured responses
+are persisted on their exact pilot batches. A design becomes immutable after its
+first linked run. The local engine calculates coefficients, screening ANOVA sums of
+squares, R², adjusted R² and RMSE without inventing p-values. It recommends only an
+unexecuted run from the signed matrix, using a fitted model only when sufficient
+recorded observations exist and deterministic standard order otherwise. Every
+output carries an explicit non-inferential applicability warning.
+
 ### Phase 4 — stability and specifications
 
 - Timepoint programs, acceptance limits, deterministic trends, controlled product

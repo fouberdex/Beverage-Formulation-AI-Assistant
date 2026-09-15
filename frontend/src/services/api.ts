@@ -53,6 +53,8 @@ export const projectsAPI = {
   transition: (id: string, stage: string, note = '') => api.post(`/projects/${id}/transition`, { stage, note }),
   createExperimentalPlan: (id: string, data: any) => api.post(`/projects/${id}/experimental-plans`, data),
   updateExperimentalPlan: (id: string, planId: string, data: any) => api.put(`/projects/${id}/experimental-plans/${planId}`, data),
+  generateDoeDesign: (id: string, planId: string, data: any) => api.post(`/projects/${id}/experimental-plans/${planId}/design`, data),
+  getDoeAnalysis: (id: string, planId: string) => api.get(`/projects/${id}/experimental-plans/${planId}/analysis`),
   createPilotBatch: (id: string, planId: string, data: any) => api.post(`/projects/${id}/experimental-plans/${planId}/pilot-batches`, data),
   updatePilotBatch: (id: string, batchId: string, data: any) => api.put(`/projects/${id}/pilot-batches/${batchId}`, data),
   createMilestone: (id: string, data: any) => api.post(`/projects/${id}/milestones`, data),
