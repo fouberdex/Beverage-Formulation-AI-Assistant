@@ -172,7 +172,7 @@ export default function AccountPage() {
         <section className="overflow-hidden rounded-lg bg-white shadow">
           <div className="border-b px-6 py-4">
             <h2 className="text-lg font-semibold text-gray-900">User access</h2>
-            <p className="text-xs text-gray-500">Administrators manage ingredients and users; formulators create formulations; viewers are read-only.</p>
+            <p className="text-xs text-gray-500">Assign the least-privileged industrial role needed for each team member.</p>
           </div>
           {users.length === 0 ? <p className="p-6 text-sm text-gray-500">No user profiles found.</p> : (
             <div className="divide-y">{users.map(user => (
@@ -181,7 +181,13 @@ export default function AccountPage() {
                 <select aria-label={`Access role for ${user.display_name || user.email || 'user'}`} value={user.role} onChange={event => void changeRole(user.id, event.target.value)}
                   className="rounded-md border border-gray-300 p-2 text-sm capitalize">
                   <option value="admin">Administrator</option>
+                  <option value="rd_manager">R&amp;D manager</option>
                   <option value="formulator">Formulator</option>
+                  <option value="lab">Laboratory</option>
+                  <option value="sensory">Sensory</option>
+                  <option value="qa">Quality assurance</option>
+                  <option value="regulatory">Regulatory</option>
+                  <option value="procurement">Procurement</option>
                   <option value="viewer">Viewer</option>
                 </select>
               </div>

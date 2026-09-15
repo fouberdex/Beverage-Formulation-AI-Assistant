@@ -54,6 +54,28 @@ test('readiness and account identity endpoints are available', async () => {
   assert.equal(identity.json().data.role, 'admin');
 });
 
+test('server-side role enforcement returns 403 for forbidden specialist actions', async () => {
+  const cases = [
+    { role: 'formulator', method: 'POST', url: '/api/v1/projects/project-1/qc-releases' },
+    { role: 'formulator', method: 'PUT', url: '/api/v1/projects/project-1/quality-events/event-1' },
+    { role: 'formulator', method: 'PUT', url: '/api/v1/projects/project-1/capas/capa-1' },
+    { role: 'lab', method: 'POST', url: '/api/v1/projects/project-1/specifications/spec-1/approve' },
+    { role: 'viewer', method: 'POST', url: '/api/v1/projects' },
+    { role: 'formulator', method: 'POST', url: '/api/v1/regulatory/formulations/form-1/labels' },
+  ];
+  for (const item of cases) {
+    const response = await server.inject({ method: item.method, url: item.url, headers: { 'x-test-role': item.role }, payload: {} });
+    assert.equal(response.statusCode, 403, `${item.role} ${item.method} ${item.url}`);
+  }
+});
+
+test('server-side role enforcement lets QA reach QC validation after authorization', async () => {
+  const response = await server.inject({
+    method: 'POST', url: '/api/v1/projects/missing-project/qc-releases', headers: { 'x-test-role': 'qa' }, payload: {},
+  });
+  assert.notEqual(response.statusCode, 403);
+});
+
 test('AI governance is opt-in and exposes quota metadata without prompt storage', async () => {
   const initial = await server.inject({ method: 'GET', url: '/api/v1/ai/governance' });
   assert.equal(initial.statusCode, 200);

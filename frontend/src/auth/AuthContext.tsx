@@ -7,7 +7,7 @@ export type AppProfile = {
   id: string;
   email: string | null;
   display_name: string | null;
-  role: 'admin' | 'formulator' | 'viewer';
+  role: 'admin' | 'rd_manager' | 'formulator' | 'lab' | 'sensory' | 'qa' | 'regulatory' | 'procurement' | 'viewer';
 };
 
 type AuthContextValue = {

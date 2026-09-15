@@ -80,7 +80,11 @@ entrypoints.
 ## API and trust boundaries
 
 The Fastify API validates request bodies with Zod. Supabase JWTs establish the
-user identity; backend authorization checks the current role. Data repositories
+user identity; backend authorization resolves the current industrial role to an
+explicit capability set. Every API mutation is matched to a reviewed route policy;
+unclassified mutations fail closed, and sensitive approvals (formulation,
+specification, material, packaging, QC, quality/CAPA and regulatory operations)
+are segregated. Frontend role checks only adapt navigation and controls. Data repositories
 load only records visible to the current owner. Mutations are diffed and written
 with an audit event through a transaction function.
 

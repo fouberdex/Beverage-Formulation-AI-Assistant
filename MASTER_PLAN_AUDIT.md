@@ -352,9 +352,21 @@ readiness and action displays. A follow-up visual regression from the live proje
 form led to explicit vertical field layout/width rules, and brief validation now
 reloads the canonical project response after persistence so a stale draft cannot
 keep the experimental-plan warning visible. The suite now contains 21 passing
-browser tests from that tranche; the current repository suite contains 22 after
-the controlled material-approval coverage added in Stage 1. The remaining Stage 1
-scientific and authorization tranches remain open.
+browser tests from that tranche; the repository suite reached 22 after the
+controlled material-approval coverage added in Stage 1.
+
+The Stage 1 authorization tranche is now implemented with nine industrial roles
+and an explicit server-owned capability matrix. All existing mutation routes are
+classified by domain, unknown mutations fail closed, administrator reads remain
+protected, and owner-scoped profile/privacy settings remain self-service. Separate
+permissions now govern formulation/specification/material/packaging approvals,
+production trials, QC release, quality events, CAPA and regulatory work. The
+browser mirrors this model only for navigation and action visibility: specialist
+project workspaces expose their relevant tabs without granting authority. An
+additive migration expands the profile role constraint without changing RLS or
+historical migrations. Unit and HTTP integration tests prove representative 403
+responses, including formulator QC/regulatory denial, lab specification-approval
+denial, viewer project-mutation denial and QA QC access.
 
 ## 8. Branch strategy
 

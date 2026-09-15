@@ -30,6 +30,7 @@ test('Supabase migrations form an ordered, complete database workflow', async ()
     '20260915113000_rd_stability_and_specifications.sql',
     '20260915170000_rd_suppliers_documents_packaging.sql',
     '20260915203000_rd_industrial_quality.sql',
+    '20260916100000_expanded_authorization_roles.sql',
   ]);
 
   const bootstrap = await readFile(

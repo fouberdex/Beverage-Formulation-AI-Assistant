@@ -3,7 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react
 import { Home, Package, FlaskConical, Sparkles, Target, Shield, DollarSign, Menu, X, LogOut, UserRound, History, ClipboardCheck, BarChart3, FileBadge2, BookOpenCheck, ChevronLeft, ChevronRight, FolderKanban } from 'lucide-react';
 import { useAuth } from './auth/AuthContext';
 import AuthPage from './pages/AuthPage';
-import { hasRole, WORKSPACE_ROLES, type UserRole } from './auth/permissions';
+import { COST_ROLES, FORMULATION_ROLES, hasRole, LAB_ROLES, PROJECT_ROLES, REGULATORY_ROLES, SENSORY_ROLES, WORKSPACE_ROLES, type UserRole } from './auth/permissions';
 import ThemeSelector from './components/ThemeSelector';
 import ErrorState from './components/ErrorState';
 import { LoadingState } from './components/LoadingState';
@@ -49,24 +49,24 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { err
 const navSections = [
   { label: 'Workspace', items: [
     { to: '/', icon: Home, label: 'Dashboard' },
-    { to: '/projects', icon: FolderKanban, label: 'R&D Projects', roles: WORKSPACE_ROLES },
+    { to: '/projects', icon: FolderKanban, label: 'R&D Projects', roles: PROJECT_ROLES },
     { to: '/ingredients', icon: Package, label: 'Ingredients' },
     { to: '/formulations', icon: FlaskConical, label: 'Formulations' },
   ] },
   { label: 'Validate', items: [
-    { to: '/laboratory-results', icon: ClipboardCheck, label: 'Lab Results', roles: WORKSPACE_ROLES },
-    { to: '/sensory', icon: BarChart3, label: 'Sensory', roles: WORKSPACE_ROLES },
-    { to: '/compatibility', icon: Shield, label: 'Compatibility' },
+    { to: '/laboratory-results', icon: ClipboardCheck, label: 'Lab Results', roles: LAB_ROLES },
+    { to: '/sensory', icon: BarChart3, label: 'Sensory', roles: SENSORY_ROLES },
+    { to: '/compatibility', icon: Shield, label: 'Compatibility', roles: FORMULATION_ROLES },
   ] },
   { label: 'Intelligence', items: [
-    { to: '/ai', icon: Sparkles, label: 'AI Engine', roles: WORKSPACE_ROLES },
-    { to: '/target-generation', icon: Target, label: 'Target Generation', roles: WORKSPACE_ROLES },
+    { to: '/ai', icon: Sparkles, label: 'AI Engine', roles: FORMULATION_ROLES },
+    { to: '/target-generation', icon: Target, label: 'Target Generation', roles: FORMULATION_ROLES },
     { to: '/rag', icon: BookOpenCheck, label: 'RAG Evidence', roles: WORKSPACE_ROLES },
   ] },
   { label: 'Launch', items: [
-    { to: '/regulatory', icon: Shield, label: 'Regulatory', roles: WORKSPACE_ROLES },
-    { to: '/labels', icon: FileBadge2, label: 'Label Studio', roles: WORKSPACE_ROLES },
-    { to: '/cost', icon: DollarSign, label: 'Cost & ROI', roles: WORKSPACE_ROLES },
+    { to: '/regulatory', icon: Shield, label: 'Regulatory', roles: REGULATORY_ROLES },
+    { to: '/labels', icon: FileBadge2, label: 'Label Studio', roles: REGULATORY_ROLES },
+    { to: '/cost', icon: DollarSign, label: 'Cost & ROI', roles: COST_ROLES },
   ] },
 ];
 
@@ -168,16 +168,16 @@ function App() {
               <Routes>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/ingredients" element={<IngredientsPage />} />
-                <Route path="/projects" element={<RoleRoute roles={WORKSPACE_ROLES}><ProjectsPage /></RoleRoute>} />
+                <Route path="/projects" element={<RoleRoute roles={PROJECT_ROLES}><ProjectsPage /></RoleRoute>} />
                 <Route path="/formulations" element={<FormulationsPage />} />
-                <Route path="/laboratory-results" element={<RoleRoute roles={WORKSPACE_ROLES}><LaboratoryResultsPage /></RoleRoute>} />
-                <Route path="/sensory" element={<RoleRoute roles={WORKSPACE_ROLES}><SensoryPage /></RoleRoute>} />
-                <Route path="/compatibility" element={<CompatibilityPage />} />
-                <Route path="/ai" element={<RoleRoute roles={WORKSPACE_ROLES}><AIPage /></RoleRoute>} />
-                <Route path="/target-generation" element={<RoleRoute roles={WORKSPACE_ROLES}><TargetGenerationPage /></RoleRoute>} />
-                <Route path="/regulatory" element={<RoleRoute roles={WORKSPACE_ROLES}><RegulatoryPage /></RoleRoute>} />
-                <Route path="/labels" element={<RoleRoute roles={WORKSPACE_ROLES}><LabelsPage /></RoleRoute>} />
-                <Route path="/cost" element={<RoleRoute roles={WORKSPACE_ROLES}><CostPage /></RoleRoute>} />
+                <Route path="/laboratory-results" element={<RoleRoute roles={LAB_ROLES}><LaboratoryResultsPage /></RoleRoute>} />
+                <Route path="/sensory" element={<RoleRoute roles={SENSORY_ROLES}><SensoryPage /></RoleRoute>} />
+                <Route path="/compatibility" element={<RoleRoute roles={FORMULATION_ROLES}><CompatibilityPage /></RoleRoute>} />
+                <Route path="/ai" element={<RoleRoute roles={FORMULATION_ROLES}><AIPage /></RoleRoute>} />
+                <Route path="/target-generation" element={<RoleRoute roles={FORMULATION_ROLES}><TargetGenerationPage /></RoleRoute>} />
+                <Route path="/regulatory" element={<RoleRoute roles={REGULATORY_ROLES}><RegulatoryPage /></RoleRoute>} />
+                <Route path="/labels" element={<RoleRoute roles={REGULATORY_ROLES}><LabelsPage /></RoleRoute>} />
+                <Route path="/cost" element={<RoleRoute roles={COST_ROLES}><CostPage /></RoleRoute>} />
                 <Route path="/rag" element={<RoleRoute roles={WORKSPACE_ROLES}><RagWorkspacePage /></RoleRoute>} />
                 <Route path="/history" element={<HistoryPage />} />
                 <Route path="/account" element={<AccountPage />} />

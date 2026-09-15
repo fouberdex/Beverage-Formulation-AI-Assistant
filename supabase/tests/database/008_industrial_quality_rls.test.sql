@@ -24,6 +24,7 @@ insert into public.rd_product_specifications (id, owner_id, project_id, formulat
   ('quality-spec-b', 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', 'quality-project-b', 'quality-form-b', 1, 'approved', '{"id":"quality-spec-b"}');
 insert into public.rd_production_trials (id, owner_id, project_id, formulation_version_id, batch_code, status, payload) values
   ('quality-trial-a', 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'quality-project-a', 'quality-form-a', 'BATCH-A', 'completed', '{"id":"quality-trial-a"}'),
+  ('quality-trial-a2', 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'quality-project-a', 'quality-form-a', 'BATCH-A2', 'completed', '{"id":"quality-trial-a2"}'),
   ('quality-trial-b', 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', 'quality-project-b', 'quality-form-b', 'BATCH-B', 'completed', '{"id":"quality-trial-b"}');
 insert into public.rd_qc_releases (id, owner_id, project_id, production_trial_id, formulation_version_id, specification_id, disposition, payload) values
   ('quality-release-a', 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'quality-project-a', 'quality-trial-a', 'quality-form-a', 'quality-spec-a', 'released', '{"id":"quality-release-a"}');
@@ -35,7 +36,7 @@ reset role;
 
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","role":"authenticated"}', true);
-select results_eq($$ select id from public.rd_production_trials $$, array['quality-trial-a']::text[], 'tenant A sees only its production trial');
+select results_eq($$ select id from public.rd_production_trials order by id $$, array['quality-trial-a','quality-trial-a2']::text[], 'tenant A sees only its production trials');
 select results_eq($$ select id from public.rd_qc_releases $$, array['quality-release-a']::text[], 'tenant A sees only its QC release');
 select results_eq($$ select id from public.rd_quality_events $$, array['quality-event-a']::text[], 'tenant A sees only its quality event');
 select results_eq($$ select id from public.rd_capa_actions $$, array['quality-capa-a']::text[], 'tenant A sees only its CAPA');
@@ -45,7 +46,7 @@ reset role;
 
 set local role service_role;
 select throws_ok($$ insert into public.rd_production_trials (id, owner_id, project_id, formulation_version_id, batch_code, status) values ('cross-trial', 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'quality-project-a', 'quality-form-b', 'CROSS', 'planned') $$, '23503', null, 'production trial cannot link another tenant formulation');
-select throws_ok($$ insert into public.rd_qc_releases (id, owner_id, project_id, production_trial_id, formulation_version_id, specification_id, disposition) values ('cross-release', 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'quality-project-a', 'quality-trial-a', 'quality-form-a', 'quality-spec-b', 'hold') $$, '23503', null, 'QC release cannot link another tenant specification');
+select throws_ok($$ insert into public.rd_qc_releases (id, owner_id, project_id, production_trial_id, formulation_version_id, specification_id, disposition) values ('cross-release', 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'quality-project-a', 'quality-trial-a2', 'quality-form-a', 'quality-spec-b', 'hold') $$, '23503', null, 'QC release cannot link another tenant specification');
 select throws_ok($$ insert into public.rd_quality_events (id, owner_id, project_id, production_trial_id, event_type, status) values ('cross-event', 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'quality-project-a', 'quality-trial-b', 'deviation', 'open') $$, '23503', null, 'quality event cannot link another tenant production trial');
 reset role;
 

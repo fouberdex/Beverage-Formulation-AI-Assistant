@@ -179,8 +179,10 @@ server.addHook('preHandler', async (request, reply) => {
   const pathname = request.url.split('?')[0];
   if (operationalPaths.has(pathname) || !pathname.startsWith('/api/') || request.method === 'OPTIONS') return;
   if (process.env.NODE_TEST_CONTEXT) {
+    const requestedTestRole = request.headers['x-test-role'];
+    const testRole = Object.values(USER_ROLES).includes(requestedTestRole) ? requestedTestRole : USER_ROLES.ADMIN;
     request.user = { id: '00000000-0000-4000-8000-000000000001', email: 'test@beverageai.local' };
-    request.profile = { id: request.user.id, display_name: 'Test User', role: USER_ROLES.ADMIN };
+    request.profile = { id: request.user.id, display_name: 'Test User', role: testRole };
   } else if (getStorageConfiguration().mode === 'supabase') {
     const authorization = request.headers.authorization || '';
     const accessToken = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';

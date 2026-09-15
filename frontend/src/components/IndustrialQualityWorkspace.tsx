@@ -1,19 +1,28 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Factory, Plus, ShieldCheck, Wrench } from 'lucide-react';
 import { projectsAPI } from '../services/api';
 import { getErrorMessage } from '../services/errors';
 import type { RDCapaAction, RDProductionTrial, RDProject, RDQualityEvent } from '../types';
 import StatusMessage from './StatusMessage';
+import { useAuth } from '../auth/AuthContext';
+import { hasPermission } from '../auth/permissions';
 
 const lines=(value:string)=>value.split('\n').map(item=>item.trim()).filter(Boolean);
 export default function IndustrialQualityWorkspace({project,onRefresh}:{project:RDProject;onRefresh:()=>Promise<void>}){
+  const {profile}=useAuth();
+  const availableTabs=useMemo(()=>[
+    ...(hasPermission(profile?.role,'manage_production_trials')?[{key:'trials' as const,label:'Production trials',icon:Factory}]:[]),
+    ...(hasPermission(profile?.role,'perform_qc_release')?[{key:'release' as const,label:'QC release',icon:ShieldCheck}]:[]),
+    ...(hasPermission(profile?.role,'manage_quality_events')||hasPermission(profile?.role,'manage_capa')?[{key:'events' as const,label:'OOS, deviations & CAPA',icon:AlertTriangle}]:[]),
+  ],[profile?.role]);
   const [tab,setTab]=useState<'trials'|'release'|'events'>('trials');const[busy,setBusy]=useState(false);const[error,setError]=useState('');const[message,setMessage]=useState('');
+  useEffect(()=>{if(!availableTabs.some(item=>item.key===tab)&&availableTabs[0])setTab(availableTabs[0].key);},[availableTabs,tab]);
   const trace=project.traceability;const trials=trace?.production_trials||[];const releases=trace?.qc_releases||[];const events=trace?.quality_events||[];const capas=trace?.capa_actions||[];
   async function perform(action:()=>Promise<unknown>,success:string){setBusy(true);setError('');setMessage('');try{await action();setMessage(success);await onRefresh();}catch(cause){setError(getErrorMessage(cause,'The industrial quality record could not be saved.'));}finally{setBusy(false);}}
   if(project.industrial_quality_available===false)return <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><p className="eyebrow text-amber-700">Industrial quality</p><h3 className="mt-1 font-black text-amber-950">Storage migration required</h3><p className="mt-2 text-sm text-amber-900">Apply the pending production quality migration.</p></div>;
   return <div className="space-y-5"><div className="flex flex-col gap-3 sm:flex-row sm:justify-between"><div><p className="eyebrow">Scale-up & release</p><h3 className="mt-1 text-lg font-black">Industrialization and quality loop</h3><p className="mt-1 text-sm text-slate-500">Recorded production facts drive QC disposition, investigations and effectiveness-verified CAPA.</p></div><div className="grid grid-cols-4 gap-2 text-center text-xs"><Metric value={trials.length} label="Trials"/><Metric value={releases.filter(item=>item.disposition==='released').length} label="Released"/><Metric value={events.filter(item=>item.status!=='closed').length} label="Open"/><Metric value={capas.length} label="CAPA"/></div></div>
-    <div className="flex gap-2 overflow-x-auto rounded-2xl bg-slate-50 p-2" role="tablist" aria-label="Industrial quality sections">{[['trials','Production trials',Factory],['release','QC release',ShieldCheck],['events','OOS, deviations & CAPA',AlertTriangle]].map(([key,label,Icon])=><button key={String(key)} type="button" role="tab" aria-selected={tab===key} onClick={()=>setTab(key as typeof tab)} className={`inline-flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold ${tab===key?'bg-white text-sky-700 shadow-sm ring-1 ring-sky-200':'text-slate-500 hover:bg-white'}`}><Icon className="h-4 w-4"/>{String(label)}</button>)}</div>
-    <StatusMessage error={error} message={message}/>{tab==='trials'&&<Trials project={project} trials={trials} busy={busy} perform={perform}/>} {tab==='release'&&<Releases project={project} trials={trials} busy={busy} perform={perform}/>} {tab==='events'&&<Events project={project} events={events} capas={capas} busy={busy} perform={perform}/>}</div>;
+    <div className="flex gap-2 overflow-x-auto rounded-2xl bg-slate-50 p-2" role="tablist" aria-label="Industrial quality sections">{availableTabs.map(({key,label,icon:Icon})=><button key={key} type="button" role="tab" aria-selected={tab===key} onClick={()=>setTab(key)} className={`inline-flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold ${tab===key?'bg-white text-sky-700 shadow-sm ring-1 ring-sky-200':'text-slate-500 hover:bg-white'}`}><Icon className="h-4 w-4"/>{label}</button>)}</div>
+    <StatusMessage error={error} message={message}/>{availableTabs.some(item=>item.key==='trials')&&tab==='trials'&&<Trials project={project} trials={trials} busy={busy} perform={perform}/>} {availableTabs.some(item=>item.key==='release')&&tab==='release'&&<Releases project={project} trials={trials} busy={busy} perform={perform}/>} {availableTabs.some(item=>item.key==='events')&&tab==='events'&&<Events project={project} events={events} capas={capas} busy={busy} perform={perform}/>}</div>;
 }
 
 function Trials({project,trials,busy,perform}:{project:RDProject;trials:RDProductionTrial[];busy:boolean;perform:(a:()=>Promise<unknown>,s:string)=>Promise<void>}){

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Beaker, CalendarCheck, CheckCircle2, ClipboardList, Download, Factory, Flag, FlaskConical, GitCommitHorizontal, Network, Package, Plus, ShieldCheck } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { projectsAPI } from '../services/api';
@@ -9,6 +9,8 @@ import StabilityWorkspace from './StabilityWorkspace';
 import SupplyChainWorkspace from './SupplyChainWorkspace';
 import IndustrialQualityWorkspace from './IndustrialQualityWorkspace';
 import ProductPassportWorkspace from './ProductPassportWorkspace';
+import { useAuth } from '../auth/AuthContext';
+import { hasPermission } from '../auth/permissions';
 
 type Tab = 'experiments' | 'doe' | 'batches' | 'stability' | 'supply' | 'quality' | 'passport' | 'milestones' | 'decisions' | 'timeline';
 const csv = (value: string) => value.split(',').map(item => item.trim()).filter(Boolean);
@@ -27,7 +29,17 @@ const tabs: Array<{ key: Tab; label: string; icon: typeof Beaker }> = [
 ];
 
 export default function ProjectExecutionWorkspace({ project, onRefresh }: { project: RDProject; onRefresh: () => Promise<void> }) {
+  const { profile } = useAuth();
+  const permittedTabs = useMemo(() => tabs.filter(item => {
+    if (item.key === 'passport' || item.key === 'timeline') return true;
+    if (item.key === 'stability') return hasPermission(profile?.role, 'manage_stability');
+    if (item.key === 'supply') return hasPermission(profile?.role, 'manage_suppliers') || hasPermission(profile?.role, 'manage_packaging');
+    if (item.key === 'quality') return hasPermission(profile?.role, 'manage_production_trials') || hasPermission(profile?.role, 'perform_qc_release') || hasPermission(profile?.role, 'manage_quality_events');
+    if (item.key === 'batches') return hasPermission(profile?.role, 'manage_production_trials');
+    return hasPermission(profile?.role, 'manage_projects');
+  }), [profile?.role]);
   const [tab, setTab] = useState<Tab>('experiments');
+  useEffect(() => { if (!permittedTabs.some(item => item.key === tab)) setTab(permittedTabs[0]?.key || 'passport'); }, [permittedTabs, tab]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -51,7 +63,7 @@ export default function ProjectExecutionWorkspace({ project, onRefresh }: { proj
       <div><p className="eyebrow">Closed-loop execution</p><h2 className="mt-1 text-xl font-black text-slate-950">R&D experimental workspace</h2><p className="mt-1 text-sm text-slate-500">Every protocol, batch, gate and decision remains tied to {project.code}.</p></div>
       <div className="grid grid-cols-4 gap-2 text-center text-xs"><Metric value={plans.length} label="Plans"/><Metric value={batches.length} label="Batches"/><Metric value={milestones.length} label="Gates"/><Metric value={decisions.length} label="Decisions"/></div>
     </div>
-    <div className="border-b border-slate-200 bg-slate-50/70 px-3 py-2"><div className="flex gap-2 overflow-x-auto" role="tablist" aria-label="Project execution sections">{tabs.map(item => { const Icon = item.icon; return <button key={item.key} type="button" role="tab" aria-selected={tab === item.key} onClick={() => setTab(item.key)} className={`inline-flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold transition ${tab === item.key ? 'bg-white text-sky-700 shadow-sm ring-1 ring-sky-200' : 'text-slate-500 hover:bg-white hover:text-slate-800'}`}><Icon className="h-4 w-4"/>{item.label}</button>; })}</div></div>
+    <div className="border-b border-slate-200 bg-slate-50/70 px-3 py-2"><div className="flex gap-2 overflow-x-auto" role="tablist" aria-label="Project execution sections">{permittedTabs.map(item => { const Icon = item.icon; return <button key={item.key} type="button" role="tab" aria-selected={tab === item.key} onClick={() => setTab(item.key)} className={`inline-flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold transition ${tab === item.key ? 'bg-white text-sky-700 shadow-sm ring-1 ring-sky-200' : 'text-slate-500 hover:bg-white hover:text-slate-800'}`}><Icon className="h-4 w-4"/>{item.label}</button>; })}</div></div>
     <div className="p-5"><StatusMessage error={error} message={message}/>
       {tab === 'experiments' && <ExperimentalPlans project={project} plans={plans} busy={busy} perform={perform}/>} 
       {tab === 'doe' && <DoeWorkspace project={project} plans={plans} batches={batches} busy={busy} perform={perform}/>}

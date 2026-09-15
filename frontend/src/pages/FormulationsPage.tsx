@@ -3,7 +3,7 @@ import { formulationsAPI, ingredientsAPI, projectsAPI } from '../services/api';
 import { Formulation, Ingredient, RDProject } from '../types';
 import { Plus, Search, X, Trash2, Archive, GitBranch, LockKeyhole } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
-import { canManageFormulations } from '../auth/permissions';
+import { canManageFormulations, hasPermission } from '../auth/permissions';
 import Pagination from '../components/Pagination';
 import StatusMessage from '../components/StatusMessage';
 import { getErrorMessage } from '../services/errors';
@@ -19,6 +19,7 @@ export default function FormulationsPage() {
   const requestedProjectId = searchParams.get('project') || '';
   const { profile } = useAuth();
   const canEdit = canManageFormulations(profile?.role);
+  const canApprove = hasPermission(profile?.role, 'approve_formulations');
   const pageSize = 12;
   const [formulations, setFormulations] = useState<Formulation[]>([]);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
@@ -492,7 +493,7 @@ export default function FormulationsPage() {
                         className="inline-flex items-center px-4 py-2 border border-sky-300 rounded-md text-sky-700 hover:bg-sky-50">
                         <GitBranch className="h-4 w-4 mr-2" /> Save as New Version
                       </button>
-                      {!selectedFormulation.locked_at && <button type="button" onClick={approveSelected} disabled={!selectedFormulation.project_id}
+                      {canApprove && !selectedFormulation.locked_at && <button type="button" onClick={approveSelected} disabled={!selectedFormulation.project_id}
                         className="secondary-button" title={!selectedFormulation.project_id ? 'Link this version to an R&D project first' : undefined}>
                         <LockKeyhole className="h-4 w-4"/> Approve & lock
                       </button>}

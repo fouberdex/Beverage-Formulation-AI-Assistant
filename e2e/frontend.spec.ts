@@ -62,7 +62,7 @@ async function mockApi(page: Page, options: { formulationStatus?: number; withPr
   });
 }
 
-async function useRole(page: Page, role: 'admin' | 'formulator' | 'viewer') {
+async function useRole(page: Page, role: 'admin' | 'rd_manager' | 'formulator' | 'lab' | 'sensory' | 'qa' | 'regulatory' | 'procurement' | 'viewer') {
   await page.addInitScript(value => localStorage.setItem('e2e-role', value), role);
 }
 
@@ -88,6 +88,31 @@ test('administrator sees privileged navigation and ingredient management', async
   await useRole(page, 'admin'); await mockApi(page); await page.goto('/ingredients');
   await expect(page.getByRole('link', { name: 'AI Engine' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Add Ingredient' })).toBeVisible();
+});
+
+test('laboratory role sees laboratory work without formulation or sensory mutation workspaces', async ({ page }) => {
+  await useRole(page, 'lab'); await mockApi(page); await page.goto('/laboratory-results');
+  await expect(page.getByRole('heading', { name: 'Laboratory Results' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Lab Results' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Sensory' })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'AI Engine' })).toHaveCount(0);
+});
+
+test('regulatory role is routed to regulatory and label tools only', async ({ page }) => {
+  await useRole(page, 'regulatory'); await mockApi(page); await page.goto('/labels');
+  await expect(page.getByRole('link', { name: 'Regulatory', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Label Studio' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'AI Engine' })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Lab Results' })).toHaveCount(0);
+});
+
+test('QA project workspace exposes quality controls without formulation controls', async ({ page }) => {
+  await useRole(page, 'qa'); await mockApi(page, { withProject: true }); await page.goto('/projects');
+  await page.getByRole('button', { name: /Citrus launch/ }).click();
+  await expect(page.getByRole('tab', { name: 'Stability & specs' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Industrial quality' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Experimental plans' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Edit brief' })).toHaveCount(0);
 });
 
 test('AI provider processing requires explicit account consent', async ({ page }) => {

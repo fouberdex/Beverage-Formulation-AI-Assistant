@@ -32,7 +32,7 @@ The application uses Supabase Postgres for durable storage and Supabase Auth for
 
 ### Access and history
 
-- Authenticated accounts have `admin`, `formulator`, or read-only `viewer` roles.
+- Authenticated accounts use explicit industrial roles: `admin`, `rd_manager`, `formulator`, `lab`, `sensory`, `qa`, `regulatory`, `procurement`, or read-only `viewer`.
 - Administrator bootstrap is tied to one explicitly configured Auth email; signup order never grants privileges.
 - Formulations, generated variants, compliance results, and calculations are owner-scoped.
 - Formulation version creation and history are supported. This is application-level versioning, not Git-style branching or enterprise document control.
@@ -151,7 +151,7 @@ Versioned migrations live in `supabase/migrations`; `backend/database/supabase_s
 
 The Sensory workspace requires `20260825202029_sensory_studies_and_responses.sql` on the hosted project. A missing table is reported as unavailable instead of silently using temporary browser data. Authenticate the Supabase CLI, link the intended project, inspect `supabase migration list`, then apply reviewed pending migrations with `supabase db push`; never use a remote reset to install this feature.
 
-All ordinary accounts start as `formulator`. Set `BOOTSTRAP_ADMIN_EMAIL` before the intended administrator signs in. The backend asks a service-role-only database function to verify that exact email against `auth.users`; the bootstrap is idempotent for that account and rejects every second identity. Administrators can manage the shared ingredient catalog and other users; `viewer` accounts are read-only.
+All ordinary accounts start as `formulator`. Set `BOOTSTRAP_ADMIN_EMAIL` before the intended administrator signs in. The backend asks a service-role-only database function to verify that exact email against `auth.users`; the bootstrap is idempotent for that account and rejects every second identity. Administrators assign least-privileged industrial roles. The API maps every mutation to an explicit capability and denies unclassified mutations by default; frontend visibility is convenience only and is never the security boundary. Apply `20260916100000_expanded_authorization_roles.sql` before assigning specialist roles. `viewer` accounts are read-only, while personal profile and AI privacy-consent settings remain owner-scoped self-service operations.
 
 For local database development, install Docker and run:
 
