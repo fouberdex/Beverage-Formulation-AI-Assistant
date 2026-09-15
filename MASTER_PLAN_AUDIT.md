@@ -237,6 +237,22 @@ payloads or searches extracted document text.
 - Model registry, datasets, evaluation, applicability boundaries and uncertainty;
   no predictive claim before validation criteria pass.
 
+## Remediation contract — Stage 1A legacy backend safety
+
+Completed as a separately tested change. Import and runtime-registration tracing
+confirmed that `backend/src/server.js` is the sole active Fastify API and that the
+older files under `backend/src/routes`, their SQL service dependencies, and the
+direct `pg` schema runner were not part of that runtime. The obsolete parallel
+implementations—including the randomized target-generation path—were removed. The
+unused `pg` dependency and obsolete `npm run migrate` command were also removed;
+database evolution remains exclusively in reviewed `supabase/migrations`.
+
+An architectural regression test now fails if any banned legacy implementation or
+the direct-schema migration entrypoint returns, and confirms that the active server
+imports the current deterministic formulation and Product Passport engines. No
+database schema, migration, RLS policy, authorization rule, API contract or active
+domain engine changed in this stage.
+
 ## UX hardening — master prompt execution
 
 ### Tranche A — foundation and application shell

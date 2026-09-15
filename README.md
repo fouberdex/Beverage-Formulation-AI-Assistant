@@ -143,7 +143,7 @@ Invalid requests return HTTP 400 with structured validation details. Missing res
 
 ## Supabase database
 
-Versioned migrations live in `supabase/migrations`; `backend/database/supabase_schema.sql` is the consolidated schema reference. The migrations include explicit Data API grants, RLS policies, cross-tenant relational constraints, Auth-backed profiles and roles, normalized formulation ingredients, AI results, target runs, compliance, pricing, costs, audit logs, and server-only transaction functions.
+Versioned migrations live in `supabase/migrations`; `backend/database/supabase_schema.sql` is the consolidated schema reference and is not executed directly by an application migration script. Apply schema changes only with the reviewed Supabase CLI/deployment workflow. The migrations include explicit Data API grants, RLS policies, cross-tenant relational constraints, Auth-backed profiles and roles, normalized formulation ingredients, AI results, target runs, compliance, pricing, costs, audit logs, and server-only transaction functions.
 
 The Sensory workspace requires `20260825202029_sensory_studies_and_responses.sql` on the hosted project. A missing table is reported as unavailable instead of silently using temporary browser data. Authenticate the Supabase CLI, link the intended project, inspect `supabase migration list`, then apply reviewed pending migrations with `supabase db push`; never use a remote reset to install this feature.
 

@@ -32,6 +32,24 @@ The main application and FoodIQ have separate failure boundaries. FoodIQ or a
 GPU tunnel can be unavailable without making the formulation application
 unavailable.
 
+## Authoritative runtime entrypoints
+
+- `backend/src/server.js` is the only Node API entrypoint and currently owns the
+  registered Fastify routes while domain behavior lives in the deterministic
+  services imported by that file.
+- `frontend/src/main.tsx` is the browser entrypoint.
+- `innovation-rag/app/streamlit_app.py` and `beverage_rag.cli` are the isolated
+  FoodIQ entrypoints.
+- Database evolution is performed only by the versioned files in
+  `supabase/migrations` through the Supabase CLI and deployment workflow.
+
+The former Express-style route/service stack and direct `pg` schema runner were
+removed after import tracing confirmed that the active Fastify server did not
+register them. This prevents the randomized legacy target generator and parallel
+SQL implementations from being mistaken for authoritative domain behavior. The
+consolidated files under `backend/database` remain schema references, not migration
+entrypoints.
+
 ## Implemented domain boundaries
 
 - `ingredients`: shared catalog, administrator-controlled changes and pricing.
