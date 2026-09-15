@@ -750,7 +750,8 @@ server.get(`${apiPrefix}/projects/:id`, async (request, reply) => {
     quality_events: qualityEvents.sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at)),
     capa_actions: capaActions.sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at)),
   };
-  return { data: { ...project, events, execution_available: request.store.featureAvailability?.projectExecution !== false, stability_available: request.store.featureAvailability?.stability !== false, supply_chain_available: request.store.featureAvailability?.supplyChain !== false, industrial_quality_available: request.store.featureAvailability?.industrialQuality !== false, traceability, development_state: buildProjectDevelopmentState(project, traceability), product_passport: buildProductPassport(project, traceability) }, allowed_transitions: projectTransitions[project.stage] || [] };
+  const developmentState = buildProjectDevelopmentState(project, traceability);
+  return { data: { ...project, events, execution_available: request.store.featureAvailability?.projectExecution !== false, stability_available: request.store.featureAvailability?.stability !== false, supply_chain_available: request.store.featureAvailability?.supplyChain !== false, industrial_quality_available: request.store.featureAvailability?.industrialQuality !== false, traceability, development_state: developmentState, product_passport: buildProductPassport(project, traceability, developmentState) }, allowed_transitions: projectTransitions[project.stage] || [] };
 });
 
 server.get(`${apiPrefix}/workspace-search`, async (request) => {

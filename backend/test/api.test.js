@@ -402,13 +402,16 @@ test('R&D projects persist a controlled lifecycle and reject skipped gates', asy
   assert.equal(traced.json().data.traceability.quality_events.length, 1);
   assert.equal(traced.json().data.traceability.quality_events[0].status, 'closed');
   assert.equal(traced.json().data.traceability.capa_actions.length, 1);
-  assert.equal(traced.json().data.product_passport.engine_version, '1.0.0');
-  assert.ok(traced.json().data.product_passport.graph.edges.some(event => event.relation === 'evidence_for'));
+  assert.equal(traced.json().data.product_passport.engine_version, '2.0.0');
+  assert.equal(traced.json().data.product_passport.formulation_version_id, formulation.id);
+  assert.ok(!traced.json().data.product_passport.graph.nodes.some(node => node.entity_id === lab.json().data.id), 'evidence from the draft v2 must not leak into the approved v1 passport');
   assert.equal(typeof traced.json().data.product_passport.readiness.score_percent, 'number');
   assert.notEqual(traced.json().data.product_passport.readiness.status, 'blocked');
   assert.equal(traced.json().data.development_state.engine_version, '1.0.0');
   assert.equal(traced.json().data.development_state.project_id, id);
   assert.ok(traced.json().data.development_state.target_formulation_version_id);
+  assert.equal(traced.json().data.product_passport.formulation_version_id, traced.json().data.development_state.target_formulation_version_id);
+  assert.ok(traced.json().data.product_passport.readiness.gates.every(gate => typeof gate.status === 'string' && typeof gate.explanation === 'string'));
   assert.equal(typeof traced.json().data.development_state.release_eligible, 'boolean');
   assert.ok(traced.json().data.events.some(event => event.event_type === 'decision_recorded' && event.actor_id));
   const workspaceSearch = await server.inject({ method: 'GET', url: '/api/v1/workspace-search?q=PROD-CITRUS' });

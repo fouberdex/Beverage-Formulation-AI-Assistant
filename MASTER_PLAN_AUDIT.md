@@ -225,17 +225,18 @@ read-only while the server-owned transactional commit persists the workflow.
 - Read-optimized cross-domain product view, traceability graph and safe structured
   global search.
 
-Tranche 1 is now implemented without creating a second source of truth. Every
-project response includes a read-only passport calculated from the current
-tenant-owned records. Ten explicit evidence gates report readiness without claiming
-regulatory certification; unresolved major/critical events or unresolved OOS
-decisions block readiness, while closed investigations remain visible history rather
-than permanent blockers. The graph uses namespaced nodes and explicit relationships
-from formulation versions through laboratory, sensory, pilot, stability,
-specification, packaging, production, QC and CAPA records. Users can export the
-calculated passport as JSON. Structured workspace search is tenant-scoped,
-deterministic and limited to selected metadata fields; it never returns generic
-payloads or searches extracted document text.
+Tranche 1 is implemented without creating a second source of truth. Every project
+response calculates `development_state` once and derives its read-only passport from
+that same state. The passport identifies one target formulation version at the top
+level, exposes the exact-version evidence chain and uses the same thirteen readiness
+gates as the controlled workflow. Each gate carries a deterministic status, entity
+identifiers and explanation. Evidence from other formulation versions is excluded
+from the graph, counters and release decision, so laboratory, sensory, specification,
+packaging and QC records cannot be combined across revisions. Unresolved blockers are
+returned explicitly; the output does not claim regulatory certification. Users can
+export the calculated passport as JSON. Structured workspace search remains
+tenant-scoped, deterministic and limited to selected metadata fields; it never
+returns generic payloads or searches extracted document text.
 
 ### Phase 8 — validated advanced AI
 

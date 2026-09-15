@@ -114,9 +114,11 @@ endpoints.
   scientific optima.
 - Sensory and statistical outputs describe the supplied data; they do not imply
   consumer-market validity outside the study design.
-- Shelf-life, DOE, supplier qualification, packaging, scale-up, QC/CAPA and a
-  product digital passport remain roadmap domains until their acceptance tests
-  are implemented.
+- The Product Digital Passport is a calculated exact-version projection of the
+  authoritative project state. It must not combine evidence from different
+  formulation revisions and is not a regulatory certificate.
+- Predictive shelf-life extrapolation and validated advanced-AI claims remain roadmap
+  capabilities until their acceptance criteria and validation datasets are complete.
 
 ## Engineering rules
 
