@@ -8,7 +8,7 @@ import Pagination from '../components/Pagination';
 import StatusMessage from '../components/StatusMessage';
 import ProjectExecutionWorkspace from '../components/ProjectExecutionWorkspace';
 import { CardSkeleton } from '../components/LoadingState';
-import ProjectWorkflow, { deriveProjectWorkflow } from '../components/ProjectWorkflow';
+import ProjectWorkflow, { adaptProjectDevelopmentState } from '../components/ProjectWorkflow';
 
 const stages: Array<{ key: ProjectStage; label: string }> = [
   { key: 'brief', label: 'Brief' }, { key: 'concept', label: 'Concept' },
@@ -124,7 +124,7 @@ export default function ProjectsPage() {
 
   const currentStageIndex = selected ? stages.findIndex(item => item.key === selected.stage) : -1;
   const activeCount = useMemo(() => projects.filter(item => item.status === 'active').length, [projects]);
-  const selectedWorkflow = selected ? deriveProjectWorkflow(selected) : null;
+  const selectedWorkflow = selected ? adaptProjectDevelopmentState(selected) : null;
 
   return <div className="space-y-6">
     <header className="hero-panel">

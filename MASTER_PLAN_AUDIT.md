@@ -302,9 +302,16 @@ The authoritative backend project response now also exposes a deterministic
 evidence family to that exact version, identifies cross-version QC evidence as a
 blocker, and calculates the next action, readiness, explicit rework requirement
 and release eligibility. This uses the existing persisted trace and requires no
-database change. The browser workflow still uses its earlier local derivation in
-this tranche; replacing that duplicate with `development_state` is the next
-coherence unit.
+database change. The initial browser workflow still used its earlier local
+derivation at that point.
+
+The follow-up coherence unit is now implemented: the project context strip and
+closed-loop workflow consume `development_state` directly. The browser only maps
+backend gates to compact labels and navigation routes; it no longer counts or
+combines evidence records to infer completion, blockers, reformulation or the
+target version. If an older or incomplete API response omits the state contract,
+the UI fails visibly closed and asks for a refresh instead of reconstructing an
+independent answer.
 
 Acceptance evidence: the production build succeeds; the expanded Playwright suite
 covers the responsive brief, deterministic workflow, exact-version context and

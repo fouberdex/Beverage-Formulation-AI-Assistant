@@ -68,7 +68,8 @@ entrypoints.
 - `project state`: selects one target formulation version and calculates the
   current stage, next controlled action, blockers, exact-version evidence chain,
   readiness, reformulation requirement and release eligibility from persisted
-  records only.
+  records only. The frontend consumes this contract and limits its adaptation to
+  display labels and routes; it does not independently infer workflow state.
 - `ai`: explicit per-user opt-in, quotas, strict output schemas and deterministic
   fallback. AI output cannot replace authoritative calculations.
 - `research intelligence`: isolated patent/publication RAG with evidence gates.
