@@ -174,6 +174,10 @@ test('project execution workspace exposes protocols, pilot batches, gates, decis
   const batchRequest = page.waitForRequest(request => request.url().includes('/pilot-batches/batch-1') && request.method() === 'PUT');
   await page.getByRole('button', { name: 'Save execution record' }).click();
   expect((await batchRequest).postDataJSON().actual_quantities[0]).toEqual({ material_name: 'Water', quantity: 18, unit: 'l', lot_code: 'WATER-2409' });
+  await page.getByRole('tab', { name: 'Stability & specs' }).click();
+  await expect(page.getByText('Stability programs & controlled specifications')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'New program' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'New specification' })).toBeVisible();
   await page.getByRole('tab', { name: 'Milestones' }).click();
   await expect(page.getByRole('button', { name: 'New milestone' })).toBeVisible();
   await page.getByRole('tab', { name: 'Go / No-Go' }).click();

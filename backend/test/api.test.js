@@ -148,6 +148,42 @@ test('R&D projects persist a controlled lifecycle and reject skipped gates', asy
   assert.equal(lab.json().data.formulation_version_id, version.id);
   assert.equal(lab.json().data.project_id, id);
 
+  const stabilityProgramResponse = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/stability-programs`, payload: {
+    name: 'Ambient shelf-life program', formulation_version_id: version.id, status: 'draft', protocol: 'Store sealed PET bottles under controlled ambient conditions.',
+    storage_conditions: [{ id: 'ambient', label: 'Ambient dark', temperature_c: 25, relative_humidity_percent: 60, light_exposure: 'dark' }],
+    timepoints_days: [0, 30, 90], replicates_per_timepoint: 1,
+    parameters: [{ key: 'ph', label: 'Finished product pH', source: 'measurements', unit: 'pH', lower: 2.8, upper: 3.5, max_change_from_baseline: 0.2 }],
+  } });
+  assert.equal(stabilityProgramResponse.statusCode, 201);
+  const stabilityProgram = stabilityProgramResponse.json().data;
+  const stabilityObservation = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/stability-programs/${stabilityProgram.id}/observations`, payload: {
+    laboratory_result_id: lab.json().data.id, condition_id: 'ambient', timepoint_days: 0, replicate: 1,
+  } });
+  assert.equal(stabilityObservation.statusCode, 201);
+  assert.equal(stabilityObservation.json().data.values.ph, 3.2);
+  const lockedStabilityProgram = await server.inject({ method: 'PUT', url: `/api/v1/projects/${id}/stability-programs/${stabilityProgram.id}`, payload: { protocol: 'Attempted silent protocol mutation after observation.' } });
+  assert.equal(lockedStabilityProgram.statusCode, 409);
+  assert.equal(lockedStabilityProgram.json().code, 'STABILITY_PROTOCOL_LOCKED');
+
+  const specificationResponse = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/specifications`, payload: {
+    name: 'Citrus finished product specification', formulation_version_id: version.id, markets: ['Algeria'], notes: 'Controlled release limits.',
+    limits: [{ key: 'ph', label: 'Finished product pH', source: 'measurements', unit: 'pH', lower: 2.8, upper: 3.5 }],
+  } });
+  assert.equal(specificationResponse.statusCode, 201);
+  const specification = specificationResponse.json().data;
+  const specificationApproval = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/specifications/${specification.id}/approve`, payload: {
+    rationale: 'The approved limits match the validated brief and initial laboratory result.', evidence_refs: [lab.json().data.id],
+  } });
+  assert.equal(specificationApproval.statusCode, 201);
+  assert.equal(specificationApproval.json().data.status, 'approved');
+  const lockedSpecification = await server.inject({ method: 'PUT', url: `/api/v1/projects/${id}/specifications/${specification.id}`, payload: { notes: 'Silent mutation' } });
+  assert.equal(lockedSpecification.statusCode, 409);
+  const stabilityAnalysis = await server.inject({ method: 'GET', url: `/api/v1/projects/${id}/stability-programs/${stabilityProgram.id}/analysis` });
+  assert.equal(stabilityAnalysis.statusCode, 200);
+  assert.equal(stabilityAnalysis.json().data.overall_status, 'in_progress');
+  assert.equal(stabilityAnalysis.json().data.specification.id, specification.id);
+  assert.equal(stabilityAnalysis.json().data.extrapolation.performed, false);
+
   const study = await server.inject({ method: 'POST', url: '/api/v1/sensory/studies', payload: {
     name: 'Traceable project study', objective: 'Validate preference for the exact linked formulation version.',
     test_type: 'hedonic', panel_type: 'internal', planned_panelists: 5, status: 'draft',
@@ -246,6 +282,10 @@ test('R&D projects persist a controlled lifecycle and reject skipped gates', asy
   assert.equal(traced.json().data.traceability.pilot_batches.length, 2);
   assert.equal(traced.json().data.traceability.milestones.length, 1);
   assert.equal(traced.json().data.traceability.decisions.length, 1);
+  assert.equal(traced.json().data.traceability.stability_programs.length, 1);
+  assert.equal(traced.json().data.traceability.stability_observations.length, 1);
+  assert.equal(traced.json().data.traceability.product_specifications.length, 1);
+  assert.equal(traced.json().data.traceability.specification_approvals.length, 1);
   assert.ok(traced.json().data.events.some(event => event.event_type === 'decision_recorded' && event.actor_id));
 });
 

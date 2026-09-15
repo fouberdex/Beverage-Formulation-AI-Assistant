@@ -5,14 +5,16 @@ import { projectsAPI } from '../services/api';
 import { getErrorMessage } from '../services/errors';
 import type { RDDesignAnalysis, RDExperimentalPlan, RDPilotBatch, RDProject, RDProjectDecision, RDProjectMilestone } from '../types';
 import StatusMessage from './StatusMessage';
+import StabilityWorkspace from './StabilityWorkspace';
 
-type Tab = 'experiments' | 'doe' | 'batches' | 'milestones' | 'decisions' | 'timeline';
+type Tab = 'experiments' | 'doe' | 'batches' | 'stability' | 'milestones' | 'decisions' | 'timeline';
 const csv = (value: string) => value.split(',').map(item => item.trim()).filter(Boolean);
 const lines = (value: string) => value.split('\n').map(item => item.trim()).filter(Boolean);
 const tabs: Array<{ key: Tab; label: string; icon: typeof Beaker }> = [
   { key: 'experiments', label: 'Experimental plans', icon: Beaker },
   { key: 'doe', label: 'DOE & next run', icon: FlaskConical },
   { key: 'batches', label: 'Pilot batches', icon: Factory },
+  { key: 'stability', label: 'Stability & specs', icon: FlaskConical },
   { key: 'milestones', label: 'Milestones', icon: Flag },
   { key: 'decisions', label: 'Go / No-Go', icon: ShieldCheck },
   { key: 'timeline', label: 'Timeline', icon: GitCommitHorizontal },
@@ -48,6 +50,7 @@ export default function ProjectExecutionWorkspace({ project, onRefresh }: { proj
       {tab === 'experiments' && <ExperimentalPlans project={project} plans={plans} busy={busy} perform={perform}/>} 
       {tab === 'doe' && <DoeWorkspace project={project} plans={plans} batches={batches} busy={busy} perform={perform}/>}
       {tab === 'batches' && <PilotBatches project={project} plans={plans} batches={batches} busy={busy} perform={perform}/>} 
+      {tab === 'stability' && <StabilityWorkspace project={project} busy={busy} perform={perform}/>}
       {tab === 'milestones' && <Milestones project={project} milestones={milestones} busy={busy} perform={perform}/>} 
       {tab === 'decisions' && <Decisions project={project} milestones={milestones} decisions={decisions} busy={busy} perform={perform}/>} 
       {tab === 'timeline' && <Timeline project={project}/>} 

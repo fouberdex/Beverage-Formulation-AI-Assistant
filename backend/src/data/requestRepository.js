@@ -20,6 +20,10 @@ const COLLECTION_NAMES = [
   'rdPilotBatches',
   'rdProjectMilestones',
   'rdProjectDecisions',
+  'rdStabilityPrograms',
+  'rdStabilityObservations',
+  'rdProductSpecifications',
+  'rdSpecificationApprovals',
 ];
 
 function unpackPayload(row, ownershipColumn = 'owner_id') {
@@ -84,12 +88,12 @@ export function buildChangeSet(store, auditEvent = null) {
 export async function loadRequestStore(ownerId, options = {}) {
   const mode = options.mode || getStorageConfiguration().mode;
   if (mode !== 'supabase') {
-    return { ...getLocalCollections(), featureAvailability: { sensory: true, projects: true, projectExecution: true }, snapshot: null };
+    return { ...getLocalCollections(), featureAvailability: { sensory: true, projects: true, projectExecution: true, stability: true }, snapshot: null };
   }
   if (!ownerId) throw new Error('An authenticated owner is required for Supabase data access');
 
   const client = options.client || getSupabaseAdmin();
-  const [ingredientRows, formulationRows, variantRows, complianceRows, batchRows, pricingRows, targetRows, laboratoryRows, learningRows, sensoryStudyRows, sensoryResponseRows, projectRows, projectEventRows, experimentalPlanRows, pilotBatchRows, milestoneRows, decisionRows] = await Promise.all([
+  const [ingredientRows, formulationRows, variantRows, complianceRows, batchRows, pricingRows, targetRows, laboratoryRows, learningRows, sensoryStudyRows, sensoryResponseRows, projectRows, projectEventRows, experimentalPlanRows, pilotBatchRows, milestoneRows, decisionRows, stabilityProgramRows, stabilityObservationRows, specificationRows, specificationApprovalRows] = await Promise.all([
     fetchAll(() => client.from('ingredients').select('id,code,name,category,is_active,payload')),
     fetchAll(() => client.from('formulations').select('payload,owner_id').eq('owner_id', ownerId)),
     fetchAll(() => client.from('ai_variants').select('payload,owner_id').eq('owner_id', ownerId)),
@@ -107,6 +111,10 @@ export async function loadRequestStore(ownerId, options = {}) {
     fetchFeatureCollection(() => client.from('rd_pilot_batches').select('payload,owner_id').eq('owner_id', ownerId)),
     fetchFeatureCollection(() => client.from('rd_project_milestones').select('payload,owner_id').eq('owner_id', ownerId)),
     fetchFeatureCollection(() => client.from('rd_project_decisions').select('payload,owner_id').eq('owner_id', ownerId)),
+    fetchFeatureCollection(() => client.from('rd_stability_programs').select('payload,owner_id').eq('owner_id', ownerId)),
+    fetchFeatureCollection(() => client.from('rd_stability_observations').select('payload,owner_id').eq('owner_id', ownerId)),
+    fetchFeatureCollection(() => client.from('rd_product_specifications').select('payload,owner_id').eq('owner_id', ownerId)),
+    fetchFeatureCollection(() => client.from('rd_specification_approvals').select('payload,owner_id').eq('owner_id', ownerId)),
   ]);
 
   // A newly connected Supabase project can have no shared catalog rows until
@@ -148,10 +156,15 @@ export async function loadRequestStore(ownerId, options = {}) {
     rdPilotBatches: pilotBatchRows.rows.map(row => unpackPayload(row)),
     rdProjectMilestones: milestoneRows.rows.map(row => unpackPayload(row)),
     rdProjectDecisions: decisionRows.rows.map(row => unpackPayload(row)),
+    rdStabilityPrograms: stabilityProgramRows.rows.map(row => unpackPayload(row)),
+    rdStabilityObservations: stabilityObservationRows.rows.map(row => unpackPayload(row)),
+    rdProductSpecifications: specificationRows.rows.map(row => unpackPayload(row)),
+    rdSpecificationApprovals: specificationApprovalRows.rows.map(row => unpackPayload(row)),
     featureAvailability: {
       sensory: sensoryStudyRows.available && sensoryResponseRows.available,
       projects: projectRows.available && projectEventRows.available,
       projectExecution: experimentalPlanRows.available && pilotBatchRows.available && milestoneRows.available && decisionRows.available,
+      stability: stabilityProgramRows.available && stabilityObservationRows.available && specificationRows.available && specificationApprovalRows.available,
     },
   };
   store.using_bundled_ingredient_catalog = storedIngredients.length === 0;

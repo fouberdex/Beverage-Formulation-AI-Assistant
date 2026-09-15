@@ -165,6 +165,19 @@ replication and lack-of-fit gates pass, and domain review is always required.
 - Timepoint programs, acceptance limits, deterministic trends, controlled product
   specifications and approval history.
 
+Tranche 1 is now implemented as a controlled, evidence-linked workflow. Stability
+programs are attached to an exact project and formulation version and define signed
+conditions, timepoints, replicates and parameter limits. Once the first observation
+is recorded, the protocol is locked. Observations can only snapshot measurements
+from an existing laboratory result linked to that same formulation version; the
+client cannot inject replacement values. The deterministic engine reports observed
+linear trends, R², limit status, first observed failure and program completion, but
+never extrapolates shelf life beyond recorded timepoints. Product specifications are
+versioned, remain editable only as drafts and become immutable after approval. Each
+approval is append-only, records its evidence and rationale, and supersedes any
+previous approved version for the formulation. All four records participate in the
+same tenant-isolated Supabase commit and RLS model as the rest of the R&D project.
+
 ### Phase 5 — suppliers, documents and packaging
 
 - Supplier qualification, supplier-material facts, document provenance/OCR review

@@ -327,6 +327,10 @@ export const rdExperimentalPlans = [];
 export const rdPilotBatches = [];
 export const rdProjectMilestones = [];
 export const rdProjectDecisions = [];
+export const rdStabilityPrograms = [];
+export const rdStabilityObservations = [];
+export const rdProductSpecifications = [];
+export const rdSpecificationApprovals = [];
 
 // Categories
 export const categories = [...new Set(mockIngredients.map(i => i.category))];

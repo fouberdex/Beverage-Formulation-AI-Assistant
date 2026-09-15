@@ -229,19 +229,31 @@ export interface RDProject {
   status: ProjectStatus;
   event_count?: number;
   execution_available?: boolean;
+  stability_available?: boolean;
   events?: RDProjectEvent[];
   traceability?: {
     formulations: Array<{ id: string; code: string; name: string; version: number; status: string; locked_at?: string | null }>;
-    laboratory_results: Array<{ id: string; formulation_version_id: string; batch_code?: string; tested_at: string }>;
+    laboratory_results: Array<{ id: string; formulation_version_id: string; batch_code?: string; tested_at: string; measurements?: Record<string, number>; sensory?: Record<string, number> }>;
     sensory_studies: Array<{ id: string; name: string; status: string; formulation_version_ids: string[] }>;
     experimental_plans: RDExperimentalPlan[];
     pilot_batches: RDPilotBatch[];
     milestones: RDProjectMilestone[];
     decisions: RDProjectDecision[];
+    stability_programs: RDStabilityProgram[];
+    stability_observations: RDStabilityObservation[];
+    product_specifications: RDProductSpecification[];
+    specification_approvals: RDSpecificationApproval[];
   };
   created_at: string;
   updated_at: string;
 }
+
+export interface RDStabilityLimit { key: string; label: string; source: 'measurements' | 'sensory'; unit: string; lower?: number; upper?: number; max_change_from_baseline?: number }
+export interface RDStabilityProgram { id: string; project_id: string; formulation_version_id: string; name: string; status: 'draft' | 'running' | 'completed' | 'cancelled'; protocol: string; storage_conditions: Array<{ id: string; label: string; temperature_c: number; relative_humidity_percent?: number; light_exposure: 'dark' | 'ambient' | 'controlled_light' }>; timepoints_days: number[]; replicates_per_timepoint: number; parameters: RDStabilityLimit[]; created_at: string; updated_at: string }
+export interface RDStabilityObservation { id: string; project_id: string; program_id: string; formulation_version_id: string; laboratory_result_id: string; condition_id: string; timepoint_days: number; replicate: number; values: Record<string, number>; laboratory_tested_at: string; recorded_at: string }
+export interface RDProductSpecification { id: string; project_id: string; formulation_version_id: string; name: string; version: number; status: 'draft' | 'approved' | 'superseded' | 'withdrawn'; markets: string[]; effective_date?: string | null; notes: string; limits: RDStabilityLimit[]; approved_at?: string; created_at: string; updated_at: string }
+export interface RDSpecificationApproval { id: string; project_id: string; specification_id: string; outcome: 'approved' | 'withdrawn'; rationale: string; evidence_refs: string[]; decided_at: string }
+export interface RDStabilityAnalysis { engine_version: string; program_id: string; formulation_version_id: string; observation_count: number; overall_status: string; conclusion: string; extrapolation: { performed: false; reason: string }; conditions: Array<{ id: string; label: string; temperature_c: number; expected_observations: number; recorded_observations: number; completion_percent: number; status: string; parameters: Array<{ key: string; label: string; unit: string; baseline: number | null; first_observed_failure_day: number | null; status: string; trend: { status: string; slope_per_day: number | null; slope_per_30_days?: number | null; r_squared: number | null }; points: Array<{ day: number; value: number; status: string; absolute_change_from_baseline: number | null }> }> }>; specification: null | { id: string; version: number; status: string; limits: Array<{ key: string; label: string; evaluated_observations: number; failed_observations: number; status: string }> } }
 
 export interface LaboratoryResult {
   id: string;

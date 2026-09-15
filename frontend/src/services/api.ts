@@ -61,6 +61,13 @@ export const projectsAPI = {
   createMilestone: (id: string, data: any) => api.post(`/projects/${id}/milestones`, data),
   updateMilestone: (id: string, milestoneId: string, data: any) => api.put(`/projects/${id}/milestones/${milestoneId}`, data),
   recordDecision: (id: string, data: any) => api.post(`/projects/${id}/decisions`, data),
+  createStabilityProgram: (id: string, data: any) => api.post(`/projects/${id}/stability-programs`, data),
+  updateStabilityProgram: (id: string, programId: string, data: any) => api.put(`/projects/${id}/stability-programs/${programId}`, data),
+  recordStabilityObservation: (id: string, programId: string, data: any) => api.post(`/projects/${id}/stability-programs/${programId}/observations`, data),
+  getStabilityAnalysis: (id: string, programId: string) => api.get(`/projects/${id}/stability-programs/${programId}/analysis`),
+  createSpecification: (id: string, data: any) => api.post(`/projects/${id}/specifications`, data),
+  updateSpecification: (id: string, specificationId: string, data: any) => api.put(`/projects/${id}/specifications/${specificationId}`, data),
+  approveSpecification: (id: string, specificationId: string, data: any) => api.post(`/projects/${id}/specifications/${specificationId}/approve`, data),
 };
 
 // Formulations API

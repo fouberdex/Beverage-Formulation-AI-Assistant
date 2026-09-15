@@ -27,6 +27,7 @@ test('Supabase migrations form an ordered, complete database workflow', async ()
     '20260914180000_rd_projects_foundation.sql',
     '20260914230000_rd_traceability_spine.sql',
     '20260914234500_rd_execution_loop.sql',
+    '20260915113000_rd_stability_and_specifications.sql',
   ]);
 
   const bootstrap = await readFile(
@@ -107,6 +108,27 @@ test('R&D execution migration persists controlled plans, pilot batches, mileston
   assert.match(migration, /on conflict \(id\) do nothing/);
   assert.match(migration, /enable row level security/g);
   assert.match(migration, /revoke all on function public\.commit_rd_execution_loop\(jsonb\) from public, anon, authenticated/);
+});
+
+test('stability migration persists exact-version programs, laboratory observations and immutable specification approvals', async () => {
+  const migration = await readFile(new URL('migrations/20260915113000_rd_stability_and_specifications.sql', supabaseDirectory), 'utf8');
+  assert.match(migration, /create table public\.rd_stability_programs/);
+  assert.match(migration, /create table public\.rd_stability_observations/);
+  assert.match(migration, /create table public\.rd_product_specifications/);
+  assert.match(migration, /create table public\.rd_specification_approvals/);
+  assert.match(migration, /foreign key \(owner_id, laboratory_result_id\) references public\.laboratory_results/);
+  assert.match(migration, /on conflict \(id\) do nothing/g);
+  assert.match(migration, /enable row level security/g);
+  assert.match(migration, /revoke all on function public\.commit_rd_stability_and_specifications\(jsonb\) from public, anon, authenticated/);
+});
+
+test('stability database test covers tenant isolation, API-only writes and cross-tenant foreign keys', async () => {
+  const suite = await readFile(new URL('tests/database/006_stability_specifications_rls.test.sql', supabaseDirectory), 'utf8');
+  assert.match(suite, /tenant A sees only its stability program/);
+  assert.match(suite, /authenticated clients cannot mutate an approved specification/);
+  assert.match(suite, /authenticated cannot execute the stability commit RPC/);
+  assert.match(suite, /a stability observation cannot link another tenant laboratory result/);
+  assert.match(suite, /tenant B sees only its product specification/);
 });
 
 test('Supabase seed data contains shared catalog rows only', async () => {

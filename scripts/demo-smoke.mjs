@@ -128,6 +128,22 @@ try {
   if (labs.length < 2) throw new Error('Laboratory persistence check returned fewer than two records');
   ok('Lab Results create, update and spreadsheet-import persistence');
 
+  const stabilityProgram = (await api(`/projects/${project.id}/stability-programs`, { method: 'POST', body: {
+    name: 'Demo stability program', formulation_version_id: formulation.id, status: 'draft', protocol: 'Store sealed packs under controlled ambient conditions.',
+    storage_conditions: [{ id: 'ambient', label: 'Ambient dark', temperature_c: 25, relative_humidity_percent: 60, light_exposure: 'dark' }],
+    timepoints_days: [0, 30, 90], replicates_per_timepoint: 1,
+    parameters: [{ key: 'ph', label: 'Finished product pH', source: 'measurements', unit: 'pH', lower: 2.8, upper: 3.5, max_change_from_baseline: 0.2 }],
+  } })).data;
+  await api(`/projects/${project.id}/stability-programs/${stabilityProgram.id}/observations`, { method: 'POST', body: { laboratory_result_id: lab.id, condition_id: 'ambient', timepoint_days: 0, replicate: 1 } });
+  const specification = (await api(`/projects/${project.id}/specifications`, { method: 'POST', body: {
+    name: 'Demo finished-product specification', formulation_version_id: formulation.id, markets: ['Algeria'],
+    limits: [{ key: 'ph', label: 'Finished product pH', source: 'measurements', unit: 'pH', lower: 2.8, upper: 3.5 }],
+  } })).data;
+  await api(`/projects/${project.id}/specifications/${specification.id}/approve`, { method: 'POST', body: { rationale: 'Initial laboratory evidence satisfies the controlled release range.', evidence_refs: [lab.id] } });
+  const stabilityAnalysis = (await api(`/projects/${project.id}/stability-programs/${stabilityProgram.id}/analysis`)).data;
+  if (stabilityAnalysis.observation_count !== 1 || stabilityAnalysis.specification?.id !== specification.id || stabilityAnalysis.extrapolation.performed) throw new Error('Stability or approved specification persistence is incomplete');
+  ok('Stability timepoint, deterministic trend and immutable specification persistence');
+
   const study = (await api('/sensory/studies', { method: 'POST', body: {
     name: 'Demo sensory persistence check', objective: 'Verify the complete sensory workflow before the live demonstration.',
     test_type: 'hedonic', panel_type: 'internal', planned_panelists: 5, scale_min: 0, scale_max: 10, status: 'active',
@@ -146,7 +162,9 @@ try {
   const traceability = (await api(`/projects/${project.id}`)).data.traceability;
   if (traceability.formulations.length !== 1 || traceability.laboratory_results.length < 2 || traceability.sensory_studies.length !== 1
     || traceability.experimental_plans.length !== 1 || traceability.pilot_batches.length !== 1
-    || traceability.milestones.length !== 1 || traceability.decisions.length !== 1) {
+    || traceability.milestones.length !== 1 || traceability.decisions.length !== 1
+    || traceability.stability_programs.length !== 1 || traceability.stability_observations.length !== 1
+    || traceability.product_specifications.length !== 1 || traceability.specification_approvals.length !== 1) {
     throw new Error('Cross-workspace project traceability is incomplete');
   }
   ok('Project → formulation version → laboratory → sensory traceability');
@@ -204,7 +222,7 @@ try {
     const removed = await admin.auth.admin.deleteUser(userId);
     if (removed.error) console.error(`Cleanup warning: ${removed.error.message}`);
     else {
-      const tables = ['rd_projects', 'rd_project_events', 'rd_experimental_plans', 'rd_pilot_batches', 'rd_project_milestones', 'rd_project_decisions', 'formulations', 'laboratory_results', 'sensory_studies', 'sensory_responses', 'compliance_records', 'batch_cost_calculations', 'target_generation_runs', 'ai_variants'];
+      const tables = ['rd_projects', 'rd_project_events', 'rd_experimental_plans', 'rd_pilot_batches', 'rd_project_milestones', 'rd_project_decisions', 'rd_stability_programs', 'rd_stability_observations', 'rd_product_specifications', 'rd_specification_approvals', 'formulations', 'laboratory_results', 'sensory_studies', 'sensory_responses', 'compliance_records', 'batch_cost_calculations', 'target_generation_runs', 'ai_variants'];
       const leftovers = [];
       for (const table of tables) {
         const { count, error } = await admin.from(table).select('*', { head: true, count: 'exact' }).eq('owner_id', userId);

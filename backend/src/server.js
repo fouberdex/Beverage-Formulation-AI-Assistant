@@ -41,6 +41,7 @@ import { analyzeSensoryResults } from './services/sensoryAnalytics.js';
 import { analyzeSensoryStudy } from './services/sensoryStudyAnalytics.js';
 import { FORMULATION_ENGINE_VERSION, generateFormulationCandidates } from './services/formulationIntelligence.js';
 import { DOE_ENGINE_VERSION, analyzeDoeDesign, buildDoeReportCsv, generateDoeDesign } from './services/doeEngine.js';
+import { analyzeStabilityProgram } from './services/stabilityEngine.js';
 import { validateRuntimeConfiguration } from './services/runtimeConfiguration.js';
 import {
   createRequestId,
@@ -485,6 +486,39 @@ const pilotBatchSchema = z.object({
   factor_settings: z.record(z.string(), z.object({ coded: z.coerce.number().min(-1).max(1), value: z.coerce.number().finite(), unit: z.string().max(30).default('') })).default({}),
   response_values: z.record(z.string(), z.coerce.number().finite()).default({}),
 });
+const stabilityLimitSchema = z.object({
+  key: z.string().trim().regex(/^[a-z][a-z0-9_]*$/).max(50),
+  label: z.string().trim().min(2).max(120),
+  source: z.enum(['measurements', 'sensory']),
+  unit: z.string().trim().max(30).default(''),
+  lower: z.coerce.number().finite().optional(),
+  upper: z.coerce.number().finite().optional(),
+  max_change_from_baseline: z.coerce.number().finite().nonnegative().optional(),
+}).superRefine((value, context) => {
+  if (value.lower === undefined && value.upper === undefined && value.max_change_from_baseline === undefined) context.addIssue({ code: z.ZodIssueCode.custom, message: 'At least one acceptance limit is required' });
+  if (value.lower !== undefined && value.upper !== undefined && value.lower > value.upper) context.addIssue({ code: z.ZodIssueCode.custom, path: ['upper'], message: 'Upper limit must be greater than or equal to lower limit' });
+});
+const stabilityProgramSchema = z.object({
+  name: z.string().trim().min(3).max(160),
+  formulation_version_id: z.string().trim().min(1),
+  status: z.enum(['draft', 'running', 'completed', 'cancelled']).default('draft'),
+  protocol: z.string().trim().min(10).max(4000),
+  storage_conditions: z.array(z.object({ id: z.string().trim().regex(/^[a-z][a-z0-9_-]*$/).max(40), label: z.string().trim().min(2).max(120), temperature_c: z.coerce.number().finite().min(-40).max(100), relative_humidity_percent: z.coerce.number().finite().min(0).max(100).optional(), light_exposure: z.enum(['dark', 'ambient', 'controlled_light']).default('dark') })).min(1).max(12)
+    .refine(items => new Set(items.map(item => item.id)).size === items.length, { message: 'Storage condition identifiers must be unique' }),
+  timepoints_days: z.array(z.coerce.number().int().min(0).max(3650)).min(2).max(40)
+    .refine(items => new Set(items).size === items.length, { message: 'Timepoints must be unique' }),
+  replicates_per_timepoint: z.coerce.number().int().min(1).max(20).default(1),
+  parameters: z.array(stabilityLimitSchema).min(1).max(30)
+    .refine(items => new Set(items.map(item => item.key)).size === items.length, { message: 'Parameter keys must be unique' }),
+});
+const productSpecificationSchema = z.object({
+  name: z.string().trim().min(3).max(160),
+  formulation_version_id: z.string().trim().min(1),
+  markets: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
+  effective_date: z.string().date().nullable().optional(),
+  notes: z.string().trim().max(3000).default(''),
+  limits: z.array(stabilityLimitSchema).min(1).max(40).refine(items => new Set(items.map(item => item.key)).size === items.length, { message: 'Specification keys must be unique' }),
+});
 const milestoneSchema = z.object({
   title: z.string().trim().min(3).max(160),
   description: z.string().trim().max(1500).default(''),
@@ -512,6 +546,12 @@ function ensureProjectStorage(request, reply) {
 function ensureProjectExecutionStorage(request, reply) {
   if (request.store.featureAvailability?.projectExecution !== false) return true;
   reply.code(503).send({ error: 'Project execution storage is not installed. Apply the pending Supabase R&D execution migration.' });
+  return false;
+}
+
+function ensureStabilityStorage(request, reply) {
+  if (request.store.featureAvailability?.stability !== false) return true;
+  reply.code(503).send({ error: 'Stability and specification storage is not installed. Apply the pending Supabase stability migration.', code: 'STABILITY_MIGRATION_REQUIRED' });
   return false;
 }
 
@@ -582,14 +622,22 @@ server.get(`${apiPrefix}/projects/:id`, async (request, reply) => {
   const pilotBatches = request.store.rdPilotBatches.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
   const milestones = request.store.rdProjectMilestones.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
   const decisions = request.store.rdProjectDecisions.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
-  return { data: { ...project, events, execution_available: request.store.featureAvailability?.projectExecution !== false, traceability: {
+  const stabilityPrograms = request.store.rdStabilityPrograms.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
+  const stabilityObservations = request.store.rdStabilityObservations.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
+  const specifications = request.store.rdProductSpecifications.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
+  const specificationApprovals = request.store.rdSpecificationApprovals.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
+  return { data: { ...project, events, execution_available: request.store.featureAvailability?.projectExecution !== false, stability_available: request.store.featureAvailability?.stability !== false, traceability: {
     formulations: formulations.map(item => ({ id: item.id, code: item.code, name: item.name, version: item.version, status: item.status, locked_at: item.locked_at || null })),
-    laboratory_results: laboratoryResults.map(item => ({ id: item.id, formulation_version_id: item.formulation_id, batch_code: item.batch_code, tested_at: item.tested_at })),
+    laboratory_results: laboratoryResults.map(item => ({ id: item.id, formulation_version_id: item.formulation_id, batch_code: item.batch_code, tested_at: item.tested_at, measurements: item.measurements, sensory: item.sensory })),
     sensory_studies: sensoryStudies.map(item => ({ id: item.id, name: item.name, status: item.status, formulation_version_ids: item.samples.map(sample => sample.formulation_id).filter(Boolean) })),
     experimental_plans: experimentalPlans.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at)),
     pilot_batches: pilotBatches.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at)),
     milestones: milestones.sort((a, b) => String(a.due_date || '').localeCompare(String(b.due_date || ''))),
     decisions: decisions.sort((a, b) => new Date(b.decided_at) - new Date(a.decided_at)),
+    stability_programs: stabilityPrograms.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at)),
+    stability_observations: stabilityObservations.sort((a, b) => a.timepoint_days - b.timepoint_days),
+    product_specifications: specifications.sort((a, b) => b.version - a.version),
+    specification_approvals: specificationApprovals.sort((a, b) => new Date(b.decided_at) - new Date(a.decided_at)),
   } }, allowed_transitions: projectTransitions[project.stage] || [] };
 });
 
@@ -739,6 +787,117 @@ server.get(`${apiPrefix}/projects/:id/experimental-plans/:planId/report.csv`, as
   const batches = request.store.rdPilotBatches.filter(item => item.experimental_plan_id === plan.id && isOwnedByRequest(request, item));
   const filename = `${project.code}-${plan.name}`.replace(/[^a-z0-9-]+/gi, '-').replace(/^-|-$/g, '').toLowerCase();
   return reply.header('content-type', 'text/csv; charset=utf-8').header('content-disposition', `attachment; filename="${filename}-doe.csv"`).send(buildDoeReportCsv(plan.design, batches));
+});
+
+server.post(`${apiPrefix}/projects/:id/stability-programs`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply) || !ensureStabilityStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const input = stabilityProgramSchema.parse(request.body);
+  if (!projectFormulationVersion(request, project, input.formulation_version_id)) return reply.code(400).send({ error: 'The stability program must reference an exact formulation version from this project' });
+  const timestamp = new Date().toISOString();
+  const program = { id: generateId(), owner_id: request.user?.id, project_id: project.id, ...input, timepoints_days: [...input.timepoints_days].sort((a, b) => a - b), created_at: timestamp, updated_at: timestamp };
+  request.store.rdStabilityPrograms.push(program);
+  addProjectEvent(request, project, 'stability_program_created', { program_id: program.id, formulation_version_id: program.formulation_version_id, condition_count: program.storage_conditions.length, timepoint_count: program.timepoints_days.length });
+  return reply.code(201).send({ data: program });
+});
+
+server.put(`${apiPrefix}/projects/:id/stability-programs/:programId`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply) || !ensureStabilityStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const program = request.store.rdStabilityPrograms.find(item => item.id === request.params.programId && item.project_id === project.id && isOwnedByRequest(request, item));
+  if (!program) return reply.code(404).send({ error: 'Stability program not found' });
+  const updates = stabilityProgramSchema.partial().parse(request.body);
+  const hasObservations = request.store.rdStabilityObservations.some(item => item.program_id === program.id && isOwnedByRequest(request, item));
+  if (hasObservations && Object.keys(updates).some(key => key !== 'status')) return reply.code(409).send({ error: 'The stability protocol is locked after its first observation. Create a new program to change conditions, timepoints or limits.', code: 'STABILITY_PROTOCOL_LOCKED' });
+  const versionId = updates.formulation_version_id || program.formulation_version_id;
+  if (!projectFormulationVersion(request, project, versionId)) return reply.code(400).send({ error: 'The stability program must reference an exact formulation version from this project' });
+  Object.assign(program, updates, updates.timepoints_days ? { timepoints_days: [...updates.timepoints_days].sort((a, b) => a - b) } : {}, { updated_at: new Date().toISOString() });
+  addProjectEvent(request, project, 'stability_program_updated', { program_id: program.id, fields: Object.keys(updates), status: program.status });
+  return { data: program };
+});
+
+server.post(`${apiPrefix}/projects/:id/stability-programs/:programId/observations`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply) || !ensureStabilityStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const program = request.store.rdStabilityPrograms.find(item => item.id === request.params.programId && item.project_id === project.id && isOwnedByRequest(request, item));
+  if (!program) return reply.code(404).send({ error: 'Stability program not found' });
+  const input = z.object({ laboratory_result_id: z.string().trim().min(1), condition_id: z.string().trim().min(1), timepoint_days: z.coerce.number().int().min(0), replicate: z.coerce.number().int().min(1).max(20).default(1) }).parse(request.body);
+  if (!program.storage_conditions.some(item => item.id === input.condition_id)) return reply.code(400).send({ error: 'Storage condition is not declared in this program', code: 'STABILITY_CONDITION_INVALID' });
+  if (!program.timepoints_days.includes(input.timepoint_days)) return reply.code(400).send({ error: 'Timepoint is not declared in this program', code: 'STABILITY_TIMEPOINT_INVALID' });
+  if (input.replicate > program.replicates_per_timepoint) return reply.code(400).send({ error: 'Replicate exceeds the declared protocol', code: 'STABILITY_REPLICATE_INVALID' });
+  const laboratoryResult = request.store.laboratoryResults.find(item => item.id === input.laboratory_result_id && item.formulation_version_id === program.formulation_version_id && item.project_id === project.id && !item.deleted_at && isOwnedByRequest(request, item));
+  if (!laboratoryResult) return reply.code(400).send({ error: 'Laboratory result must belong to the exact project and formulation version', code: 'STABILITY_LAB_RESULT_INVALID' });
+  if (request.store.rdStabilityObservations.some(item => item.laboratory_result_id === laboratoryResult.id && isOwnedByRequest(request, item))) return reply.code(409).send({ error: 'This laboratory result is already linked to a stability observation', code: 'STABILITY_LAB_RESULT_ALREADY_LINKED' });
+  if (request.store.rdStabilityObservations.some(item => item.program_id === program.id && item.condition_id === input.condition_id && item.timepoint_days === input.timepoint_days && item.replicate === input.replicate && isOwnedByRequest(request, item))) return reply.code(409).send({ error: 'This condition, timepoint and replicate slot is already recorded', code: 'STABILITY_SLOT_ALREADY_RECORDED' });
+  const values = Object.fromEntries(program.parameters.flatMap(parameter => {
+    const value = laboratoryResult[parameter.source]?.[parameter.key];
+    return Number.isFinite(value) ? [[parameter.key, value]] : [];
+  }));
+  const observation = { id: generateId(), owner_id: request.user?.id, project_id: project.id, program_id: program.id, formulation_version_id: program.formulation_version_id, ...input, values, laboratory_tested_at: laboratoryResult.tested_at, recorded_at: new Date().toISOString() };
+  request.store.rdStabilityObservations.push(observation);
+  if (program.status === 'draft') { program.status = 'running'; program.updated_at = observation.recorded_at; }
+  addProjectEvent(request, project, 'stability_observation_recorded', { program_id: program.id, observation_id: observation.id, laboratory_result_id: observation.laboratory_result_id, condition_id: observation.condition_id, timepoint_days: observation.timepoint_days, replicate: observation.replicate });
+  return reply.code(201).send({ data: observation });
+});
+
+server.get(`${apiPrefix}/projects/:id/stability-programs/:programId/analysis`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply) || !ensureStabilityStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const program = request.store.rdStabilityPrograms.find(item => item.id === request.params.programId && item.project_id === project.id && isOwnedByRequest(request, item));
+  if (!program) return reply.code(404).send({ error: 'Stability program not found' });
+  const observations = request.store.rdStabilityObservations.filter(item => item.program_id === program.id && isOwnedByRequest(request, item));
+  const specification = request.store.rdProductSpecifications.filter(item => item.formulation_version_id === program.formulation_version_id && item.status === 'approved' && isOwnedByRequest(request, item)).sort((a, b) => b.version - a.version)[0] || null;
+  return { data: analyzeStabilityProgram(program, observations, specification) };
+});
+
+server.post(`${apiPrefix}/projects/:id/specifications`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply) || !ensureStabilityStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const input = productSpecificationSchema.parse(request.body);
+  if (!projectFormulationVersion(request, project, input.formulation_version_id)) return reply.code(400).send({ error: 'The specification must reference an exact formulation version from this project' });
+  const version = Math.max(0, ...request.store.rdProductSpecifications.filter(item => item.formulation_version_id === input.formulation_version_id && isOwnedByRequest(request, item)).map(item => item.version)) + 1;
+  const timestamp = new Date().toISOString();
+  const specification = { id: generateId(), owner_id: request.user?.id, project_id: project.id, ...input, version, status: 'draft', created_at: timestamp, updated_at: timestamp };
+  request.store.rdProductSpecifications.push(specification);
+  addProjectEvent(request, project, 'product_specification_created', { specification_id: specification.id, formulation_version_id: specification.formulation_version_id, version });
+  return reply.code(201).send({ data: specification });
+});
+
+server.put(`${apiPrefix}/projects/:id/specifications/:specificationId`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply) || !ensureStabilityStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const specification = request.store.rdProductSpecifications.find(item => item.id === request.params.specificationId && item.project_id === project.id && isOwnedByRequest(request, item));
+  if (!specification) return reply.code(404).send({ error: 'Product specification not found' });
+  if (specification.status !== 'draft') return reply.code(409).send({ error: 'Approved, superseded or withdrawn specifications are immutable', code: 'SPECIFICATION_LOCKED' });
+  const updates = productSpecificationSchema.partial().parse(request.body);
+  const versionId = updates.formulation_version_id || specification.formulation_version_id;
+  if (!projectFormulationVersion(request, project, versionId)) return reply.code(400).send({ error: 'The specification must reference an exact formulation version from this project' });
+  Object.assign(specification, updates, { updated_at: new Date().toISOString() });
+  addProjectEvent(request, project, 'product_specification_updated', { specification_id: specification.id, fields: Object.keys(updates) });
+  return { data: specification };
+});
+
+server.post(`${apiPrefix}/projects/:id/specifications/:specificationId/approve`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply) || !ensureStabilityStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const specification = request.store.rdProductSpecifications.find(item => item.id === request.params.specificationId && item.project_id === project.id && isOwnedByRequest(request, item));
+  if (!specification) return reply.code(404).send({ error: 'Product specification not found' });
+  if (specification.status !== 'draft') return reply.code(409).send({ error: 'Only a draft specification can be approved', code: 'SPECIFICATION_NOT_DRAFT' });
+  const input = z.object({ rationale: z.string().trim().min(10).max(3000), evidence_refs: z.array(z.string().trim().min(1).max(200)).min(1).max(30) }).parse(request.body);
+  const decidedAt = new Date().toISOString();
+  request.store.rdProductSpecifications.filter(item => item.formulation_version_id === specification.formulation_version_id && item.status === 'approved' && isOwnedByRequest(request, item)).forEach(item => { item.status = 'superseded'; item.updated_at = decidedAt; });
+  specification.status = 'approved'; specification.approved_at = decidedAt; specification.approved_by = request.user?.id; specification.updated_at = decidedAt;
+  const approval = { id: generateId(), owner_id: request.user?.id, actor_id: request.user?.id, project_id: project.id, specification_id: specification.id, outcome: 'approved', ...input, decided_at: decidedAt };
+  request.store.rdSpecificationApprovals.push(approval);
+  addProjectEvent(request, project, 'product_specification_approved', { specification_id: specification.id, formulation_version_id: specification.formulation_version_id, version: specification.version, approval_id: approval.id, evidence_refs: input.evidence_refs });
+  return reply.code(201).send({ data: specification, approval });
 });
 
 server.post(`${apiPrefix}/projects/:id/experimental-plans/:planId/pilot-batches`, async (request, reply) => {
