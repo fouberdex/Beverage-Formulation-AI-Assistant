@@ -32,10 +32,10 @@ import {
   getUserProfile,
   listAuditEvents,
   listUserAccounts,
-  updateUserProfile,
   updateUserRole,
   verifySupabaseAccessToken,
 } from './services/supabaseClient.js';
+import authRoutes from './routes/auth.js';
 import { authorizeApiRequest, USER_ROLES } from './services/authorization.js';
 import { analyzeSensoryResults } from './services/sensoryAnalytics.js';
 import { analyzeSensoryStudy } from './services/sensoryStudyAnalytics.js';
@@ -258,6 +258,8 @@ server.get('/metrics', async (request, reply) => {
 });
 
 const apiPrefix = '/api/v1';
+
+await server.register(authRoutes, { prefix: apiPrefix });
 
 function publicAIGovernance({ preferences, quota }) {
   return {
@@ -673,15 +675,6 @@ function addProjectEvent(request, project, eventType, details = {}) {
   request.store.rdProjectEvents.push(event);
   return event;
 }
-
-server.get(`${apiPrefix}/auth/me`, async (request) => ({
-  data: {
-    id: request.user?.id,
-    email: request.user?.email,
-    display_name: request.profile?.display_name || null,
-    role: request.profile?.role || USER_ROLES.ADMIN,
-  },
-}));
 
 // ============================================================================
 // R&D PROJECT LIFECYCLE
@@ -1409,19 +1402,6 @@ server.post(`${apiPrefix}/projects/:id/decisions`, async (request, reply) => {
   request.store.rdProjectDecisions.push(decision);
   addProjectEvent(request, project, 'decision_recorded', { decision_id: decision.id, title: decision.title, outcome: decision.outcome, formulation_version_id: decision.formulation_version_id || null, milestone_id: decision.milestone_id || null });
   return reply.code(201).send({ data: decision });
-});
-
-server.put(`${apiPrefix}/auth/profile`, async (request) => {
-  const { display_name } = z.object({
-    display_name: z.string().trim().min(1).max(100),
-  }).parse(request.body);
-  if (getStorageConfiguration().mode !== 'supabase') {
-    request.profile = { ...request.profile, display_name };
-    return { data: request.profile };
-  }
-  const profile = await updateUserProfile(request.user.id, display_name);
-  request.profile = profile;
-  return { data: profile };
 });
 
 server.get(`${apiPrefix}/ai/governance`, async (request) => {

@@ -44,7 +44,18 @@ test('the active server imports the current deterministic engines', async () => 
   assert.match(server, /from ['"]\.\/services\/formulationIntelligence\.js['"]/);
   assert.match(server, /from ['"]\.\/services\/productPassportEngine\.js['"]/);
   assert.match(server, /from ['"]\.\/services\/projectStateEngine\.js['"]/);
-  assert.doesNotMatch(server, /from ['"]\.\/routes\//);
+});
+
+test('authentication routes remain extracted from the server composition root', async () => {
+  const [server, authRoutes] = await Promise.all([
+    readFile(new URL('../src/server.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/routes/auth.js', import.meta.url), 'utf8'),
+  ]);
+  assert.match(server, /from ['"]\.\/routes\/auth\.js['"]/);
+  assert.match(server, /register\(authRoutes, \{ prefix: apiPrefix \}\)/);
+  assert.doesNotMatch(server, /server\.(get|put)\(`\$\{apiPrefix\}\/auth\//);
+  assert.match(authRoutes, /server\.get\(['"]\/auth\/me['"]/);
+  assert.match(authRoutes, /server\.put\(['"]\/auth\/profile['"]/);
 });
 
 test('Gemini formulation review cannot request a numeric shelf-life prediction', async () => {

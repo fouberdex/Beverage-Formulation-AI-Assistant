@@ -54,6 +54,24 @@ test('readiness and account identity endpoints are available', async () => {
   assert.equal(identity.json().data.role, 'admin');
 });
 
+test('profile endpoint validates and updates the local authenticated profile', async () => {
+  const invalid = await server.inject({
+    method: 'PUT',
+    url: '/api/v1/auth/profile',
+    payload: { display_name: '   ' },
+  });
+  assert.equal(invalid.statusCode, 400);
+
+  const updated = await server.inject({
+    method: 'PUT',
+    url: '/api/v1/auth/profile',
+    payload: { display_name: 'Demo Formulator' },
+  });
+  assert.equal(updated.statusCode, 200);
+  assert.equal(updated.json().data.display_name, 'Demo Formulator');
+  assert.equal(updated.json().data.role, 'admin');
+});
+
 test('server-side role enforcement returns 403 for forbidden specialist actions', async () => {
   const cases = [
     { role: 'formulator', method: 'POST', url: '/api/v1/projects/project-1/qc-releases' },
