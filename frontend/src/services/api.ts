@@ -126,7 +126,7 @@ export const aiAPI = {
 // Target Generation API
 export const targetGenerationAPI = {
   generate: (constraints: any) => api.post('/target-generation/generate', constraints),
-  save: (data: { candidate: any; name: string }) => api.post('/target-generation/save', data),
+  save: (data: { candidate?: any; run_id?: string; candidate_id?: string; project_id?: string; name: string }) => api.post('/target-generation/save', data),
   getRuns: (filters?: any) => api.get('/target-generation/runs', { params: filters }),
   getRun: (id: string) => api.get(`/target-generation/runs/${id}`),
 };

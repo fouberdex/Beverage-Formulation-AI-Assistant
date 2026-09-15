@@ -5,6 +5,7 @@ export class ApiError extends Error {
     message: string,
     readonly status?: number,
     readonly requestId?: string,
+    readonly data?: unknown,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -24,7 +25,7 @@ export function normalizeApiError(error: unknown, fallback = 'Something went wro
         : status && status >= 500
           ? ([502, 503].includes(status) && serverMessage ? serverMessage : 'The service is temporarily unavailable. Please try again.')
           : serverMessage || fallback;
-    return new ApiError(friendly, status, error.response?.headers?.['x-request-id']);
+    return new ApiError(friendly, status, error.response?.headers?.['x-request-id'], body);
   }
   return new ApiError(error instanceof Error ? error.message : fallback);
 }

@@ -129,6 +129,17 @@ timeline. Full deterministic DOE generation and statistics remain Phase 3 work.
 - Add reproducible multi-objective optimization and Pareto comparisons.
 - Report assumptions and every satisfied/violated constraint.
 
+Tranche 1 is now implemented. The local engine uses a versioned, signed input,
+performs a feasibility preflight, generates candidates without randomness, and
+publishes a constraint ledger with measured values, margins, failures and explicit
+`not_evaluable` laboratory gaps. Required/forbidden ingredients, ingredient bounds,
+composition total, ingredient count, sugar, calories, ingredient cost, juice,
+preservative and caffeine limits are deterministic. pH and sodium are never inferred
+from incomplete catalog data. Multi-objective candidates are marked on a Pareto
+frontier, linked to an optional validated project and exact reference version, and
+saved from the server-owned generation run with engine/signature provenance. Gemini
+is advisory-only and cannot alter feasibility, constraint results or Pareto rank.
+
 ### Phase 3 — DOE and next experiment
 
 - Deterministic design generators, linked runs, ANOVA, diagnostics and response

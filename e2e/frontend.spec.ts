@@ -15,7 +15,8 @@ async function mockApi(page: Page, options: { formulationStatus?: number; withPr
     const reply = (body: unknown, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body), headers: { 'x-request-id': 'e2e-request' } });
     if (path === '/ingredients/meta/stats') return reply({ data: { total_ingredients: 42 } });
     if (path === '/ingredients/meta/categories') return reply({ data: ['base', 'flavor'] });
-    if (path === '/ingredients') return reply({ data: [], pagination: { total: 0, limit: 25, offset: 0, has_more: false } });
+    const catalog = [{ id: 'water-1', name: 'Purified Water', category: 'base' }, { id: 'sugar-1', name: 'Cane Sugar', category: 'sweetener' }, { id: 'acid-1', name: 'Citric Acid', category: 'acidulant' }, { id: 'flavor-1', name: 'Lemon Flavor', category: 'flavor' }, { id: 'pres-1', name: 'Sodium Benzoate', category: 'preservative' }];
+    if (path === '/ingredients') return reply({ data: catalog, pagination: { total: catalog.length, limit: 500, offset: 0, has_more: false } });
     const project = { id: 'project-1', code: 'RD-2026-001', name: 'Citrus launch', business_objective: 'Validate a stable citrus beverage for the Algerian market.', target_market: 'Algeria', beverage_category: 'carbonated soft drink', target_claims: ['low sugar'], brief_status: 'validated', ingredient_constraints: { required: ['water'], forbidden: [], notes: '' }, cost_objectives: { currency: 'DZD', max_cost_per_liter: 60 }, nutrition_objectives: {}, regulatory_constraints: { markets: ['Algeria'], certifications: [], forbidden_additives: [] }, success_criteria: ['Overall liking at least 7/10'], priority: 'high', stage: 'laboratory', status: 'active', event_count: 2, created_at: '2026-09-15T00:00:00Z', updated_at: '2026-09-15T00:00:00Z' };
     if (path === '/projects/project-1') return reply({ data: { ...project, execution_available: true, events: [{ id: 'event-1', project_id: project.id, event_type: 'experimental_plan_created', details: { plan_id: 'plan-1' }, created_at: '2026-09-15T09:00:00Z' }], traceability: { formulations: [{ ...formulation(1), locked_at: null }], laboratory_results: [], sensory_studies: [], experimental_plans: [{ id: 'plan-1', project_id: project.id, formulation_version_id: 'form-1', name: 'Citrus pilot', objective: 'Validate pilot stability.', hypothesis: 'The pilot remains stable.', status: 'ready', planned_runs: 1, protocol: { method: 'Controlled pilot', variables: ['scale'], controls: ['reference'], procedure_steps: ['Mix and fill'], acceptance_criteria: ['pH in target'] }, created_at: '2026-09-15T09:00:00Z', updated_at: '2026-09-15T09:00:00Z' }], pilot_batches: [{ id: 'batch-1', project_id: project.id, experimental_plan_id: 'plan-1', formulation_version_id: 'form-1', batch_code: 'PILOT-001', batch_size_liters: 20, status: 'planned', actual_quantities: [], procedure_notes: '', deviations: [], observations: '', conclusion: '', created_at: '2026-09-15T09:00:00Z', updated_at: '2026-09-15T09:00:00Z' }], milestones: [], decisions: [] } }, allowed_transitions: ['formulation', 'sensory'] });
     if (path === '/projects') return reply({ data: options.withProject ? [project] : [], stages: ['brief', 'concept', 'formulation', 'laboratory', 'sensory', 'validation', 'industrialization', 'launched'], pagination: { total: options.withProject ? 1 : 0, limit: 12, offset: 0, has_more: false } });
@@ -33,6 +34,16 @@ async function mockApi(page: Page, options: { formulationStatus?: number; withPr
     }
     if (/^\/formulations\/[^/]+\/versions$/.test(path)) return reply({ data: [formulation(1)] });
     if (path === '/target-generation/runs' || path === '/audit') return reply({ data: [], pagination: { total: 0, limit: 10, offset: 0, has_more: false } });
+    if (path === '/target-generation/generate' && route.request().method() === 'POST') return reply({ data: {
+      run_id: 'run-1', feasibility: { feasible: true, blocker_count: 0, feasible_candidate_count: 1, generated_candidate_count: 1 },
+      reproducibility: { deterministic: true, engine_version: '2.0.0', input_signature: '1234567890abcdef1234567890abcdef' },
+      candidates: [{ id: 'candidate-1', feasible: true, pareto_rank: 1, strategy: 'cost', beverage_type: 'soft_drink', validation_status: 'candidate_for_laboratory_validation',
+        ingredients: [{ ingredient_id: 'water-1', ingredient_name: 'Purified Water', category: 'base', percentage: 91.53 }, { ingredient_id: 'sugar-1', ingredient_name: 'Cane Sugar', category: 'sweetener', percentage: 8 }, { ingredient_id: 'acid-1', ingredient_name: 'Citric Acid', category: 'acidulant', percentage: .25 }, { ingredient_id: 'flavor-1', ingredient_name: 'Lemon Flavor', category: 'flavor', percentage: .18 }, { ingredient_id: 'pres-1', ingredient_name: 'Sodium Benzoate', category: 'preservative', percentage: .04 }],
+        calculated_values: { sugar_per_100ml: 8, calories_per_100ml: 30.96, cost_per_liter: 15.2 },
+        constraint_results: [{ key: 'total_percentage', label: 'Total composition', status: 'pass', actual: 100, comparator: 'equal', limit: 100, unit: '%', basis: 'Calculated from candidate composition' }, { key: 'ph_min', label: 'Minimum finished-product pH', status: 'not_evaluable', actual: null, comparator: 'min', limit: 2.8, unit: 'pH', basis: 'Laboratory measurement required' }],
+        trade_offs: ['Optimized primarily for cost.'], assumptions: ['1 kg/L planning density used.'] }], ai: { used: false },
+    } }, 201);
+    if (path === '/target-generation/save' && route.request().method() === 'POST') return reply({ data: { ...formulation(20), name: 'Constraint candidate 1 · soft_drink', generation_run_id: 'run-1' } }, 201);
     return reply({ data: [] });
   });
 }
@@ -161,6 +172,23 @@ test('project execution workspace exposes protocols, pilot batches, gates, decis
   await expect(page.getByRole('button', { name: 'Record decision' })).toBeVisible();
   await page.getByRole('tab', { name: 'Timeline' }).click();
   await expect(page.getByText('experimental plan created')).toBeVisible();
+});
+
+test('formulation intelligence exposes deterministic constraints and saves the server-owned candidate', async ({ page }) => {
+  await useRole(page, 'admin'); await mockApi(page, { withProject: true }); await page.goto('/target-generation');
+  await expect(page.getByRole('heading', { name: 'Design within real constraints' })).toBeVisible();
+  await page.getByRole('combobox', { name: 'R&D project' }).selectOption('project-1');
+  await page.getByRole('button', { name: 'Import validated brief' }).click();
+  const generationRequest = page.waitForRequest(request => request.url().endsWith('/target-generation/generate') && request.method() === 'POST');
+  await page.getByRole('button', { name: 'Generate reproducible candidates' }).click();
+  expect((await generationRequest).postDataJSON().project_id).toBe('project-1');
+  await expect(page.getByText('Pareto frontier')).toBeVisible();
+  await expect(page.getByText('Minimum finished-product pH')).toBeVisible();
+  await expect(page.getByText('Lab check')).toBeVisible();
+  const saveRequest = page.waitForRequest(request => request.url().endsWith('/target-generation/save') && request.method() === 'POST');
+  await page.getByRole('button', { name: 'Save exact version' }).click();
+  expect((await saveRequest).postDataJSON()).toMatchObject({ run_id: 'run-1', candidate_id: 'candidate-1', project_id: 'project-1' });
+  await expect(page.getByText(/saved as an exact draft formulation version/i)).toBeVisible();
 });
 
 test('Label Studio tabs expose complete recipe, builder, live and report workflows', async ({ page }) => {

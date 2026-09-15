@@ -429,6 +429,60 @@ test('target generation honors ingredient-count constraints and reports heuristi
   }
 });
 
+test('formulation intelligence is reproducible and exposes hard-constraint evidence', async () => {
+  const payload = {
+    count: 3, min_ingredients: 6, max_ingredients: 8,
+    max_sugar_g_per_100ml: 8, max_calories_per_100ml: 40, max_cost_per_liter: 80,
+    target_ph_min: 2.8, target_ph_max: 3.5,
+    objectives: ['cost', 'sugar', 'calories'],
+  };
+  const first = await server.inject({ method: 'POST', url: '/api/v1/target-generation/generate', payload });
+  const second = await server.inject({ method: 'POST', url: '/api/v1/target-generation/generate', payload });
+  assert.equal(first.statusCode, 201);
+  assert.equal(second.statusCode, 201);
+  assert.equal(first.json().data.reproducibility.input_signature, second.json().data.reproducibility.input_signature);
+  assert.deepEqual(first.json().data.candidates.map(item => item.ingredients), second.json().data.candidates.map(item => item.ingredients));
+  const feasible = first.json().data.candidates.filter(item => item.feasible);
+  assert.ok(feasible.length > 0);
+  for (const candidate of feasible) {
+    assert.ok(candidate.pareto_rank >= 1);
+    assert.ok(candidate.constraint_results.every(item => item.status !== 'fail'));
+    assert.equal(candidate.constraint_results.find(item => item.key === 'ph_min').status, 'not_evaluable');
+    assert.equal(candidate.validation_status, 'candidate_for_laboratory_validation');
+  }
+});
+
+test('formulation intelligence rejects impossible constraints with structured blockers', async () => {
+  const response = await server.inject({
+    method: 'POST', url: '/api/v1/target-generation/generate',
+    payload: { required_ingredient_ids: ['ing-sweet-001'], forbidden_ingredient_ids: ['ing-sweet-001'] },
+  });
+  assert.equal(response.statusCode, 422);
+  assert.equal(response.json().code, 'FORMULATION_CONSTRAINTS_INFEASIBLE');
+  assert.ok(response.json().data.feasibility.blockers.some(item => item.code === 'REQUIRED_AND_FORBIDDEN'));
+});
+
+test('required and forbidden ingredients are deterministically enforced and saved from the owned run', async () => {
+  const generated = await server.inject({
+    method: 'POST', url: '/api/v1/target-generation/generate',
+    payload: { count: 2, required_ingredient_ids: ['ing-juice-001'], forbidden_ingredient_ids: ['ing-sweet-001'], minimum_juice_percent: 5, ingredient_bounds: [{ ingredient_id: 'ing-juice-001', min_percentage: 7, max_percentage: 12 }] },
+  });
+  assert.equal(generated.statusCode, 201);
+  const data = generated.json().data;
+  for (const candidate of data.candidates) {
+    assert.ok(candidate.ingredients.some(item => item.ingredient_id === 'ing-juice-001'));
+    assert.ok(!candidate.ingredients.some(item => item.ingredient_id === 'ing-sweet-001'));
+    assert.ok(candidate.ingredients.find(item => item.ingredient_id === 'ing-juice-001').percentage >= 7);
+  }
+  const saved = await server.inject({
+    method: 'POST', url: '/api/v1/target-generation/save',
+    payload: { run_id: data.run_id, candidate_id: data.candidates[0].id, name: 'Reproducible constraint candidate' },
+  });
+  assert.equal(saved.statusCode, 201);
+  assert.equal(saved.json().data.generation_run_id, data.run_id);
+  assert.equal(saved.json().data.generation_input_signature, data.reproducibility.input_signature);
+});
+
 test('ROI endpoint returns a real profitability calculation', async () => {
   const response = await server.inject({
     method: 'POST',

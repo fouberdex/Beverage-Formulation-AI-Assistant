@@ -164,9 +164,23 @@ try {
   if (!costs.length) throw new Error('Cost scenario was not persisted');
   ok('Cost and ROI persistence');
 
-  const targetRun = (await api('/target-generation/generate', { method: 'POST', body: { target_sugar: 8, count: 1, min_ingredients: 5, max_ingredients: 10, create_formulations: false } })).data;
-  await api(`/target-generation/runs/${targetRun.run_id}`);
-  ok('Target generation and history persistence');
+  const targetRun = (await api('/target-generation/generate', { method: 'POST', body: {
+    project_id: project.id, reference_formulation_id: formulation.id, count: 3, min_ingredients: 5, max_ingredients: 10,
+    max_sugar_g_per_100ml: 10, target_ph_min: 2.8, target_ph_max: 3.5,
+    objectives: ['cost', 'sugar', 'reference_deviation'],
+  } })).data;
+  const persistedRun = (await api(`/target-generation/runs/${targetRun.run_id}`)).data;
+  if (!persistedRun.reproducibility?.deterministic || !persistedRun.candidates.some(candidate => candidate.feasible && candidate.pareto_rank === 1)) {
+    throw new Error('Deterministic formulation run metadata or Pareto frontier was not persisted');
+  }
+  const feasibleCandidate = persistedRun.candidates.find(candidate => candidate.feasible);
+  const generatedFormulation = (await api('/target-generation/save', { method: 'POST', body: {
+    run_id: persistedRun.id, candidate_id: feasibleCandidate.id, project_id: project.id, name: 'Smoke deterministic candidate',
+  } })).data;
+  if (generatedFormulation.generation_input_signature !== persistedRun.reproducibility.input_signature || generatedFormulation.project_id !== project.id) {
+    throw new Error('Generated candidate provenance was not preserved on the formulation');
+  }
+  ok('Deterministic constraints, Pareto run and server-owned candidate persistence');
 
   await api('/ai/preferences', { method: 'PUT', body: { external_processing_enabled: true, include_formulation_name: false } });
   const variants = await api(`/ai/formulations/${formulation.id}/generate`, { method: 'POST', timeout: 120000, body: { count: 1, generation_type: 'optimization' } });

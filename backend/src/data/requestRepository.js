@@ -134,6 +134,8 @@ export async function loadRequestStore(ownerId, options = {}) {
       constraints: row.constraints,
       candidates: row.candidates,
       ai: row.ai_metadata,
+      feasibility: row.ai_metadata?.feasibility,
+      reproducibility: row.ai_metadata?.reproducibility,
       created_at: row.created_at,
     })),
     laboratoryResults: laboratoryRows.map(row => unpackPayload(row)),

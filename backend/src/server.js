@@ -39,6 +39,7 @@ import {
 import { authorizeApiRequest, USER_ROLES } from './services/authorization.js';
 import { analyzeSensoryResults } from './services/sensoryAnalytics.js';
 import { analyzeSensoryStudy } from './services/sensoryStudyAnalytics.js';
+import { FORMULATION_ENGINE_VERSION, generateFormulationCandidates } from './services/formulationIntelligence.js';
 import { validateRuntimeConfiguration } from './services/runtimeConfiguration.js';
 import {
   createRequestId,
@@ -2365,7 +2366,87 @@ server.get(`${apiPrefix}/target-generation/runs/:id`, async (request, reply) => 
   return { data: run };
 });
 
+const formulationObjectiveSchema = z.enum(['cost', 'sugar', 'calories', 'ingredient_count', 'reference_deviation']);
+const targetGenerationSchema = z.object({
+  project_id: z.string().trim().min(1).optional(),
+  reference_formulation_id: z.string().trim().min(1).optional(),
+  target_calories: z.coerce.number().finite().nonnegative().optional(),
+  target_sugar: z.coerce.number().finite().nonnegative().optional(),
+  target_cost_per_liter: z.coerce.number().finite().nonnegative().optional(),
+  max_calories_per_100ml: z.coerce.number().finite().nonnegative().optional(),
+  max_sugar_g_per_100ml: z.coerce.number().finite().nonnegative().optional(),
+  max_cost_per_liter: z.coerce.number().finite().nonnegative().optional(),
+  minimum_juice_percent: z.coerce.number().finite().min(0).max(99).optional(),
+  maximum_preservative_percent: z.coerce.number().finite().min(0).max(10).optional(),
+  maximum_caffeine_percent: z.coerce.number().finite().min(0).max(10).optional(),
+  maximum_sodium_mg_per_100ml: z.coerce.number().finite().nonnegative().optional(),
+  target_ph_min: z.coerce.number().finite().min(0).max(14).optional(),
+  target_ph_max: z.coerce.number().finite().min(0).max(14).optional(),
+  required_ingredient_ids: z.array(z.string().trim().min(1)).max(30).default([]),
+  forbidden_ingredient_ids: z.array(z.string().trim().min(1)).max(30).default([]),
+  ingredient_bounds: z.array(z.object({
+    ingredient_id: z.string().trim().min(1),
+    min_percentage: z.coerce.number().finite().min(0).max(100).optional(),
+    max_percentage: z.coerce.number().finite().min(0).max(100).optional(),
+  })).max(40).default([]),
+  objectives: z.array(formulationObjectiveSchema).min(1).max(5).default(['cost', 'sugar', 'calories']),
+  beverage_type: z.string().trim().min(1).max(100).optional(),
+  count: z.coerce.number().int().min(1).max(10).default(3),
+  min_ingredients: z.coerce.number().int().min(1).max(40).default(5),
+  max_ingredients: z.coerce.number().int().min(1).max(40).default(10),
+}).superRefine((input, context) => {
+  if (input.min_ingredients > input.max_ingredients) context.addIssue({ code: z.ZodIssueCode.custom, path: ['min_ingredients'], message: 'min_ingredients cannot exceed max_ingredients' });
+  if (input.target_ph_min !== undefined && input.target_ph_max !== undefined && input.target_ph_min > input.target_ph_max) context.addIssue({ code: z.ZodIssueCode.custom, path: ['target_ph_max'], message: 'Maximum target pH must be greater than or equal to minimum target pH' });
+  for (const [index, bound] of input.ingredient_bounds.entries()) if (bound.min_percentage !== undefined && bound.max_percentage !== undefined && bound.min_percentage > bound.max_percentage) context.addIssue({ code: z.ZodIssueCode.custom, path: ['ingredient_bounds', index], message: 'Minimum percentage cannot exceed maximum percentage' });
+});
+
 server.post(`${apiPrefix}/target-generation/generate`, async (request, reply) => {
+  const input = targetGenerationSchema.parse(request.body || {});
+  let project = null;
+  if (input.project_id) {
+    project = ownedProject(request, input.project_id);
+    if (!project) return reply.code(400).send({ error: 'Linked R&D project is unavailable' });
+    if (project.brief_status !== 'validated') return reply.code(409).send({ error: 'Validate the structured R&D brief before generating linked candidates' });
+  }
+  let reference = null;
+  if (input.reference_formulation_id) {
+    reference = findAccessibleFormulation(request, input.reference_formulation_id);
+    if (!reference) return reply.code(400).send({ error: 'Reference formulation is unavailable' });
+    if (project && reference.project_id !== project.id) return reply.code(400).send({ error: 'Reference formulation must belong to the selected project' });
+  }
+  const activeIngredients = request.store.ingredients.filter(item => item.is_active && item.regulatory_status === 'approved');
+  const result = generateFormulationCandidates(input, activeIngredients, reference?.ingredients || []);
+  const aiDecision = await prepareExternalAI(request, 'target_review');
+  let ai = { ...aiDecision.configuration, used: false, reason: aiDecision.reason, quota_code: aiDecision.quota_code, ...aiDecision.governance };
+  if (result.candidates.length && aiDecision.allowed) {
+    try {
+      const reviewResult = await reviewFormulationCandidates({ candidates: result.candidates, constraints: input, privacy: aiDecision.preferences });
+      await finishExternalAI(request, aiDecision, 'succeeded', reviewResult.usage);
+      ai = { provider: reviewResult.provider, model: reviewResult.model, configured: reviewResult.configured, used: reviewResult.used, schema_version: reviewResult.schema_version, scope: 'narrative_review_only', ...aiDecision.governance };
+      if (reviewResult.used) {
+        const reviews = new Map(reviewResult.reviews.map(review => [review.id, review]));
+        for (const candidate of result.candidates) {
+          const review = reviews.get(candidate.id);
+          if (!review) continue;
+          candidate.ai_explanation = review.explanation;
+          candidate.ai_warnings = review.warnings;
+          candidate.ai_review = { compatibility: review.compatibility, sensory: review.sensory, stability: review.stability, advisory_only: true };
+        }
+      }
+    } catch (error) {
+      await finishExternalAI(request, aiDecision, 'failed');
+      request.log.warn({ err: error }, 'Gemini review failed; returning deterministic candidates');
+      ai = { ...getAIConfiguration(), used: false, reason: describeGeminiFailure(error), scope: 'narrative_review_only', ...aiDecision.governance };
+    }
+  }
+  const generationRun = { id: generateId(), owner_id: request.user?.id, constraints: input, candidates: result.candidates, feasibility: result.feasibility, reproducibility: result.reproducibility, ai: { ...ai, feasibility: result.feasibility, reproducibility: result.reproducibility }, created_at: new Date().toISOString() };
+  request.store.targetGenerationRuns.push(generationRun);
+  const payload = { candidates: result.candidates, formulations: [], feasibility: result.feasibility, reproducibility: result.reproducibility, ai, run_id: generationRun.id };
+  if (!result.feasibility.feasible || result.feasibility.feasible_candidate_count === 0) return reply.code(422).send({ error: 'No feasible candidate satisfies the hard constraints', code: 'FORMULATION_CONSTRAINTS_INFEASIBLE', data: payload });
+  return reply.code(201).send({ data: payload, message: `Generated ${result.candidates.length} reproducible candidates with engine ${FORMULATION_ENGINE_VERSION}` });
+});
+
+server.post(`${apiPrefix}/target-generation/generate-legacy`, async (request, reply) => {
   const targetInput = z.object({
     target_calories: z.coerce.number().finite().nonnegative().optional(),
     target_sugar: z.coerce.number().finite().nonnegative().optional(),
@@ -2680,28 +2761,57 @@ server.post(`${apiPrefix}/target-generation/generate`, async (request, reply) =>
 
 // Save target-generated candidate as formulation
 server.post(`${apiPrefix}/target-generation/save`, async (request, reply) => {
-  const { candidate, name } = z.object({
+  const input = z.object({
+    run_id: z.string().trim().min(1).optional(),
+    candidate_id: z.string().trim().min(1).optional(),
+    project_id: z.string().trim().min(1).optional(),
     candidate: z.object({
       ingredients: z.array(formulationIngredientSchema).min(1).max(40),
       overall_score: z.coerce.number().finite().min(0).max(100).optional(),
       beverage_type: z.string().trim().min(1).max(100).optional(),
-    }).passthrough(),
+    }).passthrough().optional(),
     name: z.string().trim().min(1).max(255).optional(),
+  }).superRefine((value, context) => {
+    if (!(value.candidate || (value.run_id && value.candidate_id))) context.addIssue({ code: z.ZodIssueCode.custom, message: 'Provide a candidate or an owned generation run and candidate identifier' });
   }).parse(request.body);
+
+  const run = input.run_id ? request.store.targetGenerationRuns.find(item => item.id === input.run_id && isOwnedByRequest(request, item)) : null;
+  if (input.run_id && !run) return reply.code(404).send({ error: 'Generation run not found' });
+  const candidate = run ? run.candidates.find(item => item.id === input.candidate_id) : input.candidate;
+  if (!candidate) return reply.code(404).send({ error: 'Candidate not found in generation run' });
+  if (candidate.feasible === false) return reply.code(409).send({ error: 'An infeasible candidate cannot be saved as a formulation' });
+  const projectId = input.project_id || run?.constraints?.project_id || null;
+  if (projectId) {
+    const project = ownedProject(request, projectId);
+    if (!project) return reply.code(400).send({ error: 'Linked R&D project is unavailable' });
+    if (project.brief_status !== 'validated') return reply.code(409).send({ error: 'Validate the structured R&D brief before saving a linked formulation' });
+  }
   
   const totals = processFormulationIngredients(request, candidate.ingredients);
   
   const newFormulation = addFormulation(request, {
     owner_id: request.user?.id,
     code: `TGT-${Date.now()}`,
-    name: name || `Target-Generated ${new Date().toLocaleDateString()}`,
-    description: `Generated from target constraints. Overall score: ${candidate.overall_score?.toFixed(1)}`,
+    name: input.name || `Constraint candidate ${new Date().toLocaleDateString()}`,
+    description: `Feasible candidate generated under explicit hard constraints; laboratory validation required.`,
     beverage_type: candidate.beverage_type || 'soft_drink',
+    project_id: projectId,
+    generation_run_id: run?.id || null,
+    generation_candidate_id: candidate.id || null,
+    generation_engine_version: run?.reproducibility?.engine_version || null,
+    generation_input_signature: run?.reproducibility?.input_signature || null,
+    generation_constraint_results: candidate.constraint_results || [],
+    validation_status: candidate.validation_status || 'candidate_for_laboratory_validation',
     version: 1,
     is_latest_version: true,
     status: 'draft',
     ...totals,
   });
+
+  if (projectId) {
+    const project = ownedProject(request, projectId);
+    addProjectEvent(request, project, 'generated_candidate_saved', { formulation_version_id: newFormulation.id, generation_run_id: run?.id || null, candidate_id: candidate.id || null });
+  }
   
   return reply.code(201).send({ 
     data: newFormulation,
