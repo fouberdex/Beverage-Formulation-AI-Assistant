@@ -5,6 +5,7 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_FALLBACK_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.6-flash'];
 
 const scoreSchema = { type: 'number', minimum: 0, maximum: 100 };
+const advisoryListSchema = { type: 'array', maxItems: 8, items: { type: 'string', minLength: 1, maxLength: 300 } };
 const reviewJsonSchema = {
   type: 'object', additionalProperties: false, required: ['reviews'],
   properties: { reviews: { type: 'array', minItems: 1, maxItems: 10, items: {
@@ -16,8 +17,14 @@ const reviewJsonSchema = {
         required: ['taste_balance', 'sweetness_level', 'acidity_balance', 'flavor_intensity'],
         properties: { taste_balance: scoreSchema, sweetness_level: scoreSchema, acidity_balance: scoreSchema, flavor_intensity: scoreSchema } },
       stability: { type: 'object', additionalProperties: false,
-        required: ['ph_stability', 'color_stability', 'shelf_life_months'],
-        properties: { ph_stability: scoreSchema, color_stability: scoreSchema, shelf_life_months: { type: 'integer', minimum: 1, maximum: 36 } } },
+        required: ['stability_risks', 'likely_failure_modes', 'recommended_tests', 'evidence_gaps', 'uncertainty'],
+        properties: {
+          stability_risks: advisoryListSchema,
+          likely_failure_modes: advisoryListSchema,
+          recommended_tests: advisoryListSchema,
+          evidence_gaps: advisoryListSchema,
+          uncertainty: { type: 'string', minLength: 1, maxLength: 500 },
+        } },
       explanation: { type: 'string', minLength: 1, maxLength: 1200 },
       warnings: { type: 'array', maxItems: 8, items: { type: 'string', minLength: 1, maxLength: 300 } },
     },
@@ -48,10 +55,12 @@ const reviewSchema = z.object({
       flavor_intensity: z.number().finite().min(0).max(100),
     }),
     stability: z.object({
-      ph_stability: z.number().finite().min(0).max(100),
-      color_stability: z.number().finite().min(0).max(100),
-      shelf_life_months: z.number().int().min(1).max(36),
-    }),
+      stability_risks: z.array(z.string().trim().min(1).max(300)).max(8),
+      likely_failure_modes: z.array(z.string().trim().min(1).max(300)).max(8),
+      recommended_tests: z.array(z.string().trim().min(1).max(300)).max(8),
+      evidence_gaps: z.array(z.string().trim().min(1).max(300)).max(8),
+      uncertainty: z.string().trim().min(1).max(500),
+    }).strict(),
     explanation: z.string().trim().min(1).max(1200),
     warnings: z.array(z.string().trim().min(1).max(300)).max(8),
   }).strict()).min(1).max(10),
@@ -153,7 +162,7 @@ async function requestGeminiJson({ generationConfig, prompt, fetchImplementation
   throw lastError || new Error('No Gemini model was available');
 }
 
-async function requestStructuredReview({ prompt, schema, jsonSchema, expectedIds }, fetchImplementation) {
+async function requestStructuredReview({ prompt, schema, jsonSchema, expectedIds, schemaVersion = '1.0' }, fetchImplementation) {
   const configuration = getAIConfiguration();
   if (!configuration.configured) {
     return { ...configuration, used: false, reviews: [], reason: 'GEMINI_API_KEY is not configured' };
@@ -187,7 +196,7 @@ async function requestStructuredReview({ prompt, schema, jsonSchema, expectedIds
       model,
       used: true,
       reviews: uniqueReviews,
-      schema_version: '1.0',
+      schema_version: schemaVersion,
       usage: {
         prompt_tokens: payload.usageMetadata?.promptTokenCount,
         candidate_tokens: payload.usageMetadata?.candidatesTokenCount,
@@ -248,10 +257,12 @@ export async function reviewFormulationCandidates({ candidates, constraints, pri
   const prompt = [
     'You are assisting a beverage R&D formulator.',
     'Review the candidate formulations below. Do not change ingredients or percentages.',
-    'Return conservative estimates only. Flag uncertainty; do not claim legal compliance or laboratory validation.',
-    'Score compatibility, sensory balance, and predicted stability from 0 to 100.',
+    'Return conservative advisory observations only. Flag uncertainty; do not claim legal compliance or laboratory validation.',
+    'Score compatibility and sensory balance from 0 to 100.',
+    'For stability, identify only plausible risks, likely failure modes, recommended tests, evidence gaps and uncertainty from the supplied composition.',
+    'Never estimate shelf life, predict a validated storage duration, or assign numeric stability scores.',
     'Return exactly one review for each supplied candidate ID as JSON matching this shape:',
-    '{"reviews":[{"id":"...","compatibility":0,"sensory":{"taste_balance":0,"sweetness_level":0,"acidity_balance":0,"flavor_intensity":0},"stability":{"ph_stability":0,"color_stability":0,"shelf_life_months":1},"explanation":"...","warnings":[]}]}',
+    '{"reviews":[{"id":"...","compatibility":0,"sensory":{"taste_balance":0,"sweetness_level":0,"acidity_balance":0,"flavor_intensity":0},"stability":{"stability_risks":[],"likely_failure_modes":[],"recommended_tests":[],"evidence_gaps":[],"uncertainty":"..."},"explanation":"...","warnings":[]}]}',
     `Targets: ${JSON.stringify(constraints)}`,
     `Candidates: ${JSON.stringify(candidatePayload)}`,
   ].join('\n');
@@ -261,6 +272,7 @@ export async function reviewFormulationCandidates({ candidates, constraints, pri
     schema: reviewSchema,
     jsonSchema: reviewJsonSchema,
     expectedIds: candidates.map(candidate => candidate.id),
+    schemaVersion: '2.0',
   }, fetchImplementation);
 }
 

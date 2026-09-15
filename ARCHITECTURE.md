@@ -87,7 +87,10 @@ with an audit event through a transaction function.
 The browser never receives the Supabase secret/service key or Gemini API key.
 External AI processing is disabled until the account opts in. Provider requests
 omit unnecessary identity fields by default, use a strict JSON response schema,
-and record only operational usage metadata.
+and record only operational usage metadata. Formulation reviews expose qualitative
+stability risks, possible failure modes, recommended tests, evidence gaps and
+uncertainty; the provider contract contains no numeric shelf-life or validated
+storage-duration field.
 
 ## Persistence model
 

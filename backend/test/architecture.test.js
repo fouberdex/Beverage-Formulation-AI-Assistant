@@ -46,3 +46,10 @@ test('the active server imports the current deterministic engines', async () => 
   assert.match(server, /from ['"]\.\/services\/projectStateEngine\.js['"]/);
   assert.doesNotMatch(server, /from ['"]\.\/routes\//);
 });
+
+test('Gemini formulation review cannot request a numeric shelf-life prediction', async () => {
+  const geminiService = await readFile(new URL('../src/services/geminiService.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(geminiService, /shelf_life_months/);
+  assert.match(geminiService, /Never estimate shelf life/);
+  assert.match(geminiService, /recommended_tests/);
+});

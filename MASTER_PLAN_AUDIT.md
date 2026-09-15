@@ -178,6 +178,13 @@ approval is append-only, records its evidence and rationale, and supersedes any
 previous approved version for the formulation. All four records participate in the
 same tenant-isolated Supabase commit and RLS model as the rest of the R&D project.
 
+The optional Gemini formulation-review contract no longer requests or accepts an
+invented shelf-life duration or numeric stability prediction. Its schema is limited
+to qualitative stability risks, possible failure modes, recommended tests, evidence
+gaps and an explicit uncertainty statement. These advisory fields cannot alter the
+deterministic candidate composition, feasibility ledger, Pareto rank or recorded
+stability analysis.
+
 ### Phase 5 — suppliers, documents and packaging
 
 - Supplier qualification, supplier-material facts, document provenance/OCR review

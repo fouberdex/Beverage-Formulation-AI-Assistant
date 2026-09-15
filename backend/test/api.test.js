@@ -825,6 +825,11 @@ test('Gemini responses are schema-validated before they affect candidates', asyn
   };
   const fakeFetch = async (_url, options) => {
     assert.equal(options.headers['x-goog-api-key'], 'test-key');
+    const request = JSON.parse(options.body);
+    const stabilitySchema = request.generationConfig.responseJsonSchema.properties.reviews.items.properties.stability;
+    assert.equal(stabilitySchema.properties.shelf_life_months, undefined);
+    assert.equal(stabilitySchema.properties.ph_stability, undefined);
+    assert.match(request.contents[0].parts[0].text, /Never estimate shelf life/);
     return {
       ok: true,
       json: async () => ({
@@ -833,7 +838,13 @@ test('Gemini responses are schema-validated before they affect candidates', asyn
             id: 'candidate-1',
             compatibility: 92,
             sensory: { taste_balance: 80, sweetness_level: 75, acidity_balance: 78, flavor_intensity: 76 },
-            stability: { ph_stability: 88, color_stability: 90, shelf_life_months: 9 },
+            stability: {
+              stability_risks: ['Oxidation requires evaluation.'],
+              likely_failure_modes: ['Aroma loss under oxygen exposure.'],
+              recommended_tests: ['Run an exact-version stability program.'],
+              evidence_gaps: ['No storage observations were supplied.'],
+              uncertainty: 'Composition alone cannot establish stability or storage duration.',
+            },
             explanation: 'Conservative mock review.',
             warnings: ['Laboratory validation is still required.'],
           }],
@@ -846,7 +857,32 @@ test('Gemini responses are schema-validated before they affect candidates', asyn
     const result = await reviewFormulationCandidates({ candidates: [candidate], constraints: {} }, fakeFetch);
     assert.equal(result.used, true);
     assert.equal(result.model, 'gemini-3.1-flash-lite');
+    assert.equal(result.schema_version, '2.0');
     assert.equal(result.reviews[0].compatibility, 92);
+    assert.deepEqual(result.reviews[0].stability.recommended_tests, ['Run an exact-version stability program.']);
+  } finally {
+    delete process.env.GEMINI_API_KEY;
+  }
+});
+
+test('Gemini formulation review rejects the retired numeric shelf-life contract', async () => {
+  process.env.GEMINI_API_KEY = 'test-key';
+  const candidate = {
+    id: 'candidate-legacy-stability', beverage_type: 'soft_drink',
+    ingredients: [{ ingredient_name: 'Water', category: 'base', percentage: 100 }],
+    calculated_values: { calories_per_100ml: 0, sugar_per_100ml: 0, cost_per_liter: 5 },
+    scores: { calorie_match: 100, sugar_match: 100, cost_match: 100 },
+  };
+  const fakeFetch = async () => ({ ok: true, json: async () => ({
+    candidates: [{ content: { parts: [{ text: JSON.stringify({ reviews: [{
+      id: candidate.id, compatibility: 90,
+      sensory: { taste_balance: 80, sweetness_level: 80, acidity_balance: 80, flavor_intensity: 80 },
+      stability: { ph_stability: 88, color_stability: 90, shelf_life_months: 9 },
+      explanation: 'Unsupported numeric prediction.', warnings: [],
+    }] }) }] } }],
+  }) });
+  try {
+    await assert.rejects(() => reviewFormulationCandidates({ candidates: [candidate], constraints: {} }, fakeFetch));
   } finally {
     delete process.env.GEMINI_API_KEY;
   }
