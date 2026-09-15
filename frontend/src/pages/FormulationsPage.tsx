@@ -7,6 +7,7 @@ import { canManageFormulations } from '../auth/permissions';
 import Pagination from '../components/Pagination';
 import StatusMessage from '../components/StatusMessage';
 import { getErrorMessage } from '../services/errors';
+import { useSearchParams } from 'react-router-dom';
 
 interface FormulationIngredientInput {
   ingredient_id: string;
@@ -14,6 +15,8 @@ interface FormulationIngredientInput {
 }
 
 export default function FormulationsPage() {
+  const [searchParams] = useSearchParams();
+  const requestedProjectId = searchParams.get('project') || '';
   const { profile } = useAuth();
   const canEdit = canManageFormulations(profile?.role);
   const pageSize = 12;
@@ -41,6 +44,11 @@ export default function FormulationsPage() {
   const [formIngredients, setFormIngredients] = useState<FormulationIngredientInput[]>([]);
 
   useEffect(() => { void loadIngredients(); void loadProjects(); }, []);
+
+  useEffect(() => {
+    if (!requestedProjectId || !canEdit || showModal || !projects.some(project => project.id === requestedProjectId)) return;
+    openCreateModal(requestedProjectId);
+  }, [requestedProjectId, canEdit, projects]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadFormulations(), 250);
@@ -93,14 +101,14 @@ export default function FormulationsPage() {
     catch (error) { setError(getErrorMessage(error, 'Unable to load R&D project choices.')); }
   }
 
-  function openCreateModal() {
+  function openCreateModal(projectId = '') {
     if (!canEdit) return;
     triggerRef.current = document.activeElement as HTMLElement;
     setSelectedFormulation(null);
     setFormName('');
     setFormDescription('');
     setFormBeverageType('soft_drink');
-    setFormProjectId('');
+    setFormProjectId(projectId);
     setFormIngredients([{ ingredient_id: '', percentage: 0 }]);
     setShowModal(true);
   }
@@ -245,7 +253,7 @@ export default function FormulationsPage() {
           </p>
         </div>
         {canEdit && <button type="button"
-          onClick={openCreateModal}
+          onClick={() => openCreateModal()}
           className="primary-button"
         >
           <Plus className="h-4 w-4 mr-2" />
@@ -277,7 +285,7 @@ export default function FormulationsPage() {
         <div className="bg-white rounded-lg shadow p-8 text-center">
           <p className="text-gray-500 mb-4">{canEdit ? 'No formulations yet. Create your first one!' : 'No formulations found.'}</p>
           {canEdit && <button type="button"
-            onClick={openCreateModal}
+            onClick={() => openCreateModal()}
             className="primary-button"
           >
             <Plus className="h-4 w-4 mr-2" />

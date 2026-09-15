@@ -136,8 +136,12 @@ test('new production workspaces are reachable and expose their primary controls'
   await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible();
   await page.getByRole('button', { name: 'New project' }).first().click();
   await expect(page.getByRole('heading', { name: 'New R&D project' })).toBeVisible();
+  await expect(page.getByText('Project identity')).toBeVisible();
+  await expect(page.getByText('Business brief')).toBeVisible();
   await expect(page.getByText('Ingredient constraints')).toBeVisible();
-  await expect(page.getByText('Measurable objectives')).toBeVisible();
+  await expect(page.getByText('Nutrition / formulation targets')).toBeVisible();
+  await expect(page.getByText('Cost target')).toBeVisible();
+  await expect(page.getByText('Regulatory requirements')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Validate brief' })).toBeVisible();
   await page.getByRole('button', { name: 'Cancel' }).click();
   await page.goto('/laboratory-results');
@@ -160,6 +164,11 @@ test('new production workspaces are reachable and expose their primary controls'
 test('project execution workspace exposes protocols, pilot batches, gates, decisions and timeline', async ({ page }) => {
   await useRole(page, 'admin'); await mockApi(page, { withProject: true }); await page.goto('/projects');
   await page.getByRole('button', { name: /Citrus launch/ }).click();
+  await expect(page.getByLabel('Current project context')).toContainText('RD-2026-001');
+  await expect(page.getByRole('heading', { name: 'Closed-loop R&D workflow' })).toBeVisible();
+  await expect(page.getByText('Formula 1 · v1 · FORM-1')).toBeVisible();
+  await expect(page.getByText('Review and approve a formulation version')).toBeVisible();
+  await expect(page.getByLabel('R&D lifecycle status').getByText('Pilot / lab batch')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'R&D experimental workspace' })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Experimental plans' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('button', { name: 'New plan' })).toBeVisible();
@@ -197,17 +206,34 @@ test('project execution workspace exposes protocols, pilot batches, gates, decis
   await expect(page.getByRole('button', { name: 'Open quality event' })).toBeVisible();
   await page.getByRole('tab', { name: 'Product passport' }).click();
   await expect(page.getByText('Evidence map for RD-2026-001')).toBeVisible();
-  await expect(page.getByText('40%')).toBeVisible();
+  await expect(page.getByText('40%', { exact: true })).toBeVisible();
   await page.getByRole('textbox', { name: 'Search workspace records' }).fill('Citrus launch');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   await expect(page.getByText('RD-2026-001 · carbonated soft drink · Algeria')).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Open' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Open', exact: true })).toBeVisible();
   await page.getByRole('tab', { name: 'Milestones' }).click();
   await expect(page.getByRole('button', { name: 'New milestone' })).toBeVisible();
   await page.getByRole('tab', { name: 'Go / No-Go' }).click();
   await expect(page.getByRole('button', { name: 'Record decision' })).toBeVisible();
   await page.getByRole('tab', { name: 'Timeline' }).click();
   await expect(page.getByText('experimental plan created')).toBeVisible();
+});
+
+test('project brief stays usable on mobile and project context opens a linked formulation draft', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await useRole(page, 'admin'); await mockApi(page, { withProject: true }); await page.goto('/projects');
+  await page.getByRole('button', { name: 'New project' }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'New R&D project' });
+  await expect(dialog).toBeVisible();
+  const box = await dialog.boundingBox();
+  expect(box?.x).toBeGreaterThanOrEqual(0);
+  expect((box?.x || 0) + (box?.width || 0)).toBeLessThanOrEqual(390);
+  await expect(dialog.getByLabel('Project name')).toBeVisible();
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await page.goto('/formulations?project=project-1');
+  const formulationDialog = page.getByRole('dialog');
+  await expect(formulationDialog).toBeVisible();
+  await expect(formulationDialog.getByLabel('R&D project')).toHaveValue('project-1');
 });
 
 test('formulation intelligence exposes deterministic constraints and saves the server-owned candidate', async ({ page }) => {

@@ -207,6 +207,12 @@ input, select, textarea {
   padding: 1rem;
 }
 
+.status-badge { display: inline-flex; min-height: 1.65rem; align-items: center; border: 1px solid var(--border); border-radius: 999px; padding: .2rem .65rem; font-size: .68rem; font-weight: 800; line-height: 1; }
+.status-badge.neutral { background: var(--surface-secondary); color: var(--text-secondary); }
+.status-badge.info { border-color: #bae6fd; background: #f0f9ff; color: #075985; }
+.status-badge.success { border-color: #a7f3d0; background: #ecfdf5; color: #065f46; }
+.status-badge.danger { border-color: #fecdd3; background: #fff1f2; color: #9f1239; }
+
 #main-content .rounded-md { border-radius: .75rem; }
 #main-content .rounded-lg { border-radius: 1rem; }
 #main-content .shadow,

@@ -12,6 +12,7 @@ import { getErrorMessage } from '../services/errors';
 import StatusMessage from '../components/StatusMessage';
 import type { Formulation, SensoryStudy, SensoryStudyAnalytics, SensoryStudyAttribute } from '../types';
 import { downloadSpreadsheetTemplate, optionalNumber, readSpreadsheet } from '../utils/spreadsheet';
+import { useSearchParams } from 'react-router-dom';
 
 const COLORS = ['#0369a1', '#7c3aed', '#059669', '#d97706', '#dc2626', '#0891b2'];
 const DEFAULT_ATTRIBUTES: SensoryStudyAttribute[] = [
@@ -37,6 +38,8 @@ function randomizeOrder(ids: string[]) {
 }
 
 export default function SensoryPage() {
+  const [searchParams] = useSearchParams();
+  const requestedProjectId = searchParams.get('project') || '';
   const [tab, setTab] = useState<WorkspaceTab>('design');
   const [formulations, setFormulations] = useState<Formulation[]>([]);
   const [studies, setStudies] = useState<SensoryStudy[]>([]);
@@ -158,7 +161,7 @@ export default function SensoryPage() {
     </div>
 
     {loading ? <div role="status" className="rounded-xl border bg-white p-12 text-center text-slate-500">Loading sensory workspace…</div> : <>
-      {tab === 'design' && <StudyDesigner formulations={formulations} onCreated={studyCreated} onError={setError} />}
+      {tab === 'design' && <StudyDesigner formulations={requestedProjectId ? formulations.filter(item => item.project_id === requestedProjectId) : formulations} projectId={requestedProjectId} onCreated={studyCreated} onError={setError} />}
       {tab === 'capture' && <ResponseCapture study={selectedStudy} onSaved={responseCreated} onError={setError} />}
       {tab === 'analysis' && <AnalysisDashboard study={selectedStudy} analytics={analytics} loading={analyticsLoading} />}
     </>}
@@ -173,7 +176,7 @@ function WorkspaceTabButton({ active, icon: Icon, label, onClick }: { active: bo
   return <button type="button" role="tab" aria-selected={active} onClick={onClick} className={`flex min-h-12 items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-bold transition ${active ? 'bg-sky-50 text-sky-800 ring-1 ring-sky-200' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-950'}`}><Icon className="h-4 w-4"/>{label}</button>;
 }
 
-function StudyDesigner({ formulations, onCreated, onError }: { formulations: Formulation[]; onCreated: (study: SensoryStudy) => void; onError: (message: string) => void }) {
+function StudyDesigner({ formulations, projectId, onCreated, onError }: { formulations: Formulation[]; projectId?: string; onCreated: (study: SensoryStudy) => void; onError: (message: string) => void }) {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     name: '', objective: '', test_type: 'combined', panel_type: 'consumer', planned_panelists: 30,
@@ -203,6 +206,7 @@ function StudyDesigner({ formulations, onCreated, onError }: { formulations: For
     try {
       const response = await sensoryAPI.createStudy({
         ...form,
+        ...(projectId ? { project_id: projectId } : {}),
         samples: form.samples.map(sample => ({ ...sample, formulation_id: sample.formulation_id || undefined, batch_code: sample.batch_code || undefined })),
       });
       await onCreated(response.data.data);

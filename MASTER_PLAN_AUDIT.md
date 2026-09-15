@@ -256,6 +256,32 @@ tests pass, including automated serious/critical accessibility checks across the
 core workspace, theme persistence, mobile navigation keyboard behavior, skip-link
 focus and the unknown-route fallback. Tranches B–F remain intentionally open.
 
+### Tranche B — Projects and visible R&D loop
+
+Implemented. The New Project dialog now uses responsive semantic sections for
+identity, business brief, ingredients, nutrition/formulation targets, cost,
+regulatory requirements and measurable success criteria. It uses normalized shared
+fields, a wide desktop workspace, logical tablet grids, single-column mobile
+stacking, sticky context/actions and duplicate-submission protection.
+
+The selected project now exposes a compact sticky context strip with its code,
+name, persisted lifecycle stage, Product Passport readiness, exact formulation
+version under evaluation and unresolved blocker count. A reusable closed-loop
+workflow derives every displayed state and its next controlled action from the
+actual project traceability records. It covers brief, formulation/version approval,
+experiment/DOE, pilot batch, laboratory, sensory, stability, decision/rework,
+specification, packaging, production and QC. Rejected batches, No-Go/rework
+decisions, QC hold/OOS and unresolved quality events/CAPA are surfaced without an
+LLM. Project links carry context into formulation creation, laboratory capture and
+sensory design; linked sensory creation persists the project identifier already
+supported by the backend.
+
+Acceptance evidence: the production build succeeds; the expanded Playwright suite
+covers the responsive brief, deterministic workflow, exact-version context and
+linked formulation creation. The complete pre-existing functional/accessibility
+suite remains green after resolving selector ambiguity introduced by the additional
+readiness and action displays. Tranches C–F remain open.
+
 ## 8. Branch strategy
 
 The active work already uses `Industrial-R&D-Platform`, not `main`. Preserve a

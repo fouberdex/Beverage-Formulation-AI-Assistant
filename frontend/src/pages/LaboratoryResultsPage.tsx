@@ -5,6 +5,7 @@ import type { Formulation, LaboratoryResult } from '../types';
 import StatusMessage from '../components/StatusMessage';
 import { getErrorMessage } from '../services/errors';
 import { downloadSpreadsheetTemplate, optionalNumber, readSpreadsheet, type SpreadsheetRow } from '../utils/spreadsheet';
+import { useSearchParams } from 'react-router-dom';
 
 const measurementFields = [
   ['ph', 'pH', '0–14'], ['brix', '°Brix', '% soluble solids'], ['titratable_acidity', 'Titratable acidity', '%'],
@@ -17,6 +18,8 @@ const today = () => new Date().toISOString().slice(0, 10);
 const stringifyNumbers = (values: Record<string, number | undefined>) => Object.fromEntries(Object.entries(values || {}).map(([key, value]) => [key, value === undefined ? '' : String(value)]));
 
 export default function LaboratoryResultsPage() {
+  const [searchParams] = useSearchParams();
+  const requestedFormulationId = searchParams.get('formulation') || '';
   const [formulations, setFormulations] = useState<Formulation[]>([]);
   const [formulationId, setFormulationId] = useState('');
   const [results, setResults] = useState<LaboratoryResult[]>([]);
@@ -41,7 +44,7 @@ export default function LaboratoryResultsPage() {
   useEffect(() => { if (formulationId) void loadResults(); else setResults([]); resetForm(); }, [formulationId]);
 
   async function loadFormulations() {
-    try { const response = await formulationsAPI.getAll({ limit: 100 }); setFormulations(response.data.data); setFormulationId(response.data.data[0]?.id || ''); }
+    try { const response = await formulationsAPI.getAll({ limit: 100 }); setFormulations(response.data.data); setFormulationId(response.data.data.some((item: Formulation) => item.id === requestedFormulationId) ? requestedFormulationId : response.data.data[0]?.id || ''); }
     catch (reason) { setError(getErrorMessage(reason, 'Unable to load formulations.')); }
     finally { setLoading(false); }
   }
