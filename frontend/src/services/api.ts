@@ -81,6 +81,7 @@ export const projectsAPI = {
   updateQualityEvent: (id: string, eventId: string, data: any) => api.put(`/projects/${id}/quality-events/${eventId}`, data),
   createCapa: (id: string, eventId: string, data: any) => api.post(`/projects/${id}/quality-events/${eventId}/capas`, data),
   updateCapa: (id: string, capaId: string, data: any) => api.put(`/projects/${id}/capas/${capaId}`, data),
+  searchWorkspace: (q: string, types?: string[], limit = 30) => api.get('/workspace-search', { params: { q, types: types?.join(','), limit } }),
 };
 
 export const supplyChainAPI = {

@@ -232,6 +232,7 @@ export interface RDProject {
   stability_available?: boolean;
   supply_chain_available?: boolean;
   industrial_quality_available?: boolean;
+  product_passport?: RDProductPassport;
   events?: RDProjectEvent[];
   traceability?: {
     formulations: Array<{ id: string; code: string; name: string; version: number; status: string; locked_at?: string | null }>;
@@ -274,6 +275,8 @@ export interface RDProductionTrial { id:string;project_id:string;formulation_ver
 export interface RDQcRelease { id:string;project_id:string;production_trial_id:string;formulation_version_id:string;specification_id:string;laboratory_result_ids:string[];disposition:'released'|'hold'|'rejected'|'out_of_specification';notes:string;evaluation:{engine_version:string;reason:string;checks:Array<{key:string;label:string;unit:string;observation_count:number;failure_count:number;status:string}>};decided_at:string }
 export interface RDQualityEvent { id:string;project_id:string;production_trial_id?:string|null;qc_release_id?:string|null;event_type:'deviation'|'out_of_specification'|'nonconformance';severity:'minor'|'major'|'critical';title:string;description:string;immediate_action:string;owner:string;due_date?:string|null;status:'open'|'investigating'|'capa_required'|'closed';root_cause:string;investigation_notes:string;disposition:string;created_at:string;updated_at:string }
 export interface RDCapaAction { id:string;project_id:string;quality_event_id:string;action_type:'corrective'|'preventive';title:string;action:string;owner:string;due_date?:string|null;status:'planned'|'in_progress'|'implemented'|'effectiveness_verified'|'ineffective'|'cancelled';effectiveness_criteria:string;effectiveness_evidence:string;verified_at?:string;created_at:string;updated_at:string }
+export interface RDProductPassport { engine_version:string;generated_at:string;project:{id:string;code:string;name:string;stage:string;status:string;target_market:string;beverage_category:string};readiness:{score_percent:number;passed_gates:number;total_gates:number;status:'blocked'|'in_progress'|'evidence_complete';gates:Array<{key:string;label:string;passed:boolean}>};graph:{nodes:Array<{id:string;entity_type:string;entity_id:string;label:string;status:string}>;edges:Array<{from:string;to:string;relation:string}>;node_count:number;edge_count:number};summary:Record<string,number>;limitations:string[] }
+export interface WorkspaceSearchResult { id:string;type:string;title:string;subtitle:string;reference:string;status:string;project_id?:string|null;updated_at?:string;route:string;score:number }
 
 export interface LaboratoryResult {
   id: string;

@@ -220,6 +220,18 @@ read-only while the server-owned transactional commit persists the workflow.
 - Read-optimized cross-domain product view, traceability graph and safe structured
   global search.
 
+Tranche 1 is now implemented without creating a second source of truth. Every
+project response includes a read-only passport calculated from the current
+tenant-owned records. Ten explicit evidence gates report readiness without claiming
+regulatory certification; unresolved major/critical events or unresolved OOS
+decisions block readiness, while closed investigations remain visible history rather
+than permanent blockers. The graph uses namespaced nodes and explicit relationships
+from formulation versions through laboratory, sensory, pilot, stability,
+specification, packaging, production, QC and CAPA records. Users can export the
+calculated passport as JSON. Structured workspace search is tenant-scoped,
+deterministic and limited to selected metadata fields; it never returns generic
+payloads or searches extracted document text.
+
 ### Phase 8 — validated advanced AI
 
 - Model registry, datasets, evaluation, applicability boundaries and uncertainty;

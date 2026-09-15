@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, CalendarDays, Check, CircleDot, FolderKanban, Plus, Search, Sparkles, X } from 'lucide-react';
 import { projectsAPI } from '../services/api';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { getErrorMessage } from '../services/errors';
 import type { ProjectStage, RDProject } from '../types';
 import Pagination from '../components/Pagination';
@@ -22,6 +22,8 @@ const emptyForm = {
 };
 
 export default function ProjectsPage() {
+  const [searchParams] = useSearchParams();
+  const requestedProjectId = searchParams.get('project');
   const [projects, setProjects] = useState<RDProject[]>([]);
   const [selected, setSelected] = useState<RDProject | null>(null);
   const [allowedTransitions, setAllowedTransitions] = useState<ProjectStage[]>([]);
@@ -51,6 +53,7 @@ export default function ProjectsPage() {
 
   useEffect(() => { const timer = window.setTimeout(() => void loadProjects(), 200); return () => window.clearTimeout(timer); }, [search, status, page]);
   useEffect(() => setPage(1), [search, status]);
+  useEffect(() => { if (requestedProjectId && selected?.id !== requestedProjectId) void selectProject({ id: requestedProjectId } as RDProject); }, [requestedProjectId]);
 
   async function selectProject(project: RDProject) {
     setError('');

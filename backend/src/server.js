@@ -44,6 +44,7 @@ import { DOE_ENGINE_VERSION, analyzeDoeDesign, buildDoeReportCsv, generateDoeDes
 import { analyzeStabilityProgram } from './services/stabilityEngine.js';
 import { analyzePackagingConfiguration } from './services/packagingEngine.js';
 import { analyzeProductionTrial, evaluateQcRelease } from './services/industrialQualityEngine.js';
+import { buildProductPassport, structuredWorkspaceSearch } from './services/productPassportEngine.js';
 import { validateRuntimeConfiguration } from './services/runtimeConfiguration.js';
 import {
   createRequestId,
@@ -729,7 +730,7 @@ server.get(`${apiPrefix}/projects/:id`, async (request, reply) => {
   const qcReleases = request.store.rdQcReleases.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
   const qualityEvents = request.store.rdQualityEvents.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
   const capaActions = request.store.rdCapaActions.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
-  return { data: { ...project, events, execution_available: request.store.featureAvailability?.projectExecution !== false, stability_available: request.store.featureAvailability?.stability !== false, supply_chain_available: request.store.featureAvailability?.supplyChain !== false, industrial_quality_available: request.store.featureAvailability?.industrialQuality !== false, traceability: {
+  const traceability = {
     formulations: formulations.map(item => ({ id: item.id, code: item.code, name: item.name, version: item.version, status: item.status, locked_at: item.locked_at || null })),
     laboratory_results: laboratoryResults.map(item => ({ id: item.id, formulation_version_id: item.formulation_id, batch_code: item.batch_code, tested_at: item.tested_at, measurements: item.measurements, sensory: item.sensory })),
     sensory_studies: sensoryStudies.map(item => ({ id: item.id, name: item.name, status: item.status, formulation_version_ids: item.samples.map(sample => sample.formulation_id).filter(Boolean) })),
@@ -747,7 +748,22 @@ server.get(`${apiPrefix}/projects/:id`, async (request, reply) => {
     qc_releases: qcReleases.sort((a,b)=>new Date(b.decided_at)-new Date(a.decided_at)),
     quality_events: qualityEvents.sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at)),
     capa_actions: capaActions.sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at)),
-  } }, allowed_transitions: projectTransitions[project.stage] || [] };
+  };
+  return { data: { ...project, events, execution_available: request.store.featureAvailability?.projectExecution !== false, stability_available: request.store.featureAvailability?.stability !== false, supply_chain_available: request.store.featureAvailability?.supplyChain !== false, industrial_quality_available: request.store.featureAvailability?.industrialQuality !== false, traceability, product_passport: buildProductPassport(project, traceability) }, allowed_transitions: projectTransitions[project.stage] || [] };
+});
+
+server.get(`${apiPrefix}/workspace-search`, async (request) => {
+  const query = z.object({ q: z.string().trim().min(2).max(100), types: z.string().trim().max(300).optional(), limit: z.coerce.number().int().min(1).max(50).default(30) }).parse(request.query);
+  const requestedTypes = new Set((query.types || '').split(',').map(value => value.trim()).filter(Boolean));
+  const include = type => requestedTypes.size === 0 || requestedTypes.has(type);
+  const records = [];
+  if (include('project')) request.store.rdProjects.filter(item=>isOwnedByRequest(request,item)).forEach(item=>records.push({id:item.id,type:'project',title:item.name,subtitle:`${item.code} · ${item.beverage_category} · ${item.target_market}`,reference:item.code,status:item.status,project_id:item.id,updated_at:item.updated_at,route:`/projects?project=${item.id}`}));
+  if (include('formulation')) accessibleFormulations(request).forEach(item=>records.push({id:item.id,type:'formulation',title:item.name,subtitle:`${item.code} · v${item.version} · ${item.beverage_type}`,reference:item.code,status:item.status,project_id:item.project_id||null,updated_at:item.updated_at,route:'/formulations'}));
+  if (include('laboratory_result')) request.store.laboratoryResults.filter(item=>!item.deleted_at&&isOwnedByRequest(request,item)).forEach(item=>records.push({id:item.id,type:'laboratory_result',title:item.batch_code||'Laboratory result',subtitle:`Tested ${String(item.tested_at).slice(0,10)}`,reference:item.batch_code||item.id,status:'recorded',project_id:item.project_id||null,updated_at:item.updated_at||item.created_at,route:'/laboratory-results'}));
+  if (include('document')) request.store.rdDocuments.filter(item=>isOwnedByRequest(request,item)).forEach(item=>records.push({id:item.id,type:'document',title:item.title,subtitle:`${item.document_type} · ${item.file_name} · ${item.source}`,reference:item.file_name,status:item.review_status,project_id:item.project_id,updated_at:item.updated_at,route:`/projects?project=${item.project_id}`}));
+  if (include('production_trial')) request.store.rdProductionTrials.filter(item=>isOwnedByRequest(request,item)).forEach(item=>records.push({id:item.id,type:'production_trial',title:item.batch_code,subtitle:`${item.site} · ${item.line}`,reference:item.batch_code,status:item.status,project_id:item.project_id,updated_at:item.updated_at,route:`/projects?project=${item.project_id}`}));
+  if (include('quality_event')) request.store.rdQualityEvents.filter(item=>isOwnedByRequest(request,item)).forEach(item=>records.push({id:item.id,type:'quality_event',title:item.title,subtitle:`${item.event_type} · ${item.severity}`,reference:item.id,status:item.status,project_id:item.project_id,updated_at:item.updated_at,route:`/projects?project=${item.project_id}`}));
+  return { data: structuredWorkspaceSearch(query.q, records, query.limit), query: { q: query.q, types: [...requestedTypes], limit: query.limit }, searched_types: ['project','formulation','laboratory_result','document','production_trial','quality_event'].filter(include) };
 });
 
 server.post(`${apiPrefix}/projects`, async (request, reply) => {

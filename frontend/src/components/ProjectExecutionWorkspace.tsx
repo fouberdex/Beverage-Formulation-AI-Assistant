@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { AlertTriangle, Beaker, CalendarCheck, CheckCircle2, ClipboardList, Download, Factory, Flag, FlaskConical, GitCommitHorizontal, Package, Plus, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, Beaker, CalendarCheck, CheckCircle2, ClipboardList, Download, Factory, Flag, FlaskConical, GitCommitHorizontal, Network, Package, Plus, ShieldCheck } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { projectsAPI } from '../services/api';
 import { getErrorMessage } from '../services/errors';
@@ -8,8 +8,9 @@ import StatusMessage from './StatusMessage';
 import StabilityWorkspace from './StabilityWorkspace';
 import SupplyChainWorkspace from './SupplyChainWorkspace';
 import IndustrialQualityWorkspace from './IndustrialQualityWorkspace';
+import ProductPassportWorkspace from './ProductPassportWorkspace';
 
-type Tab = 'experiments' | 'doe' | 'batches' | 'stability' | 'supply' | 'quality' | 'milestones' | 'decisions' | 'timeline';
+type Tab = 'experiments' | 'doe' | 'batches' | 'stability' | 'supply' | 'quality' | 'passport' | 'milestones' | 'decisions' | 'timeline';
 const csv = (value: string) => value.split(',').map(item => item.trim()).filter(Boolean);
 const lines = (value: string) => value.split('\n').map(item => item.trim()).filter(Boolean);
 const tabs: Array<{ key: Tab; label: string; icon: typeof Beaker }> = [
@@ -19,6 +20,7 @@ const tabs: Array<{ key: Tab; label: string; icon: typeof Beaker }> = [
   { key: 'stability', label: 'Stability & specs', icon: FlaskConical },
   { key: 'supply', label: 'Supply & packaging', icon: Package },
   { key: 'quality', label: 'Industrial quality', icon: AlertTriangle },
+  { key: 'passport', label: 'Product passport', icon: Network },
   { key: 'milestones', label: 'Milestones', icon: Flag },
   { key: 'decisions', label: 'Go / No-Go', icon: ShieldCheck },
   { key: 'timeline', label: 'Timeline', icon: GitCommitHorizontal },
@@ -57,6 +59,7 @@ export default function ProjectExecutionWorkspace({ project, onRefresh }: { proj
       {tab === 'stability' && <StabilityWorkspace project={project} busy={busy} perform={perform}/>}
       {tab === 'supply' && <SupplyChainWorkspace project={project} onRefresh={onRefresh}/>}
       {tab === 'quality' && <IndustrialQualityWorkspace project={project} onRefresh={onRefresh}/>}
+      {tab === 'passport' && <ProductPassportWorkspace project={project}/>}
       {tab === 'milestones' && <Milestones project={project} milestones={milestones} busy={busy} perform={perform}/>} 
       {tab === 'decisions' && <Decisions project={project} milestones={milestones} decisions={decisions} busy={busy} perform={perform}/>} 
       {tab === 'timeline' && <Timeline project={project}/>} 

@@ -231,6 +231,12 @@ try {
     throw new Error('Cross-workspace project traceability is incomplete');
   }
   ok('Project → formulation version → laboratory → sensory traceability');
+  const passportProject = (await api(`/projects/${project.id}`)).data;
+  if (!passportProject.product_passport || passportProject.product_passport.graph.node_count < 10 || passportProject.product_passport.graph.edge_count < 10
+    || typeof passportProject.product_passport.readiness.score_percent !== 'number') throw new Error('Product Digital Passport is incomplete');
+  const workspaceSearch = (await api(`/workspace-search?q=${encodeURIComponent(productionTrial.batch_code)}`)).data;
+  if (!workspaceSearch.some(item => item.type === 'production_trial' && item.id === productionTrial.id) || workspaceSearch.some(item => 'payload' in item)) throw new Error('Structured tenant search is incomplete or exposes raw payloads');
+  ok('Product Digital Passport, evidence graph and safe structured search');
 
   await api(`/compatibility/formulations/${formulation.id}`);
   ok('Compatibility engine connection');
