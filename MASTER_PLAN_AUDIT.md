@@ -149,11 +149,16 @@ Tranche 1 is now implemented without a risky schema change: signed full-factoria
 and face-centred response-surface matrices are stored in the existing controlled
 experimental-plan JSONB, while server-owned factor settings and measured responses
 are persisted on their exact pilot batches. A design becomes immutable after its
-first linked run. The local engine calculates coefficients, screening ANOVA sums of
-squares, R², adjusted R² and RMSE without inventing p-values. It recommends only an
-unexecuted run from the signed matrix, using a fitted model only when sufficient
-recorded observations exist and deterministic standard order otherwise. Every
-output carries an explicit non-inferential applicability warning.
+first linked run. The local engine calculates coefficients, ANOVA sums of squares,
+R², adjusted R² and RMSE. Model F-test p-values are calculated only with residual
+degrees of freedom; pure error and lack of fit remain explicitly `not_evaluable`
+until replicated factor settings and enough distinct design points exist. A
+prediction grid supports one-factor curves and two-factor response-surface heatmaps,
+and the full signed matrix, measurements, diagnostics and next-run decision can be
+exported as an auditable CSV. The engine recommends only an unexecuted run from the
+signed matrix, using a fitted model only when sufficient recorded observations exist
+and deterministic standard order otherwise. Inferential claims remain blocked until
+replication and lack-of-fit gates pass, and domain review is always required.
 
 ### Phase 4 — stability and specifications
 

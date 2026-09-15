@@ -177,7 +177,7 @@ test('R&D projects persist a controlled lifecycle and reject skipped gates', asy
   } });
   assert.equal(designResponse.statusCode, 201);
   assert.equal(designResponse.json().data.run_count, 3);
-  assert.equal(designResponse.json().data.engine_version, '1.0.0');
+  assert.equal(designResponse.json().data.engine_version, '1.1.0');
   const doeRun = designResponse.json().data.runs[0];
 
   const doeBatchResponse = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/experimental-plans/${plan.id}/pilot-batches`, payload: {
@@ -192,6 +192,10 @@ test('R&D projects persist a controlled lifecycle and reject skipped gates', asy
   assert.equal(analysisResponse.json().data.observation_count, 1);
   assert.equal(analysisResponse.json().data.next_run.basis, 'deterministic_design_order');
   assert.equal(analysisResponse.json().data.applicability.inferential_claims_allowed, false);
+  const reportResponse = await server.inject({ method: 'GET', url: `/api/v1/projects/${id}/experimental-plans/${plan.id}/report.csv` });
+  assert.equal(reportResponse.statusCode, 200);
+  assert.match(reportResponse.headers['content-type'], /text\/csv/);
+  assert.match(reportResponse.body, new RegExp(doeRun.id));
 
   const lockedDesign = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/experimental-plans/${plan.id}/design`, payload: {
     type: 'full_factorial', factors: [{ key: 'temperature', label: 'Storage temperature', low: 15, high: 40 }],

@@ -185,9 +185,9 @@ export interface RDDesign {
 
 export interface RDDesignAnalysis {
   engine_version: string; design_signature: string; observation_count: number; completed_run_count: number; remaining_run_count: number;
-  models: Record<string, { status: string; observations: number; required?: number; coefficients?: Record<string, number>; diagnostics?: { r_squared: number; adjusted_r_squared: number | null; rmse: number; residual_degrees_of_freedom: number }; anova?: { f_statistic: number | null; p_value: null; note: string } }>;
+  models: Record<string, { status: string; observations: number; required?: number; coefficients?: Record<string, number>; diagnostics?: { r_squared: number; adjusted_r_squared: number | null; rmse: number; residual_degrees_of_freedom: number }; anova?: { f_statistic: number | null; p_value: number | null; note: string }; lack_of_fit?: { status: string; pure_error_degrees_of_freedom: number; lack_of_fit_degrees_of_freedom: number; f_statistic: number | 'Infinity' | null; p_value: number | null; conclusion: string }; surface?: null | { kind: 'curve' | 'surface'; x_factor: { key: string; label: string; unit: string }; y_factor: null | { key: string; label: string; unit: string }; points: Array<{ x: number; y: number | null; prediction: number }> } }>;
   next_run: null | { run_id: string; standard_order: number; factor_settings: Record<string, { coded: number; value: number; unit: string }>; predicted_primary_response: number | null; response_key: string; basis: string; warning: string };
-  applicability: { inferential_claims_allowed: false; reason: string };
+  applicability: { inferential_claims_allowed: boolean; reason: string };
 }
 
 export interface RDPilotBatch {

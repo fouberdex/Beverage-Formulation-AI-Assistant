@@ -40,7 +40,7 @@ import { authorizeApiRequest, USER_ROLES } from './services/authorization.js';
 import { analyzeSensoryResults } from './services/sensoryAnalytics.js';
 import { analyzeSensoryStudy } from './services/sensoryStudyAnalytics.js';
 import { FORMULATION_ENGINE_VERSION, generateFormulationCandidates } from './services/formulationIntelligence.js';
-import { DOE_ENGINE_VERSION, analyzeDoeDesign, generateDoeDesign } from './services/doeEngine.js';
+import { DOE_ENGINE_VERSION, analyzeDoeDesign, buildDoeReportCsv, generateDoeDesign } from './services/doeEngine.js';
 import { validateRuntimeConfiguration } from './services/runtimeConfiguration.js';
 import {
   createRequestId,
@@ -726,6 +726,19 @@ server.get(`${apiPrefix}/projects/:id/experimental-plans/:planId/analysis`, asyn
   if (!plan.design) return reply.code(409).send({ error: 'Generate a deterministic DOE design before requesting analysis', code: 'DOE_DESIGN_REQUIRED' });
   const batches = request.store.rdPilotBatches.filter(item => item.experimental_plan_id === plan.id && isOwnedByRequest(request, item));
   return { data: analyzeDoeDesign(plan.design, batches) };
+});
+
+server.get(`${apiPrefix}/projects/:id/experimental-plans/:planId/report.csv`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply)) return;
+  if (!ensureProjectExecutionStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const plan = request.store.rdExperimentalPlans.find(item => item.id === request.params.planId && item.project_id === project.id && isOwnedByRequest(request, item));
+  if (!plan) return reply.code(404).send({ error: 'Experimental plan not found' });
+  if (!plan.design) return reply.code(409).send({ error: 'Generate a deterministic DOE design before exporting its report', code: 'DOE_DESIGN_REQUIRED' });
+  const batches = request.store.rdPilotBatches.filter(item => item.experimental_plan_id === plan.id && isOwnedByRequest(request, item));
+  const filename = `${project.code}-${plan.name}`.replace(/[^a-z0-9-]+/gi, '-').replace(/^-|-$/g, '').toLowerCase();
+  return reply.header('content-type', 'text/csv; charset=utf-8').header('content-disposition', `attachment; filename="${filename}-doe.csv"`).send(buildDoeReportCsv(plan.design, batches));
 });
 
 server.post(`${apiPrefix}/projects/:id/experimental-plans/:planId/pilot-batches`, async (request, reply) => {

@@ -163,6 +163,7 @@ test('project execution workspace exposes protocols, pilot batches, gates, decis
   await page.getByRole('tab', { name: 'DOE & next run' }).click();
   await expect(page.getByText('Deterministic design of experiments')).toBeVisible();
   await expect(page.getByText('DOE-001')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Export DOE' })).toBeEnabled();
   await page.getByRole('button', { name: 'Refresh analysis' }).click();
   await expect(page.getByText('Next controlled run')).toBeVisible();
   await expect(page.getByText('deterministic design order')).toBeVisible();

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { analyzeDoeDesign, generateDoeDesign } from '../src/services/doeEngine.js';
+import { analyzeDoeDesign, buildDoeReportCsv, generateDoeDesign } from '../src/services/doeEngine.js';
 
 const input = {
   type: 'full_factorial', center_points: 1, replicates: 1,
@@ -33,4 +33,24 @@ test('DOE analysis fits recorded results and recommends only an unexecuted desig
   assert.equal(result.next_run.run_id, design.runs[4].id);
   assert.equal(result.next_run.basis, 'fitted_recorded_data');
   assert.equal(result.applicability.inferential_claims_allowed, false);
+});
+
+test('replicated response-surface data enables pure-error, lack-of-fit and prediction-grid diagnostics', () => {
+  const design = generateDoeDesign({ ...input, type: 'response_surface', center_points: 2, replicates: 2 });
+  const batches = design.runs.map((run, index) => {
+    const acid = run.factor_settings.acid.coded; const temperature = run.factor_settings.temperature.coded;
+    const replicateNoise = index % 2 === 0 ? 0.03 : -0.03;
+    return { id: `surface-${index}`, doe_run_id: run.id, response_values: { liking: 7 + acid * 0.7 - temperature * 0.2 - acid ** 2 * 0.15 + replicateNoise } };
+  });
+  const result = analyzeDoeDesign(design, batches);
+  assert.equal(result.models.liking.status, 'fitted');
+  assert.equal(result.models.liking.lack_of_fit.status, 'available');
+  assert.ok(result.models.liking.lack_of_fit.pure_error_degrees_of_freedom > 0);
+  assert.equal(typeof result.models.liking.anova.p_value, 'number');
+  assert.equal(result.models.liking.surface.kind, 'surface');
+  assert.equal(result.models.liking.surface.points.length, 81);
+  const report = buildDoeReportCsv(design, batches);
+  assert.match(report, /record_type/);
+  assert.match(report, new RegExp(design.signature));
+  assert.match(report, /pure_error_degrees_of_freedom/);
 });

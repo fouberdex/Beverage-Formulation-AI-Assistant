@@ -55,6 +55,7 @@ export const projectsAPI = {
   updateExperimentalPlan: (id: string, planId: string, data: any) => api.put(`/projects/${id}/experimental-plans/${planId}`, data),
   generateDoeDesign: (id: string, planId: string, data: any) => api.post(`/projects/${id}/experimental-plans/${planId}/design`, data),
   getDoeAnalysis: (id: string, planId: string) => api.get(`/projects/${id}/experimental-plans/${planId}/analysis`),
+  exportDoeReport: (id: string, planId: string) => api.get(`/projects/${id}/experimental-plans/${planId}/report.csv`, { responseType: 'blob' }),
   createPilotBatch: (id: string, planId: string, data: any) => api.post(`/projects/${id}/experimental-plans/${planId}/pilot-batches`, data),
   updatePilotBatch: (id: string, batchId: string, data: any) => api.put(`/projects/${id}/pilot-batches/${batchId}`, data),
   createMilestone: (id: string, data: any) => api.post(`/projects/${id}/milestones`, data),

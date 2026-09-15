@@ -106,6 +106,8 @@ try {
   } });
   const doeAnalysis = (await api(`/projects/${project.id}/experimental-plans/${experimentalPlan.id}/analysis`)).data;
   if (doeAnalysis.observation_count !== 1 || !doeAnalysis.next_run) throw new Error('DOE analysis or next-run recommendation is incomplete');
+  const doeReportResponse = await fetch(`${baseUrl}/projects/${project.id}/experimental-plans/${experimentalPlan.id}/report.csv`, { headers: { authorization: `Bearer ${token}` } });
+  if (!doeReportResponse.ok || !(await doeReportResponse.text()).includes(doeDesign.signature)) throw new Error('DOE audit export is incomplete');
   const milestone = (await api(`/projects/${project.id}/milestones`, { method: 'POST', body: {
     title: 'Demo evidence gate', stage: 'laboratory', status: 'planned', responsible: 'Automated smoke test',
     success_criteria: ['Protocol, pilot batch, laboratory and sensory evidence are linked'],
