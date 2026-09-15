@@ -337,6 +337,10 @@ export const rdMaterialSpecifications = [];
 export const rdDocuments = [];
 export const rdPackagingComponents = [];
 export const rdPackagingConfigurations = [];
+export const rdProductionTrials = [];
+export const rdQcReleases = [];
+export const rdQualityEvents = [];
+export const rdCapaActions = [];
 
 // Categories
 export const categories = [...new Set(mockIngredients.map(i => i.category))];

@@ -240,6 +240,45 @@ test('R&D projects persist a controlled lifecycle and reject skipped gates', asy
   const lockedPackaging = await server.inject({ method: 'PUT', url: `/api/v1/projects/${id}/packaging-configurations/${packaging.id}`, payload: { name: 'Silent mutation' } });
   assert.equal(lockedPackaging.statusCode, 409);
 
+  const productionTrialResponse = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/production-trials`, payload: {
+    formulation_version_id: version.id, packaging_configuration_id: packaging.id, batch_code: 'PROD-CITRUS-001', site: 'Algiers plant', line: 'PET line 1', status: 'planned',
+    reference_batch_size_liters: 25, planned_batch_size_liters: 1000, material_lots: [{ supplier_material_id: material.id, material_name: material.name, lot_code: 'CA-2609', quantity: 2.5, unit: 'kg' }],
+    process_parameters: [{ key: 'temperature', label: 'Pasteurization temperature', unit: '°C', lower: 82, upper: 86, actual: 84 }],
+  } });
+  assert.equal(productionTrialResponse.statusCode, 201);
+  const productionTrial = productionTrialResponse.json().data;
+  const completedProductionTrial = await server.inject({ method: 'PUT', url: `/api/v1/projects/${id}/production-trials/${productionTrial.id}`, payload: { status: 'completed', produced_at: '2026-09-25T08:00:00.000Z', saleable_output_liters: 940, rejected_output_liters: 20 } });
+  assert.equal(completedProductionTrial.statusCode, 200);
+  assert.equal(completedProductionTrial.json().data.analysis.mass_balance.yield_percent, 94);
+  const noteOnlyLabUpdate = await server.inject({ method: 'PUT', url: `/api/v1/formulations/${version.id}/laboratory-results/${lab.json().data.id}`, payload: { notes: 'Note-only edit must preserve analytical evidence.' } });
+  assert.equal(noteOnlyLabUpdate.statusCode, 200);
+  assert.equal(noteOnlyLabUpdate.json().data.measurements.ph, 3.2);
+  const releasedQc = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/qc-releases`, payload: { production_trial_id: productionTrial.id, specification_id: specification.id, laboratory_result_ids: [lab.json().data.id], notes: 'Release assessment' } });
+  assert.equal(releasedQc.statusCode, 201);
+  assert.equal(releasedQc.json().data.disposition, 'released');
+  assert.equal(releasedQc.json().quality_event, null);
+
+  const oosLab = await server.inject({ method: 'POST', url: `/api/v1/formulations/${version.id}/laboratory-results`, payload: { batch_code: 'TRACE-LAB-OOS', tested_at: '2026-09-26', measurements: { ph: 3.8 } } });
+  assert.equal(oosLab.statusCode, 201);
+  const oosTrialResponse = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/production-trials`, payload: { formulation_version_id: version.id, batch_code: 'PROD-CITRUS-OOS', site: 'Algiers plant', line: 'PET line 1', status: 'completed', produced_at: '2026-09-26T08:00:00.000Z', reference_batch_size_liters: 25, planned_batch_size_liters: 1000, saleable_output_liters: 920, rejected_output_liters: 40, process_parameters: [] } });
+  assert.equal(oosTrialResponse.statusCode, 201);
+  const oosRelease = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/qc-releases`, payload: { production_trial_id: oosTrialResponse.json().data.id, specification_id: specification.id, laboratory_result_ids: [oosLab.json().data.id], notes: 'OOS assessment' } });
+  assert.equal(oosRelease.statusCode, 201);
+  assert.equal(oosRelease.json().data.disposition, 'out_of_specification');
+  const qualityEvent = oosRelease.json().quality_event;
+  assert.equal(qualityEvent.event_type, 'out_of_specification');
+  const capaResponse = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/quality-events/${qualityEvent.id}/capas`, payload: { action_type: 'corrective', title: 'Correct acid dosing control', action: 'Calibrate the dosing pump and retrain the responsible operator.', owner: 'Quality manager', status: 'planned', effectiveness_criteria: 'Three consecutive production batches remain within the approved pH range.' } });
+  assert.equal(capaResponse.statusCode, 201);
+  const capa = capaResponse.json().data;
+  const blockedClosure = await server.inject({ method: 'PUT', url: `/api/v1/projects/${id}/quality-events/${qualityEvent.id}`, payload: { status: 'closed', root_cause: 'Dosing pump calibration drift caused excess acid addition.', disposition: 'Batch rejected.' } });
+  assert.equal(blockedClosure.statusCode, 409);
+  assert.equal(blockedClosure.json().code, 'CAPA_EFFECTIVENESS_REQUIRED');
+  const verifiedCapa = await server.inject({ method: 'PUT', url: `/api/v1/projects/${id}/capas/${capa.id}`, payload: { status: 'effectiveness_verified', effectiveness_evidence: 'Three consecutive controlled batches passed the approved pH range.' } });
+  assert.equal(verifiedCapa.statusCode, 200);
+  const closedEvent = await server.inject({ method: 'PUT', url: `/api/v1/projects/${id}/quality-events/${qualityEvent.id}`, payload: { status: 'closed', root_cause: 'Dosing pump calibration drift caused excess acid addition.', disposition: 'Batch rejected and dosing control corrected.' } });
+  assert.equal(closedEvent.statusCode, 200);
+  assert.equal(closedEvent.json().data.status, 'closed');
+
   const study = await server.inject({ method: 'POST', url: '/api/v1/sensory/studies', payload: {
     name: 'Traceable project study', objective: 'Validate preference for the exact linked formulation version.',
     test_type: 'hedonic', panel_type: 'internal', planned_panelists: 5, status: 'draft',
@@ -346,6 +385,11 @@ test('R&D projects persist a controlled lifecycle and reject skipped gates', asy
   assert.equal(traced.json().data.traceability.documents[0].review_status, 'accepted');
   assert.equal(traced.json().data.traceability.packaging_configurations.length, 1);
   assert.equal(traced.json().data.traceability.packaging_configurations[0].analysis.economics.cost_per_sale_unit, 14);
+  assert.equal(traced.json().data.traceability.production_trials.length, 2);
+  assert.equal(traced.json().data.traceability.qc_releases.length, 2);
+  assert.equal(traced.json().data.traceability.quality_events.length, 1);
+  assert.equal(traced.json().data.traceability.quality_events[0].status, 'closed');
+  assert.equal(traced.json().data.traceability.capa_actions.length, 1);
   assert.ok(traced.json().data.events.some(event => event.event_type === 'decision_recorded' && event.actor_id));
 });
 

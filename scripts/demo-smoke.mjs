@@ -174,6 +174,36 @@ try {
   await api(`/projects/${project.id}/packaging-configurations/${packagingConfiguration.id}/approve`, { method: 'POST', body: { rationale: 'Packaging warnings and available stability evidence reviewed for this pilot.', evidence_refs: [controlledDocument.id, stabilityProgram.id], accept_warnings: true } });
   ok('Supplier qualification, controlled documents and packaging persistence');
 
+  const productionTrial = (await api(`/projects/${project.id}/production-trials`, { method: 'POST', body: {
+    formulation_version_id: formulation.id, packaging_configuration_id: packagingConfiguration.id,
+    batch_code: `PROD-${suffix}`.slice(0, 95), site: 'Algiers demonstration plant', line: 'PET line 1', status: 'planned',
+    scheduled_at: new Date().toISOString(), reference_batch_size_liters: 20, planned_batch_size_liters: 1000,
+    material_lots: [{ supplier_material_id: supplierMaterial.id, material_name: supplierMaterial.name, lot_code: 'SMOKE-CITRIC-LOT', quantity: 1.5, unit: 'kg' }],
+    process_parameters: [{ key: 'pasteurization_temperature', label: 'Pasteurization temperature', unit: '°C', lower: 80, upper: 86, actual: 83 }],
+  } })).data;
+  const completedProductionTrial = (await api(`/projects/${project.id}/production-trials/${productionTrial.id}`, { method: 'PUT', body: {
+    status: 'completed', produced_at: new Date().toISOString(), saleable_output_liters: 940, rejected_output_liters: 20,
+    notes: 'Automated industrial trial completed and locked.',
+  } })).data;
+  if (completedProductionTrial.analysis.mass_balance.yield_percent !== 94) throw new Error('Production mass-balance calculation is incorrect');
+  const qcRelease = await api(`/projects/${project.id}/qc-releases`, { method: 'POST', body: {
+    production_trial_id: productionTrial.id, specification_id: specification.id, laboratory_result_ids: [lab.id], notes: 'Automated deterministic release assessment.',
+  } });
+  if (qcRelease.data.disposition !== 'released' || qcRelease.quality_event) throw new Error('Deterministic QC release decision is incorrect');
+  const qualityEvent = (await api(`/projects/${project.id}/quality-events`, { method: 'POST', body: {
+    production_trial_id: productionTrial.id, event_type: 'deviation', severity: 'minor', title: 'Demonstration line timing deviation',
+    description: 'A short non-critical line stop was recorded during the controlled production trial.', immediate_action: 'The line was inspected before restart.', owner: 'Quality manager',
+  } })).data;
+  const capa = (await api(`/projects/${project.id}/quality-events/${qualityEvent.id}/capas`, { method: 'POST', body: {
+    action_type: 'preventive', title: 'Add line-stop verification', action: 'Add a documented restart verification to the production checklist.',
+    owner: 'Quality manager', status: 'planned', effectiveness_criteria: 'The next three restart checks are completed without omission.',
+  } })).data;
+  await api(`/projects/${project.id}/capas/${capa.id}`, { method: 'PUT', body: { status: 'effectiveness_verified', effectiveness_evidence: 'Three subsequent restart checks were completed without omission.' } });
+  await api(`/projects/${project.id}/quality-events/${qualityEvent.id}`, { method: 'PUT', body: {
+    status: 'closed', root_cause: 'The restart checklist did not explicitly include a timing confirmation step.', disposition: 'No product impact; checklist updated and effectiveness verified.',
+  } });
+  ok('Production trial, deterministic QC release and CAPA persistence');
+
   const study = (await api('/sensory/studies', { method: 'POST', body: {
     name: 'Demo sensory persistence check', objective: 'Verify the complete sensory workflow before the live demonstration.',
     test_type: 'hedonic', panel_type: 'internal', planned_panelists: 5, scale_min: 0, scale_max: 10, status: 'active',
@@ -195,7 +225,9 @@ try {
     || traceability.milestones.length !== 1 || traceability.decisions.length !== 1
     || traceability.stability_programs.length !== 1 || traceability.stability_observations.length !== 1
     || traceability.product_specifications.length !== 1 || traceability.specification_approvals.length !== 1
-    || traceability.documents.length !== 1 || traceability.packaging_configurations.length !== 1) {
+    || traceability.documents.length !== 1 || traceability.packaging_configurations.length !== 1
+    || traceability.production_trials.length !== 1 || traceability.qc_releases.length !== 1
+    || traceability.quality_events.length !== 1 || traceability.capa_actions.length !== 1) {
     throw new Error('Cross-workspace project traceability is incomplete');
   }
   ok('Project → formulation version → laboratory → sensory traceability');
@@ -253,7 +285,7 @@ try {
     const removed = await admin.auth.admin.deleteUser(userId);
     if (removed.error) console.error(`Cleanup warning: ${removed.error.message}`);
     else {
-      const tables = ['rd_projects', 'rd_project_events', 'rd_experimental_plans', 'rd_pilot_batches', 'rd_project_milestones', 'rd_project_decisions', 'rd_stability_programs', 'rd_stability_observations', 'rd_product_specifications', 'rd_specification_approvals', 'rd_suppliers', 'rd_supplier_materials', 'rd_material_specifications', 'rd_documents', 'rd_packaging_components', 'rd_packaging_configurations', 'formulations', 'laboratory_results', 'sensory_studies', 'sensory_responses', 'compliance_records', 'batch_cost_calculations', 'target_generation_runs', 'ai_variants'];
+      const tables = ['rd_projects', 'rd_project_events', 'rd_experimental_plans', 'rd_pilot_batches', 'rd_project_milestones', 'rd_project_decisions', 'rd_stability_programs', 'rd_stability_observations', 'rd_product_specifications', 'rd_specification_approvals', 'rd_suppliers', 'rd_supplier_materials', 'rd_material_specifications', 'rd_documents', 'rd_packaging_components', 'rd_packaging_configurations', 'rd_production_trials', 'rd_qc_releases', 'rd_quality_events', 'rd_capa_actions', 'formulations', 'laboratory_results', 'sensory_studies', 'sensory_responses', 'compliance_records', 'batch_cost_calculations', 'target_generation_runs', 'ai_variants'];
       const leftovers = [];
       for (const table of tables) {
         const { count, error } = await admin.from(table).select('*', { head: true, count: 'exact' }).eq('owner_id', userId);

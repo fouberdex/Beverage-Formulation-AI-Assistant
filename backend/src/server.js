@@ -43,6 +43,7 @@ import { FORMULATION_ENGINE_VERSION, generateFormulationCandidates } from './ser
 import { DOE_ENGINE_VERSION, analyzeDoeDesign, buildDoeReportCsv, generateDoeDesign } from './services/doeEngine.js';
 import { analyzeStabilityProgram } from './services/stabilityEngine.js';
 import { analyzePackagingConfiguration } from './services/packagingEngine.js';
+import { analyzeProductionTrial, evaluateQcRelease } from './services/industrialQualityEngine.js';
 import { validateRuntimeConfiguration } from './services/runtimeConfiguration.js';
 import {
   createRequestId,
@@ -575,6 +576,34 @@ const packagingConfigurationSchema = z.object({
   components: z.array(z.object({ component_id: z.string().trim().min(1), role: z.enum(['primary_container', 'closure', 'label', 'secondary', 'tertiary', 'other']), quantity: z.coerce.number().finite().positive().max(1000) })).min(1).max(30),
   transport_conditions: z.string().trim().max(1000).default(''), notes: z.string().trim().max(3000).default(''),
 });
+const productionTrialSchema = z.object({
+  formulation_version_id: z.string().trim().min(1), packaging_configuration_id: z.string().trim().min(1).nullable().optional(),
+  batch_code: z.string().trim().min(2).max(100), site: z.string().trim().min(2).max(180), line: z.string().trim().max(120).default(''),
+  status: z.enum(['planned','running','completed','cancelled']).default('planned'), scheduled_at: z.string().datetime().nullable().optional(), produced_at: z.string().datetime().nullable().optional(),
+  reference_batch_size_liters: z.coerce.number().finite().positive().max(1000000), planned_batch_size_liters: z.coerce.number().finite().positive().max(1000000),
+  saleable_output_liters: z.coerce.number().finite().nonnegative().default(0), rejected_output_liters: z.coerce.number().finite().nonnegative().default(0),
+  material_lots: z.array(z.object({ supplier_material_id: z.string().trim().min(1).nullable().optional(), material_name: z.string().trim().min(1).max(180), lot_code: z.string().trim().min(1).max(100), quantity: z.coerce.number().finite().positive(), unit: z.enum(['g','kg','ml','l']) })).max(100).default([]),
+  process_parameters: z.array(z.object({ key: z.string().trim().regex(/^[a-z][a-z0-9_]*$/).max(50), label: z.string().trim().min(2).max(120), unit: z.string().trim().max(30).default(''), lower: z.coerce.number().finite().optional(), upper: z.coerce.number().finite().optional(), actual: z.coerce.number().finite() }).superRefine((value,context)=>{ if(value.lower===undefined&&value.upper===undefined) context.addIssue({code:z.ZodIssueCode.custom,message:'At least one process limit is required'}); })).max(50).default([]),
+  deviations: z.array(z.string().trim().min(2).max(500)).max(50).default([]), notes: z.string().trim().max(5000).default(''),
+});
+const qcReleaseSchema = z.object({
+  production_trial_id: z.string().trim().min(1), specification_id: z.string().trim().min(1),
+  laboratory_result_ids: z.array(z.string().trim().min(1)).min(1).max(50).refine(items=>new Set(items).size===items.length,{message:'Laboratory result identifiers must be unique'}),
+  notes: z.string().trim().max(3000).default(''),
+});
+const qualityEventSchema = z.object({
+  production_trial_id: z.string().trim().min(1).nullable().optional(), qc_release_id: z.string().trim().min(1).nullable().optional(),
+  event_type: z.enum(['deviation','out_of_specification','nonconformance']), severity: z.enum(['minor','major','critical']),
+  title: z.string().trim().min(3).max(180), description: z.string().trim().min(10).max(5000), immediate_action: z.string().trim().max(3000).default(''),
+  owner: z.string().trim().max(120).default(''), due_date: z.string().date().nullable().optional(),
+});
+const capaBaseSchema = z.object({
+  action_type: z.enum(['corrective','preventive']), title: z.string().trim().min(3).max(180), action: z.string().trim().min(10).max(5000),
+  owner: z.string().trim().min(2).max(120), due_date: z.string().date().nullable().optional(), status: z.enum(['planned','in_progress','implemented','effectiveness_verified','ineffective','cancelled']).default('planned'),
+  effectiveness_criteria: z.string().trim().min(5).max(2000), effectiveness_evidence: z.string().trim().max(3000).default(''),
+});
+const capaSchema = capaBaseSchema.superRefine((value,context)=>{ if(value.status==='effectiveness_verified'&&!value.effectiveness_evidence) context.addIssue({code:z.ZodIssueCode.custom,path:['effectiveness_evidence'],message:'Effectiveness evidence is required before verification'}); });
+const capaUpdateSchema = capaBaseSchema.partial();
 const milestoneSchema = z.object({
   title: z.string().trim().min(3).max(160),
   description: z.string().trim().max(1500).default(''),
@@ -614,6 +643,12 @@ function ensureStabilityStorage(request, reply) {
 function ensureSupplyChainStorage(request, reply) {
   if (request.store.featureAvailability?.supplyChain !== false) return true;
   reply.code(503).send({ error: 'Supplier, document and packaging storage is not installed. Apply the pending Supabase supply-chain migration.', code: 'SUPPLY_CHAIN_MIGRATION_REQUIRED' });
+  return false;
+}
+
+function ensureIndustrialQualityStorage(request, reply) {
+  if (request.store.featureAvailability?.industrialQuality !== false) return true;
+  reply.code(503).send({ error: 'Industrial quality storage is not installed. Apply the pending production quality migration.', code: 'INDUSTRIAL_QUALITY_MIGRATION_REQUIRED' });
   return false;
 }
 
@@ -690,7 +725,11 @@ server.get(`${apiPrefix}/projects/:id`, async (request, reply) => {
   const specificationApprovals = request.store.rdSpecificationApprovals.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
   const documents = request.store.rdDocuments.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
   const packagingConfigurations = request.store.rdPackagingConfigurations.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
-  return { data: { ...project, events, execution_available: request.store.featureAvailability?.projectExecution !== false, stability_available: request.store.featureAvailability?.stability !== false, supply_chain_available: request.store.featureAvailability?.supplyChain !== false, traceability: {
+  const productionTrials = request.store.rdProductionTrials.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
+  const qcReleases = request.store.rdQcReleases.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
+  const qualityEvents = request.store.rdQualityEvents.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
+  const capaActions = request.store.rdCapaActions.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
+  return { data: { ...project, events, execution_available: request.store.featureAvailability?.projectExecution !== false, stability_available: request.store.featureAvailability?.stability !== false, supply_chain_available: request.store.featureAvailability?.supplyChain !== false, industrial_quality_available: request.store.featureAvailability?.industrialQuality !== false, traceability: {
     formulations: formulations.map(item => ({ id: item.id, code: item.code, name: item.name, version: item.version, status: item.status, locked_at: item.locked_at || null })),
     laboratory_results: laboratoryResults.map(item => ({ id: item.id, formulation_version_id: item.formulation_id, batch_code: item.batch_code, tested_at: item.tested_at, measurements: item.measurements, sensory: item.sensory })),
     sensory_studies: sensoryStudies.map(item => ({ id: item.id, name: item.name, status: item.status, formulation_version_ids: item.samples.map(sample => sample.formulation_id).filter(Boolean) })),
@@ -704,6 +743,10 @@ server.get(`${apiPrefix}/projects/:id`, async (request, reply) => {
     specification_approvals: specificationApprovals.sort((a, b) => new Date(b.decided_at) - new Date(a.decided_at)),
     documents: documents.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at)),
     packaging_configurations: packagingConfigurations.sort((a, b) => b.version - a.version),
+    production_trials: productionTrials.sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at)),
+    qc_releases: qcReleases.sort((a,b)=>new Date(b.decided_at)-new Date(a.decided_at)),
+    quality_events: qualityEvents.sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at)),
+    capa_actions: capaActions.sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at)),
   } }, allowed_transitions: projectTransitions[project.stage] || [] };
 });
 
@@ -1166,6 +1209,93 @@ server.post(`${apiPrefix}/projects/:id/packaging-configurations/:configurationId
   Object.assign(configuration, { status: 'approved', analysis, approved_at: timestamp, approved_by: request.user?.id, approval_rationale: input.rationale, evidence_refs: input.evidence_refs, warnings_accepted: Boolean(input.accept_warnings), updated_at: timestamp });
   addProjectEvent(request, project, 'packaging_configuration_approved', { configuration_id: configuration.id, formulation_version_id: configuration.formulation_version_id, version: configuration.version, warnings_accepted: configuration.warnings_accepted, evidence_refs: input.evidence_refs });
   return { data: configuration };
+});
+
+// ============================================================================
+// INDUSTRIALIZATION, QC RELEASE, OOS / DEVIATION AND CAPA
+// ============================================================================
+
+server.post(`${apiPrefix}/projects/:id/production-trials`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply) || !ensureIndustrialQualityStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id); if (!project) return reply.code(404).send({error:'Project not found'});
+  const input = productionTrialSchema.parse(request.body);
+  if (!projectFormulationVersion(request,project,input.formulation_version_id)) return reply.code(400).send({error:'Production trial must reference an exact formulation version from this project'});
+  if (input.packaging_configuration_id) {
+    const packaging = request.store.rdPackagingConfigurations.find(item=>item.id===input.packaging_configuration_id&&item.project_id===project.id&&item.formulation_version_id===input.formulation_version_id&&item.status==='approved'&&isOwnedByRequest(request,item));
+    if (!packaging) return reply.code(400).send({error:'Production trial packaging must be an approved configuration for the exact formulation version'});
+  }
+  if (input.material_lots.some(lot=>lot.supplier_material_id&&!request.store.rdSupplierMaterials.some(item=>item.id===lot.supplier_material_id&&item.status==='approved'&&isOwnedByRequest(request,item)))) return reply.code(400).send({error:'Every linked supplier material lot must reference an approved material in this workspace'});
+  if (request.store.rdProductionTrials.some(item=>item.project_id===project.id&&item.batch_code.toLowerCase()===input.batch_code.toLowerCase()&&isOwnedByRequest(request,item))) return reply.code(409).send({error:'Production batch code already exists in this project'});
+  const timestamp=new Date().toISOString(); const trial={id:generateId(),owner_id:request.user?.id,project_id:project.id,...input,created_at:timestamp,updated_at:timestamp};
+  trial.analysis=analyzeProductionTrial(trial); request.store.rdProductionTrials.push(trial);
+  addProjectEvent(request,project,'production_trial_created',{production_trial_id:trial.id,batch_code:trial.batch_code,formulation_version_id:trial.formulation_version_id,planned_batch_size_liters:trial.planned_batch_size_liters});
+  return reply.code(201).send({data:trial});
+});
+
+server.put(`${apiPrefix}/projects/:id/production-trials/:trialId`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply) || !ensureIndustrialQualityStorage(request, reply)) return;
+  const project=ownedProject(request,request.params.id); if(!project)return reply.code(404).send({error:'Project not found'});
+  const trial=request.store.rdProductionTrials.find(item=>item.id===request.params.trialId&&item.project_id===project.id&&isOwnedByRequest(request,item)); if(!trial)return reply.code(404).send({error:'Production trial not found'});
+  if(trial.status==='completed'||trial.status==='cancelled')return reply.code(409).send({error:'Completed or cancelled production trials are immutable',code:'PRODUCTION_TRIAL_LOCKED'});
+  const updates=productionTrialSchema.partial().parse(request.body); const versionId=updates.formulation_version_id||trial.formulation_version_id;
+  if(!projectFormulationVersion(request,project,versionId))return reply.code(400).send({error:'Production trial must reference an exact formulation version from this project'});
+  if(updates.material_lots?.some(lot=>lot.supplier_material_id&&!request.store.rdSupplierMaterials.some(item=>item.id===lot.supplier_material_id&&item.status==='approved'&&isOwnedByRequest(request,item))))return reply.code(400).send({error:'Every linked supplier material lot must reference an approved material'});
+  Object.assign(trial,updates,{updated_at:new Date().toISOString()}); trial.analysis=analyzeProductionTrial(trial);
+  addProjectEvent(request,project,'production_trial_updated',{production_trial_id:trial.id,status:trial.status,yield_percent:trial.analysis.mass_balance.yield_percent,process_status:trial.analysis.status});
+  return {data:trial};
+});
+
+server.post(`${apiPrefix}/projects/:id/qc-releases`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply) || !ensureIndustrialQualityStorage(request, reply)) return;
+  const project=ownedProject(request,request.params.id); if(!project)return reply.code(404).send({error:'Project not found'});
+  const input=qcReleaseSchema.parse(request.body);
+  const trial=request.store.rdProductionTrials.find(item=>item.id===input.production_trial_id&&item.project_id===project.id&&isOwnedByRequest(request,item));
+  if(!trial)return reply.code(400).send({error:'Production trial not found in this project'}); if(trial.status!=='completed')return reply.code(409).send({error:'Complete and lock the production trial before QC disposition',code:'PRODUCTION_TRIAL_NOT_COMPLETED'});
+  if(request.store.rdQcReleases.some(item=>item.production_trial_id===trial.id&&isOwnedByRequest(request,item)))return reply.code(409).send({error:'A QC disposition already exists for this production trial',code:'QC_RELEASE_IMMUTABLE'});
+  const specification=request.store.rdProductSpecifications.find(item=>item.id===input.specification_id&&item.project_id===project.id&&item.formulation_version_id===trial.formulation_version_id&&item.status==='approved'&&isOwnedByRequest(request,item));
+  if(!specification)return reply.code(400).send({error:'QC release requires the approved specification for the exact formulation version'});
+  const resultIds=new Set(input.laboratory_result_ids); const laboratoryResults=request.store.laboratoryResults.filter(item=>resultIds.has(item.id)&&item.project_id===project.id&&item.formulation_version_id===trial.formulation_version_id&&!item.deleted_at&&isOwnedByRequest(request,item));
+  if(laboratoryResults.length!==resultIds.size)return reply.code(400).send({error:'Every QC laboratory result must belong to the exact project and formulation version'});
+  const evaluation=evaluateQcRelease(specification,laboratoryResults); const disposition=evaluation.disposition==='eligible_for_release'?'released':evaluation.disposition;
+  const release={id:generateId(),owner_id:request.user?.id,actor_id:request.user?.id,project_id:project.id,production_trial_id:trial.id,formulation_version_id:trial.formulation_version_id,specification_id:specification.id,laboratory_result_ids:input.laboratory_result_ids,notes:input.notes,evaluation,disposition,decided_at:new Date().toISOString()};
+  request.store.rdQcReleases.push(release); addProjectEvent(request,project,'qc_disposition_recorded',{qc_release_id:release.id,production_trial_id:trial.id,disposition,specification_id:specification.id,laboratory_result_ids:release.laboratory_result_ids});
+  let qualityEvent=null;
+  if(disposition==='out_of_specification'){
+    const timestamp=new Date().toISOString(); qualityEvent={id:generateId(),owner_id:request.user?.id,project_id:project.id,production_trial_id:trial.id,qc_release_id:release.id,event_type:'out_of_specification',severity:'major',title:`OOS — ${trial.batch_code}`,description:'An approved finished-product limit failed during deterministic QC evaluation.',immediate_action:'Batch placed on hold pending investigation.',owner:'Quality',due_date:null,status:'open',root_cause:'',investigation_notes:'',disposition:'',created_at:timestamp,updated_at:timestamp};
+    request.store.rdQualityEvents.push(qualityEvent); addProjectEvent(request,project,'quality_event_opened',{quality_event_id:qualityEvent.id,event_type:qualityEvent.event_type,qc_release_id:release.id,severity:qualityEvent.severity});
+  }
+  return reply.code(201).send({data:release,quality_event:qualityEvent});
+});
+
+server.post(`${apiPrefix}/projects/:id/quality-events`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply) || !ensureIndustrialQualityStorage(request, reply)) return;
+  const project=ownedProject(request,request.params.id); if(!project)return reply.code(404).send({error:'Project not found'}); const input=qualityEventSchema.parse(request.body);
+  if(input.production_trial_id&&!request.store.rdProductionTrials.some(item=>item.id===input.production_trial_id&&item.project_id===project.id&&isOwnedByRequest(request,item)))return reply.code(400).send({error:'Production trial not found in this project'});
+  if(input.qc_release_id&&!request.store.rdQcReleases.some(item=>item.id===input.qc_release_id&&item.project_id===project.id&&isOwnedByRequest(request,item)))return reply.code(400).send({error:'QC release not found in this project'});
+  const timestamp=new Date().toISOString(); const event={id:generateId(),owner_id:request.user?.id,project_id:project.id,...input,status:'open',root_cause:'',investigation_notes:'',disposition:'',created_at:timestamp,updated_at:timestamp}; request.store.rdQualityEvents.push(event);
+  addProjectEvent(request,project,'quality_event_opened',{quality_event_id:event.id,event_type:event.event_type,severity:event.severity,production_trial_id:event.production_trial_id||null}); return reply.code(201).send({data:event});
+});
+
+server.put(`${apiPrefix}/projects/:id/quality-events/:eventId`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply) || !ensureIndustrialQualityStorage(request, reply)) return;
+  const project=ownedProject(request,request.params.id); if(!project)return reply.code(404).send({error:'Project not found'}); const event=request.store.rdQualityEvents.find(item=>item.id===request.params.eventId&&item.project_id===project.id&&isOwnedByRequest(request,item)); if(!event)return reply.code(404).send({error:'Quality event not found'});
+  if(event.status==='closed')return reply.code(409).send({error:'Closed quality events are immutable',code:'QUALITY_EVENT_LOCKED'});
+  const updates=z.object({status:z.enum(['open','investigating','capa_required','closed']).optional(),root_cause:z.string().trim().max(5000).optional(),investigation_notes:z.string().trim().max(5000).optional(),disposition:z.string().trim().max(2000).optional(),owner:z.string().trim().max(120).optional(),due_date:z.string().date().nullable().optional()}).parse(request.body);
+  const merged={...event,...updates}; if(merged.status==='closed'&&(!merged.root_cause||merged.root_cause.length<10||!merged.disposition||merged.disposition.length<5))return reply.code(409).send({error:'Root cause and disposition are required before closure',code:'QUALITY_INVESTIGATION_INCOMPLETE'});
+  const capas=request.store.rdCapaActions.filter(item=>item.quality_event_id===event.id&&isOwnedByRequest(request,item)); if(merged.status==='closed'&&capas.some(item=>item.status!=='effectiveness_verified'&&item.status!=='cancelled'))return reply.code(409).send({error:'Every active CAPA requires an effectiveness decision before event closure',code:'CAPA_EFFECTIVENESS_REQUIRED'});
+  Object.assign(event,updates,{...(updates.status==='closed'?{closed_at:new Date().toISOString(),closed_by:request.user?.id}:{}),updated_at:new Date().toISOString()}); addProjectEvent(request,project,'quality_event_updated',{quality_event_id:event.id,status:event.status}); return {data:event};
+});
+
+server.post(`${apiPrefix}/projects/:id/quality-events/:eventId/capas`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply) || !ensureIndustrialQualityStorage(request, reply)) return;
+  const project=ownedProject(request,request.params.id);if(!project)return reply.code(404).send({error:'Project not found'});const event=request.store.rdQualityEvents.find(item=>item.id===request.params.eventId&&item.project_id===project.id&&isOwnedByRequest(request,item));if(!event)return reply.code(404).send({error:'Quality event not found'});if(event.status==='closed')return reply.code(409).send({error:'Cannot add CAPA to a closed quality event'});
+  const input=capaSchema.parse(request.body);const timestamp=new Date().toISOString();const capa={id:generateId(),owner_id:request.user?.id,project_id:project.id,quality_event_id:event.id,...input,created_at:timestamp,updated_at:timestamp,...(input.status==='effectiveness_verified'?{verified_at:timestamp,verified_by:request.user?.id}:{})};request.store.rdCapaActions.push(capa);if(event.status==='open')event.status='capa_required';event.updated_at=timestamp;addProjectEvent(request,project,'capa_created',{capa_id:capa.id,quality_event_id:event.id,action_type:capa.action_type});return reply.code(201).send({data:capa});
+});
+
+server.put(`${apiPrefix}/projects/:id/capas/:capaId`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply) || !ensureIndustrialQualityStorage(request, reply)) return;
+  const project=ownedProject(request,request.params.id);if(!project)return reply.code(404).send({error:'Project not found'});const capa=request.store.rdCapaActions.find(item=>item.id===request.params.capaId&&item.project_id===project.id&&isOwnedByRequest(request,item));if(!capa)return reply.code(404).send({error:'CAPA not found'});if(capa.status==='effectiveness_verified'||capa.status==='cancelled')return reply.code(409).send({error:'Verified or cancelled CAPA records are immutable',code:'CAPA_LOCKED'});
+  const updates=capaUpdateSchema.parse(request.body);const merged={...capa,...updates};if(merged.status==='effectiveness_verified'&&!merged.effectiveness_evidence)return reply.code(409).send({error:'Effectiveness evidence is required before verification',code:'CAPA_EVIDENCE_REQUIRED'});Object.assign(capa,updates,{...(updates.status==='effectiveness_verified'?{verified_at:new Date().toISOString(),verified_by:request.user?.id}:{}),updated_at:new Date().toISOString()});addProjectEvent(request,project,'capa_updated',{capa_id:capa.id,quality_event_id:capa.quality_event_id,status:capa.status});return {data:capa};
 });
 
 server.post(`${apiPrefix}/projects/:id/experimental-plans/:planId/pilot-batches`, async (request, reply) => {
@@ -1825,6 +1955,7 @@ const laboratoryResultSchema = z.object({
   notes: z.string().trim().max(4000).optional(),
   include_in_ai_learning: z.boolean().default(false),
 });
+const laboratoryResultUpdateSchema = laboratoryResultSchema.partial();
 
 server.get(`${apiPrefix}/formulations/:id/laboratory-results`, async (request, reply) => {
   if (!findAccessibleFormulation(request, request.params.id)) return reply.code(404).send({ error: 'Formulation not found' });
@@ -1877,16 +2008,15 @@ server.put(`${apiPrefix}/formulations/:id/laboratory-results/:resultId`, async (
     item.id === request.params.resultId && item.formulation_id === request.params.id && !item.deleted_at && isOwnedByRequest(request, item)
   );
   if (!result) return reply.code(404).send({ error: 'Laboratory result not found' });
-  const input = laboratoryResultSchema.parse(request.body);
-  Object.assign(result, {
-    batch_code: input.batch_code || null,
-    tested_at: input.tested_at.toISOString(),
-    measurements: input.measurements,
-    sensory: input.sensory,
-    notes: input.notes || null,
-    include_in_ai_learning: input.include_in_ai_learning,
-    updated_at: new Date().toISOString(),
-  });
+  const input = laboratoryResultUpdateSchema.parse(request.body);
+  const updates = { updated_at: new Date().toISOString() };
+  if (Object.hasOwn(input, 'batch_code')) updates.batch_code = input.batch_code || null;
+  if (Object.hasOwn(input, 'tested_at')) updates.tested_at = input.tested_at.toISOString();
+  if (Object.hasOwn(input, 'measurements')) updates.measurements = input.measurements;
+  if (Object.hasOwn(input, 'sensory')) updates.sensory = input.sensory;
+  if (Object.hasOwn(input, 'notes')) updates.notes = input.notes || null;
+  if (Object.hasOwn(input, 'include_in_ai_learning')) updates.include_in_ai_learning = input.include_in_ai_learning;
+  Object.assign(result, updates);
   return { data: result };
 });
 

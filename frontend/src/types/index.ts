@@ -231,6 +231,7 @@ export interface RDProject {
   execution_available?: boolean;
   stability_available?: boolean;
   supply_chain_available?: boolean;
+  industrial_quality_available?: boolean;
   events?: RDProjectEvent[];
   traceability?: {
     formulations: Array<{ id: string; code: string; name: string; version: number; status: string; locked_at?: string | null }>;
@@ -246,6 +247,10 @@ export interface RDProject {
     specification_approvals: RDSpecificationApproval[];
     documents: RDDocument[];
     packaging_configurations: RDPackagingConfiguration[];
+    production_trials: RDProductionTrial[];
+    qc_releases: RDQcRelease[];
+    quality_events: RDQualityEvent[];
+    capa_actions: RDCapaAction[];
   };
   created_at: string;
   updated_at: string;
@@ -265,6 +270,10 @@ export interface RDDocument { id: string; project_id: string; supplier_id?: stri
 export interface RDPackagingComponent { id: string; supplier_id?: string | null; code: string; name: string; component_type: string; material: string; status: 'candidate' | 'approved' | 'restricted' | 'discontinued'; capacity_ml?: number | null; mass_g: number; recycled_content_percent: number; unit_cost: number; currency: string; barrier: { oxygen_transmission_rate_cc_m2_day?: number | null; water_vapor_transmission_rate_g_m2_day?: number | null; light_transmission_percent?: number | null }; food_contact_compliant: boolean; markets: string[]; notes: string; created_at: string; updated_at: string }
 export interface RDPackagingAnalysis { engine_version: string; configuration_id: string; component_count: number; economics: { currency: string; cost_per_sale_unit: number }; sustainability: { total_packaging_mass_g: number; recycled_content_percent_by_mass: number }; barrier_screen: { maximum_oxygen_transmission_rate_cc_m2_day: number | null; maximum_water_vapor_transmission_rate_g_m2_day: number | null; maximum_light_transmission_percent: number | null; note: string }; stability_link: { intended_shelf_life_days: number; recorded_coverage_days: number; coverage_sufficient: boolean }; readiness: 'ready' | 'review_required'; warnings: string[] }
 export interface RDPackagingConfiguration { id: string; project_id: string; formulation_version_id: string; name: string; version: number; status: 'draft' | 'approved' | 'superseded' | 'withdrawn'; currency: string; intended_shelf_life_days: number; filling_process: string; components: Array<{ component_id: string; role: 'primary_container' | 'closure' | 'label' | 'secondary' | 'tertiary' | 'other'; quantity: number }>; transport_conditions: string; notes: string; analysis: RDPackagingAnalysis; evidence_refs?: string[]; created_at: string; updated_at: string }
+export interface RDProductionTrial { id:string;project_id:string;formulation_version_id:string;packaging_configuration_id?:string|null;batch_code:string;site:string;line:string;status:'planned'|'running'|'completed'|'cancelled';scheduled_at?:string|null;produced_at?:string|null;reference_batch_size_liters:number;planned_batch_size_liters:number;saleable_output_liters:number;rejected_output_liters:number;material_lots:Array<{supplier_material_id?:string|null;material_name:string;lot_code:string;quantity:number;unit:'g'|'kg'|'ml'|'l'}>;process_parameters:Array<{key:string;label:string;unit:string;lower?:number;upper?:number;actual:number}>;deviations:string[];notes:string;analysis:{engine_version:string;mass_balance:{yield_percent:number;reject_percent:number;unaccounted_loss_liters:number;scale_factor:number|null};process_parameters:Array<{key:string;label:string;status:string}>;status:string;warnings:string[]};created_at:string;updated_at:string }
+export interface RDQcRelease { id:string;project_id:string;production_trial_id:string;formulation_version_id:string;specification_id:string;laboratory_result_ids:string[];disposition:'released'|'hold'|'rejected'|'out_of_specification';notes:string;evaluation:{engine_version:string;reason:string;checks:Array<{key:string;label:string;unit:string;observation_count:number;failure_count:number;status:string}>};decided_at:string }
+export interface RDQualityEvent { id:string;project_id:string;production_trial_id?:string|null;qc_release_id?:string|null;event_type:'deviation'|'out_of_specification'|'nonconformance';severity:'minor'|'major'|'critical';title:string;description:string;immediate_action:string;owner:string;due_date?:string|null;status:'open'|'investigating'|'capa_required'|'closed';root_cause:string;investigation_notes:string;disposition:string;created_at:string;updated_at:string }
+export interface RDCapaAction { id:string;project_id:string;quality_event_id:string;action_type:'corrective'|'preventive';title:string;action:string;owner:string;due_date?:string|null;status:'planned'|'in_progress'|'implemented'|'effectiveness_verified'|'ineffective'|'cancelled';effectiveness_criteria:string;effectiveness_evidence:string;verified_at?:string;created_at:string;updated_at:string }
 
 export interface LaboratoryResult {
   id: string;

@@ -30,6 +30,10 @@ const COLLECTION_NAMES = [
   'rdDocuments',
   'rdPackagingComponents',
   'rdPackagingConfigurations',
+  'rdProductionTrials',
+  'rdQcReleases',
+  'rdQualityEvents',
+  'rdCapaActions',
 ];
 
 function unpackPayload(row, ownershipColumn = 'owner_id') {
@@ -94,12 +98,12 @@ export function buildChangeSet(store, auditEvent = null) {
 export async function loadRequestStore(ownerId, options = {}) {
   const mode = options.mode || getStorageConfiguration().mode;
   if (mode !== 'supabase') {
-    return { ...getLocalCollections(), featureAvailability: { sensory: true, projects: true, projectExecution: true, stability: true, supplyChain: true }, snapshot: null };
+    return { ...getLocalCollections(), featureAvailability: { sensory: true, projects: true, projectExecution: true, stability: true, supplyChain: true, industrialQuality: true }, snapshot: null };
   }
   if (!ownerId) throw new Error('An authenticated owner is required for Supabase data access');
 
   const client = options.client || getSupabaseAdmin();
-  const [ingredientRows, formulationRows, variantRows, complianceRows, batchRows, pricingRows, targetRows, laboratoryRows, learningRows, sensoryStudyRows, sensoryResponseRows, projectRows, projectEventRows, experimentalPlanRows, pilotBatchRows, milestoneRows, decisionRows, stabilityProgramRows, stabilityObservationRows, specificationRows, specificationApprovalRows, supplierRows, supplierMaterialRows, materialSpecificationRows, documentRows, packagingComponentRows, packagingConfigurationRows] = await Promise.all([
+  const [ingredientRows, formulationRows, variantRows, complianceRows, batchRows, pricingRows, targetRows, laboratoryRows, learningRows, sensoryStudyRows, sensoryResponseRows, projectRows, projectEventRows, experimentalPlanRows, pilotBatchRows, milestoneRows, decisionRows, stabilityProgramRows, stabilityObservationRows, specificationRows, specificationApprovalRows, supplierRows, supplierMaterialRows, materialSpecificationRows, documentRows, packagingComponentRows, packagingConfigurationRows, productionTrialRows, qcReleaseRows, qualityEventRows, capaActionRows] = await Promise.all([
     fetchAll(() => client.from('ingredients').select('id,code,name,category,is_active,payload')),
     fetchAll(() => client.from('formulations').select('payload,owner_id').eq('owner_id', ownerId)),
     fetchAll(() => client.from('ai_variants').select('payload,owner_id').eq('owner_id', ownerId)),
@@ -127,6 +131,10 @@ export async function loadRequestStore(ownerId, options = {}) {
     fetchFeatureCollection(() => client.from('rd_documents').select('payload,owner_id').eq('owner_id', ownerId)),
     fetchFeatureCollection(() => client.from('rd_packaging_components').select('payload,owner_id').eq('owner_id', ownerId)),
     fetchFeatureCollection(() => client.from('rd_packaging_configurations').select('payload,owner_id').eq('owner_id', ownerId)),
+    fetchFeatureCollection(() => client.from('rd_production_trials').select('payload,owner_id').eq('owner_id', ownerId)),
+    fetchFeatureCollection(() => client.from('rd_qc_releases').select('payload,owner_id').eq('owner_id', ownerId)),
+    fetchFeatureCollection(() => client.from('rd_quality_events').select('payload,owner_id').eq('owner_id', ownerId)),
+    fetchFeatureCollection(() => client.from('rd_capa_actions').select('payload,owner_id').eq('owner_id', ownerId)),
   ]);
 
   // A newly connected Supabase project can have no shared catalog rows until
@@ -178,12 +186,17 @@ export async function loadRequestStore(ownerId, options = {}) {
     rdDocuments: documentRows.rows.map(row => unpackPayload(row)),
     rdPackagingComponents: packagingComponentRows.rows.map(row => unpackPayload(row)),
     rdPackagingConfigurations: packagingConfigurationRows.rows.map(row => unpackPayload(row)),
+    rdProductionTrials: productionTrialRows.rows.map(row => unpackPayload(row)),
+    rdQcReleases: qcReleaseRows.rows.map(row => unpackPayload(row)),
+    rdQualityEvents: qualityEventRows.rows.map(row => unpackPayload(row)),
+    rdCapaActions: capaActionRows.rows.map(row => unpackPayload(row)),
     featureAvailability: {
       sensory: sensoryStudyRows.available && sensoryResponseRows.available,
       projects: projectRows.available && projectEventRows.available,
       projectExecution: experimentalPlanRows.available && pilotBatchRows.available && milestoneRows.available && decisionRows.available,
       stability: stabilityProgramRows.available && stabilityObservationRows.available && specificationRows.available && specificationApprovalRows.available,
       supplyChain: supplierRows.available && supplierMaterialRows.available && materialSpecificationRows.available && documentRows.available && packagingComponentRows.available && packagingConfigurationRows.available,
+      industrialQuality: productionTrialRows.available && qcReleaseRows.available && qualityEventRows.available && capaActionRows.available,
     },
   };
   store.using_bundled_ingredient_catalog = storedIngredients.length === 0;

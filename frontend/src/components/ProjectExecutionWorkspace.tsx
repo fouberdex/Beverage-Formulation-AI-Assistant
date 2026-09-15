@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Beaker, CalendarCheck, CheckCircle2, ClipboardList, Download, Factory, Flag, FlaskConical, GitCommitHorizontal, Package, Plus, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, Beaker, CalendarCheck, CheckCircle2, ClipboardList, Download, Factory, Flag, FlaskConical, GitCommitHorizontal, Package, Plus, ShieldCheck } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { projectsAPI } from '../services/api';
 import { getErrorMessage } from '../services/errors';
@@ -7,8 +7,9 @@ import type { RDDesignAnalysis, RDExperimentalPlan, RDPilotBatch, RDProject, RDP
 import StatusMessage from './StatusMessage';
 import StabilityWorkspace from './StabilityWorkspace';
 import SupplyChainWorkspace from './SupplyChainWorkspace';
+import IndustrialQualityWorkspace from './IndustrialQualityWorkspace';
 
-type Tab = 'experiments' | 'doe' | 'batches' | 'stability' | 'supply' | 'milestones' | 'decisions' | 'timeline';
+type Tab = 'experiments' | 'doe' | 'batches' | 'stability' | 'supply' | 'quality' | 'milestones' | 'decisions' | 'timeline';
 const csv = (value: string) => value.split(',').map(item => item.trim()).filter(Boolean);
 const lines = (value: string) => value.split('\n').map(item => item.trim()).filter(Boolean);
 const tabs: Array<{ key: Tab; label: string; icon: typeof Beaker }> = [
@@ -17,6 +18,7 @@ const tabs: Array<{ key: Tab; label: string; icon: typeof Beaker }> = [
   { key: 'batches', label: 'Pilot batches', icon: Factory },
   { key: 'stability', label: 'Stability & specs', icon: FlaskConical },
   { key: 'supply', label: 'Supply & packaging', icon: Package },
+  { key: 'quality', label: 'Industrial quality', icon: AlertTriangle },
   { key: 'milestones', label: 'Milestones', icon: Flag },
   { key: 'decisions', label: 'Go / No-Go', icon: ShieldCheck },
   { key: 'timeline', label: 'Timeline', icon: GitCommitHorizontal },
@@ -54,6 +56,7 @@ export default function ProjectExecutionWorkspace({ project, onRefresh }: { proj
       {tab === 'batches' && <PilotBatches project={project} plans={plans} batches={batches} busy={busy} perform={perform}/>} 
       {tab === 'stability' && <StabilityWorkspace project={project} busy={busy} perform={perform}/>}
       {tab === 'supply' && <SupplyChainWorkspace project={project} onRefresh={onRefresh}/>}
+      {tab === 'quality' && <IndustrialQualityWorkspace project={project} onRefresh={onRefresh}/>}
       {tab === 'milestones' && <Milestones project={project} milestones={milestones} busy={busy} perform={perform}/>} 
       {tab === 'decisions' && <Decisions project={project} milestones={milestones} decisions={decisions} busy={busy} perform={perform}/>} 
       {tab === 'timeline' && <Timeline project={project}/>} 

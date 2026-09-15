@@ -29,6 +29,7 @@ test('Supabase migrations form an ordered, complete database workflow', async ()
     '20260914234500_rd_execution_loop.sql',
     '20260915113000_rd_stability_and_specifications.sql',
     '20260915170000_rd_suppliers_documents_packaging.sql',
+    '20260915203000_rd_industrial_quality.sql',
   ]);
 
   const bootstrap = await readFile(
@@ -154,6 +155,30 @@ test('supply-chain RLS suite covers tenant reads, server-only writes and relatio
   assert.match(suite, /supplier material cannot cross tenant ownership/);
   assert.match(suite, /packaging configuration cannot link another tenant formulation/);
   assert.match(suite, /tenant B sees only its suppliers/);
+});
+
+test('industrial quality migration links trials, immutable release decisions, events and CAPA', async () => {
+  const migration = await readFile(new URL('migrations/20260915203000_rd_industrial_quality.sql', supabaseDirectory), 'utf8');
+  assert.match(migration, /create table public\.rd_production_trials/);
+  assert.match(migration, /create table public\.rd_qc_releases/);
+  assert.match(migration, /create table public\.rd_quality_events/);
+  assert.match(migration, /create table public\.rd_capa_actions/);
+  assert.match(migration, /unique\(owner_id,production_trial_id\)/);
+  assert.match(migration, /foreign key\(owner_id,project_id,specification_id\)/);
+  assert.match(migration, /on conflict\(id\) do nothing/);
+  assert.match(migration, /enable row level security/g);
+  assert.match(migration, /revoke all on function public\.commit_rd_industrial_quality\(jsonb\) from public,anon,authenticated/);
+});
+
+test('industrial quality RLS suite covers tenant reads, immutable decisions and relational isolation', async () => {
+  const suite = await readFile(new URL('tests/database/008_industrial_quality_rls.test.sql', supabaseDirectory), 'utf8');
+  assert.match(suite, /tenant A sees only its production trial/);
+  assert.match(suite, /authenticated clients cannot mutate immutable QC decisions/);
+  assert.match(suite, /authenticated cannot execute industrial quality commit RPC/);
+  assert.match(suite, /production trial cannot link another tenant formulation/);
+  assert.match(suite, /QC release cannot link another tenant specification/);
+  assert.match(suite, /quality event cannot link another tenant production trial/);
+  assert.match(suite, /tenant B sees only its production trial/);
 });
 
 test('Supabase seed data contains shared catalog rows only', async () => {

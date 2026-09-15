@@ -74,6 +74,13 @@ export const projectsAPI = {
   updatePackagingConfiguration: (id: string, configurationId: string, data: any) => api.put(`/projects/${id}/packaging-configurations/${configurationId}`, data),
   getPackagingAnalysis: (id: string, configurationId: string) => api.get(`/projects/${id}/packaging-configurations/${configurationId}/analysis`),
   approvePackagingConfiguration: (id: string, configurationId: string, data: any) => api.post(`/projects/${id}/packaging-configurations/${configurationId}/approve`, data),
+  createProductionTrial: (id: string, data: any) => api.post(`/projects/${id}/production-trials`, data),
+  updateProductionTrial: (id: string, trialId: string, data: any) => api.put(`/projects/${id}/production-trials/${trialId}`, data),
+  createQcRelease: (id: string, data: any) => api.post(`/projects/${id}/qc-releases`, data),
+  createQualityEvent: (id: string, data: any) => api.post(`/projects/${id}/quality-events`, data),
+  updateQualityEvent: (id: string, eventId: string, data: any) => api.put(`/projects/${id}/quality-events/${eventId}`, data),
+  createCapa: (id: string, eventId: string, data: any) => api.post(`/projects/${id}/quality-events/${eventId}/capas`, data),
+  updateCapa: (id: string, capaId: string, data: any) => api.put(`/projects/${id}/capas/${capaId}`, data),
 };
 
 export const supplyChainAPI = {

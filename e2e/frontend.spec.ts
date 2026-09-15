@@ -186,6 +186,13 @@ test('project execution workspace exposes protocols, pilot batches, gates, decis
   await expect(page.getByRole('button', { name: 'Register document' })).toBeVisible();
   await page.getByRole('tab', { name: 'Packaging', exact: true }).click();
   await expect(page.getByText('Packaging component library')).toBeVisible();
+  await page.getByRole('tab', { name: 'Industrial quality' }).click();
+  await expect(page.getByText('Industrialization and quality loop')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'New production trial' })).toBeVisible();
+  await page.getByRole('tab', { name: 'QC release' }).click();
+  await expect(page.getByText('Deterministic QC disposition')).toBeVisible();
+  await page.getByRole('tab', { name: 'OOS, deviations & CAPA' }).click();
+  await expect(page.getByRole('button', { name: 'Open quality event' })).toBeVisible();
   await page.getByRole('tab', { name: 'Milestones' }).click();
   await expect(page.getByRole('button', { name: 'New milestone' })).toBeVisible();
   await page.getByRole('tab', { name: 'Go / No-Go' }).click();

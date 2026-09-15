@@ -30,6 +30,10 @@ import {
   rdDocuments,
   rdPackagingComponents,
   rdPackagingConfigurations,
+  rdProductionTrials,
+  rdQcReleases,
+  rdQualityEvents,
+  rdCapaActions,
 } from './mockData.js';
 import { isSupabaseConfigured } from '../services/supabaseClient.js';
 
@@ -63,6 +67,10 @@ const collections = {
   rdDocuments,
   rdPackagingComponents,
   rdPackagingConfigurations,
+  rdProductionTrials,
+  rdQcReleases,
+  rdQualityEvents,
+  rdCapaActions,
 };
 
 let dataFile = defaultDataFile;

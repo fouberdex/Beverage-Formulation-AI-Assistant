@@ -200,6 +200,21 @@ are immutable and superseded only through a new version.
 
 - Scale-up, production trials, QC release, OOS, deviation and CAPA workflows.
 
+Tranche 1 is now implemented as a controlled industrial release loop. Production
+trials reference one exact project, approved formulation version and optional
+approved packaging configuration; supplier-material lots, signed critical process
+limits, planned volume, saleable output, reject volume, mass-balance loss, yield and
+scale factor are persisted together. Completed and cancelled trials are immutable.
+QC decisions are calculated server-side from an approved finished-product
+specification and laboratory results tied to the same formulation version, then
+stored as append-only release records. An out-of-specification result automatically
+opens a linked quality event. Deviations and nonconformances can also be opened
+manually, investigated and linked to corrective or preventive actions. Closure is
+blocked until root cause and disposition are recorded and every active CAPA has an
+effectiveness decision. Tenant-scoped composite foreign keys and RLS prevent
+cross-project or cross-owner evidence links; authenticated browser clients remain
+read-only while the server-owned transactional commit persists the workflow.
+
 ### Phase 7 — Product Digital Passport
 
 - Read-optimized cross-domain product view, traceability graph and safe structured
