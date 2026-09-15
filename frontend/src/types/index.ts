@@ -432,14 +432,29 @@ export interface SensoryStudyAnalytics {
   anova: Array<{
     attribute_key: string;
     attribute_label: string;
-    result: null | {
+    result: {
+      method: 'randomized_complete_block_anova' | 'descriptive_only';
+      design: string;
+      valid_for_inference: boolean;
+      reason: string;
+      statistic_name: string | null;
+      statistic: number | null;
+      effect_size: { name: string; value: number } | null;
+      assumptions: string[];
+      warnings: string[];
       f_statistic: number | null;
       infinite_f: boolean;
       p_value: number | null;
-      df_between: number;
-      df_within: number;
-      eta_squared: number;
+      df_between: number | null;
+      df_within: number | null;
+      eta_squared: number | null;
       significant_at_0_05: boolean;
+      friedman: null | {
+        method: 'friedman_test'; design: string; valid_for_inference: boolean; reason: string;
+        statistic_name: string; statistic: number; p_value: number | null;
+        effect_size: { name: 'kendalls_w'; value: number }; assumptions: string[]; warnings: string[];
+        significant_at_0_05: boolean;
+      };
     };
   }>;
   correlations: Array<{ row: string; column: string; value: number | null; count: number }>;

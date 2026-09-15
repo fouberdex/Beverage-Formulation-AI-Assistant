@@ -587,6 +587,9 @@ test('sensory workspace persists study design, individual responses and advanced
   assert.equal(analysis.coverage.evaluation_count, 2);
   assert.equal(analysis.ranking[0].sample_id, study.samples[0].id);
   assert.ok(analysis.warnings.some(warning => warning.code === 'small_panel'));
+  assert.equal(analysis.anova[0].result.valid_for_inference, false);
+  assert.equal(analysis.anova[0].result.p_value, null);
+  assert.equal(analysis.anova[0].result.method, 'descriptive_only');
 
   const listed = await server.inject({ method: 'GET', url: '/api/v1/sensory/studies' });
   assert.equal(listed.statusCode, 200);

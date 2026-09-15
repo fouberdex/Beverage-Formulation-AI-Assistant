@@ -192,6 +192,13 @@ program without an observed limit failure. Missing or insufficient coverage bloc
 review readiness while draft generation remains available; no duration is
 extrapolated and evidence identifiers are retained in the generated label record.
 
+Sensory analysis no longer applies independent-samples one-way ANOVA to scores from
+the same panelists. Complete balanced panels use panelist-blocked ANOVA with explicit
+assumptions and a Friedman sensitivity analysis. Incomplete or unbalanced panels
+retain descriptive statistics, JAR, segments, correlations and quality flags, but
+the engine withholds inferential statistics and explains that a mixed-effects model
+would be required.
+
 ### Phase 5 — suppliers, documents and packaging
 
 - Supplier qualification, supplier-material facts, document provenance/OCR review

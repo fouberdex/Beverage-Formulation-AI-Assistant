@@ -104,6 +104,160 @@ function fSurvivalProbability(fStatistic, dfBetween, dfWithin) {
   return Math.max(0, Math.min(1, 1 - regularizedBeta(x, dfBetween / 2, dfWithin / 2)));
 }
 
+function regularizedGammaQ(shape, value) {
+  if (value < 0 || shape <= 0) return null;
+  if (value === 0) return 1;
+  const epsilon = 1e-14;
+  const maxIterations = 200;
+  if (value < shape + 1) {
+    let term = 1 / shape;
+    let sum = term;
+    let denominator = shape;
+    for (let iteration = 1; iteration <= maxIterations; iteration++) {
+      denominator += 1;
+      term *= value / denominator;
+      sum += term;
+      if (Math.abs(term) < Math.abs(sum) * epsilon) break;
+    }
+    const lower = sum * Math.exp(-value + (shape * Math.log(value)) - logGamma(shape));
+    return Math.max(0, Math.min(1, 1 - lower));
+  }
+  let b = value + 1 - shape;
+  let c = 1 / 1e-30;
+  let d = 1 / b;
+  let result = d;
+  for (let iteration = 1; iteration <= maxIterations; iteration++) {
+    const coefficient = -iteration * (iteration - shape);
+    b += 2;
+    d = (coefficient * d) + b;
+    if (Math.abs(d) < 1e-30) d = 1e-30;
+    c = b + (coefficient / c);
+    if (Math.abs(c) < 1e-30) c = 1e-30;
+    d = 1 / d;
+    const delta = d * c;
+    result *= delta;
+    if (Math.abs(delta - 1) < epsilon) break;
+  }
+  return Math.max(0, Math.min(1, Math.exp(-value + (shape * Math.log(value)) - logGamma(shape)) * result));
+}
+
+function averageRanks(values) {
+  const sorted = values.map((value, index) => ({ value, index })).sort((a, b) => a.value - b.value);
+  const ranks = Array(values.length);
+  let tieAdjustment = 0;
+  for (let start = 0; start < sorted.length;) {
+    let end = start + 1;
+    while (end < sorted.length && sorted[end].value === sorted[start].value) end += 1;
+    const averageRank = ((start + 1) + end) / 2;
+    for (let index = start; index < end; index++) ranks[sorted[index].index] = averageRank;
+    const tieSize = end - start;
+    if (tieSize > 1) tieAdjustment += (tieSize ** 3) - tieSize;
+    start = end;
+  }
+  return { ranks, tieAdjustment };
+}
+
+function descriptiveInference(reason, design, warnings = []) {
+  return {
+    method: 'descriptive_only', design, valid_for_inference: false, reason,
+    statistic_name: null, statistic: null, p_value: null, effect_size: null,
+    assumptions: [], warnings, significant_at_0_05: false,
+    f_statistic: null, infinite_f: false, df_between: null, df_within: null, eta_squared: null,
+    friedman: null,
+  };
+}
+
+function calculateRepeatedMeasuresInference(study, responses, attribute) {
+  const sampleIds = study.samples.map(sample => sample.id);
+  if (sampleIds.length < 2) return descriptiveInference('At least two samples are required for comparative inference.', 'single_sample');
+  if (responses.length < 2) return descriptiveInference('At least two complete panelist blocks are required for repeated-measures inference.', 'insufficient_repeated_measures');
+  if (new Set(responses.map(response => String(response.panelist_code).toLowerCase())).size !== responses.length) {
+    return descriptiveInference('Panelist codes are not unique, so independent blocks cannot be identified.', 'invalid_repeated_measures');
+  }
+  const rows = responses.map(response => {
+    const valuesBySample = new Map();
+    let duplicate = false;
+    for (const sample of response.samples || []) {
+      if (!sampleIds.includes(sample.sample_id)) continue;
+      if (valuesBySample.has(sample.sample_id)) duplicate = true;
+      valuesBySample.set(sample.sample_id, sample.scores?.[attribute.key]);
+    }
+    const values = sampleIds.map(id => valuesBySample.get(id));
+    return { duplicate, values, complete: !duplicate && values.every(Number.isFinite) };
+  });
+  const completeBlocks = rows.filter(row => row.complete).length;
+  if (completeBlocks !== responses.length) {
+    return descriptiveInference(
+      `Only ${completeBlocks} of ${responses.length} panelist blocks contain one finite ${attribute.label} score for every sample. A mixed-effects model is required for valid unbalanced inference.`,
+      'incomplete_or_unbalanced_repeated_measures',
+      ['No p-value or statistical-significance claim is produced for incomplete repeated measures.'],
+    );
+  }
+
+  const matrix = rows.map(row => row.values.map(Number));
+  const blockCount = matrix.length;
+  const treatmentCount = sampleIds.length;
+  const allValues = matrix.flat();
+  const grandMean = mean(allValues);
+  const treatmentMeans = sampleIds.map((_, column) => mean(matrix.map(row => row[column])));
+  const blockMeans = matrix.map(row => mean(row));
+  const totalSumSquares = allValues.reduce((sum, value) => sum + ((value - grandMean) ** 2), 0);
+  const treatmentSumSquares = blockCount * treatmentMeans.reduce((sum, value) => sum + ((value - grandMean) ** 2), 0);
+  const blockSumSquares = treatmentCount * blockMeans.reduce((sum, value) => sum + ((value - grandMean) ** 2), 0);
+  const errorSumSquares = Math.max(0, totalSumSquares - treatmentSumSquares - blockSumSquares);
+  const treatmentDf = treatmentCount - 1;
+  const errorDf = (treatmentCount - 1) * (blockCount - 1);
+  const treatmentMeanSquare = treatmentSumSquares / treatmentDf;
+  const errorMeanSquare = errorSumSquares / errorDf;
+  const fStatistic = errorMeanSquare === 0 ? (treatmentMeanSquare === 0 ? 0 : Infinity) : treatmentMeanSquare / errorMeanSquare;
+  const pValue = fSurvivalProbability(fStatistic, treatmentDf, errorDf);
+  const partialEtaSquared = treatmentSumSquares + errorSumSquares > 0 ? treatmentSumSquares / (treatmentSumSquares + errorSumSquares) : 0;
+  const parametricValid = blockCount >= 5;
+
+  const rankedRows = matrix.map(averageRanks);
+  const rankSums = sampleIds.map((_, column) => rankedRows.reduce((sum, row) => sum + row.ranks[column], 0));
+  const uncorrectedFriedman = (12 / (blockCount * treatmentCount * (treatmentCount + 1)))
+    * rankSums.reduce((sum, value) => sum + (value ** 2), 0) - (3 * blockCount * (treatmentCount + 1));
+  const tieDenominator = blockCount * ((treatmentCount ** 3) - treatmentCount);
+  const tieCorrection = 1 - (rankedRows.reduce((sum, row) => sum + row.tieAdjustment, 0) / tieDenominator);
+  const friedmanStatistic = tieCorrection > 0 ? uncorrectedFriedman / tieCorrection : 0;
+  const friedmanP = regularizedGammaQ((treatmentCount - 1) / 2, friedmanStatistic / 2);
+  const friedmanValid = blockCount >= 5;
+  const smallPanelWarning = blockCount < 5 ? ['Fewer than five complete blocks; asymptotic Friedman inference is not reported as valid.'] : [];
+
+  return {
+    method: 'randomized_complete_block_anova',
+    design: 'complete_balanced_repeated_measures',
+    valid_for_inference: parametricValid,
+    reason: parametricValid
+      ? `Every one of ${blockCount} panelists evaluated every sample once for this attribute; panelist is modeled as a block.`
+      : `The ${blockCount} complete panelist blocks are too few for a supported inferential claim; statistics remain exploratory.`,
+    statistic_name: 'F',
+    statistic: fStatistic === Infinity ? null : round(fStatistic),
+    p_value: parametricValid ? round(pValue, 5) : null,
+    effect_size: { name: 'partial_eta_squared', value: round(partialEtaSquared) },
+    assumptions: ['Independent panelists', 'Additive panelist and sample effects', 'Approximately normal residuals', treatmentCount === 2 ? 'Sphericity is automatic for two samples' : 'Sphericity is assumed and not tested'],
+    warnings: [
+      ...(parametricValid ? [] : ['At least five complete panelist blocks are required before p-values are reported.']),
+      ...(treatmentCount > 2 ? ['Review the sphericity assumption before confirmatory use.'] : []),
+    ],
+    f_statistic: fStatistic === Infinity ? null : round(fStatistic),
+    infinite_f: fStatistic === Infinity,
+    df_between: treatmentDf,
+    df_within: errorDf,
+    eta_squared: round(partialEtaSquared),
+    significant_at_0_05: parametricValid && pValue !== null && pValue < 0.05,
+    friedman: {
+      method: 'friedman_test', design: 'complete_balanced_repeated_measures', valid_for_inference: friedmanValid,
+      reason: friedmanValid ? 'Non-parametric repeated-measures comparison using within-panelist ranks.' : 'The chi-square approximation is not considered reliable with fewer than five complete blocks.',
+      statistic_name: 'chi_squared', statistic: round(friedmanStatistic), p_value: friedmanValid ? round(friedmanP, 5) : null,
+      effect_size: { name: 'kendalls_w', value: round(friedmanStatistic / (blockCount * (treatmentCount - 1))) },
+      assumptions: ['Independent panelists', 'Ordinal or continuous responses', 'Complete matched blocks'], warnings: smallPanelWarning,
+      significant_at_0_05: friedmanValid && friedmanP !== null && friedmanP < 0.05,
+    },
+  };
+}
+
 function summarize(values, scale) {
   const average = mean(values);
   return {
@@ -232,10 +386,7 @@ export function analyzeSensoryStudy(study, responses = []) {
   const anova = study.attributes.map(attribute => ({
     attribute_key: attribute.key,
     attribute_label: attribute.label,
-    result: calculateAnova(study.samples.map(sample => ({
-      sample_id: sample.id,
-      values: evaluations.filter(evaluation => evaluation.sample_id === sample.id && Number.isFinite(evaluation.scores[attribute.key])).map(evaluation => evaluation.scores[attribute.key]),
-    }))),
+    result: calculateRepeatedMeasuresInference(study, responses, attribute),
   }));
 
   const correlations = study.attributes.flatMap(rowAttribute => study.attributes.map(columnAttribute => {
@@ -297,7 +448,7 @@ export function analyzeSensoryStudy(study, responses = []) {
     methodology: {
       observation_unit: 'panelist_sample_evaluation',
       confidence_intervals: 'Two-sided 95% Student t intervals.',
-      anova: 'Exploratory one-way fixed-effects ANOVA by sample; validate assumptions before formal conclusions.',
+      inference: 'Complete balanced panels use randomized complete block ANOVA with panelist as block plus a Friedman sensitivity analysis. Incomplete or unbalanced repeated measures remain descriptive only.',
       outliers: 'Tukey 1.5×IQR flags; observations remain included.',
       jar_penalty: 'Mean overall-liking drop versus JAR respondents; actionable threshold requires n≥10, ≥20% affected, and ≥1 point mean drop.',
     },

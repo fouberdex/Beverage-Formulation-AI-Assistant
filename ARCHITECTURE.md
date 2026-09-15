@@ -97,6 +97,11 @@ programs and observations. Observed coverage includes recorded timepoints, while
 validated coverage includes only completed, fully observed programs without a
 declared-limit failure. The label gate never extrapolates beyond recorded days.
 
+Sensory inferential statistics respect the panel structure. A complete balanced
+panel uses randomized complete block ANOVA with panelist as block, accompanied by a
+Friedman rank test. Incomplete or unbalanced repeated measures are returned as
+descriptive-only because the platform does not currently fit mixed-effects models.
+
 ## Persistence model
 
 Supabase is the supported shared/deployed persistence mode. A JSON/in-memory

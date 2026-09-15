@@ -104,6 +104,8 @@ Provider requests use a strict JSON response schema and are validated again with
 
 Label Studio treats shelf life as a requested claim, not a prediction. It compares the requested duration with observations from the exact formulation version. Only a program marked complete, with every declared slot recorded and no observed limit failure, contributes to validated coverage. Drafts remain allowed, but a coverage gap blocks review readiness and is displayed prominently. The comparison never extrapolates beyond recorded timepoints.
 
+Sensory studies model each panelist as a repeated-measures block when every panelist scores every sample once. Complete balanced data receive a randomized complete block ANOVA and a Friedman sensitivity analysis. Incomplete or unbalanced panels remain descriptive: the API and UI withhold p-values and significance claims instead of treating repeated scores as independent observations.
+
 If the key is missing, invalid, rate-limited, or the request times out, generation continues with the local fallback. Provider retention, training, regional processing, and pricing terms are external controls and may change; review the current provider terms before enabling confidential formulation processing.
 
 Do not treat a value embedded through `VITE_API_KEY` as a secret; browser users can inspect it. Production deployments should replace this development API-key option with user authentication and server-side authorization.

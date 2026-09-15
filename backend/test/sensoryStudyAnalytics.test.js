@@ -27,7 +27,7 @@ function response(index, controlLiking, candidateLiking, options = {}) {
   };
 }
 
-test('ANOVA reports a strong between-sample signal with effect size', () => {
+test('independent-groups ANOVA helper remains numerically stable but is not used for repeated panels', () => {
   const result = calculateAnova([
     { values: [8, 8, 9, 9] },
     { values: [4, 4, 5, 5] },
@@ -39,7 +39,7 @@ test('ANOVA reports a strong between-sample signal with effect size', () => {
   assert.ok(fSurvivalProbability(result.f_statistic, result.df_between, result.df_within) < 0.001);
 });
 
-test('study analytics produce profiles, rankings, correlations, segments and diagnostics', () => {
+test('complete balanced studies use panelist-blocked inference and preserve descriptive analytics', () => {
   const responses = [
     response(1, 8, 4), response(2, 9, 5), response(3, 8, 4), response(4, 9, 5),
     response(5, 8, 4), response(6, 9, 5), response(7, 8, 4), response(8, 9, 5),
@@ -51,10 +51,64 @@ test('study analytics produce profiles, rankings, correlations, segments and dia
   assert.equal(analysis.coverage.score_completion_percent, 100);
   assert.equal(analysis.ranking[0].sample_id, 'control');
   assert.equal(analysis.samples.find(sample => sample.sample_id === 'control').overall.mean, 8.5);
-  assert.equal(analysis.anova.find(item => item.attribute_key === 'overall_liking').result.significant_at_0_05, true);
+  const inference = analysis.anova.find(item => item.attribute_key === 'overall_liking').result;
+  assert.equal(inference.method, 'randomized_complete_block_anova');
+  assert.equal(inference.design, 'complete_balanced_repeated_measures');
+  assert.equal(inference.valid_for_inference, true);
+  assert.equal(inference.significant_at_0_05, true);
+  assert.equal(inference.friedman.method, 'friedman_test');
+  assert.equal(inference.friedman.valid_for_inference, true);
   assert.ok(analysis.correlations.some(item => item.row === 'sweetness' && item.column === 'overall_liking' && item.value > 0.9));
   assert.equal(new Set(analysis.segments.map(item => item.segment)).size, 2);
   assert.ok(analysis.quality.flags.some(flag => flag.type === 'rapid_completion'));
+});
+
+test('known complete-block dataset produces the expected Friedman statistic and effect size', () => {
+  const threeSampleStudy = {
+    ...study,
+    attributes: [{ key: 'overall_liking', label: 'Overall liking', category: 'overall' }],
+    samples: [
+      { id: 'a', sample_code: 'A', blind_code: '101', label: 'A' },
+      { id: 'b', sample_code: 'B', blind_code: '202', label: 'B' },
+      { id: 'c', sample_code: 'C', blind_code: '303', label: 'C' },
+    ],
+  };
+  const rows = [[8, 6, 7], [7, 5, 6], [9, 6, 8], [6, 4, 5], [8, 5, 7]];
+  const responses = rows.map((values, index) => ({
+    id: `known-${index}`, panelist_code: `K-${index}`,
+    samples: threeSampleStudy.samples.map((sample, sampleIndex) => ({ sample_id: sample.id, scores: { overall_liking: values[sampleIndex] } })),
+  }));
+  const result = analyzeSensoryStudy(threeSampleStudy, responses).anova[0].result;
+  assert.equal(result.valid_for_inference, true);
+  assert.equal(result.friedman.statistic, 10);
+  assert.equal(result.friedman.p_value, 0.00674);
+  assert.deepEqual(result.friedman.effect_size, { name: 'kendalls_w', value: 1 });
+  assert.equal(result.friedman.significant_at_0_05, true);
+});
+
+test('incomplete repeated measures remain descriptive without a p-value or significance claim', () => {
+  const responses = [response(1, 8, 4), response(2, 9, 5), response(3, 8, 4)];
+  responses[2].samples = responses[2].samples.filter(sample => sample.sample_id === 'control');
+  const analysis = analyzeSensoryStudy(study, responses);
+  const result = analysis.anova.find(item => item.attribute_key === 'overall_liking').result;
+  assert.equal(result.method, 'descriptive_only');
+  assert.equal(result.design, 'incomplete_or_unbalanced_repeated_measures');
+  assert.equal(result.valid_for_inference, false);
+  assert.equal(result.statistic, null);
+  assert.equal(result.p_value, null);
+  assert.equal(result.significant_at_0_05, false);
+  assert.match(result.reason, /mixed-effects model/i);
+});
+
+test('a very small complete panel does not publish an inferential p-value', () => {
+  const analysis = analyzeSensoryStudy(study, [response(1, 8, 4), response(2, 9, 5), response(3, 8, 4)]);
+  const result = analysis.anova.find(item => item.attribute_key === 'overall_liking').result;
+  assert.equal(result.method, 'randomized_complete_block_anova');
+  assert.equal(result.design, 'complete_balanced_repeated_measures');
+  assert.equal(result.valid_for_inference, false);
+  assert.equal(result.p_value, null);
+  assert.equal(result.significant_at_0_05, false);
+  assert.match(result.reason, /too few/i);
 });
 
 test('JAR penalty with no JAR comparison group remains non-actionable', () => {
