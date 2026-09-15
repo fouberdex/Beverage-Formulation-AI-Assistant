@@ -249,6 +249,41 @@ test('desktop workspace navigation can collapse and expand', async ({ page }) =>
   await expect(page.getByRole('button', { name: 'Collapse sidebar' })).toBeVisible();
 });
 
+test('theme preference persists and applies to the document', async ({ page }) => {
+  await useRole(page, 'admin'); await mockApi(page); await page.goto('/');
+  const selector = page.locator('select[aria-label="Color theme"]:visible').first();
+  await selector.selectOption('dark');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.locator('select[aria-label="Color theme"]:visible').first().selectOption('light');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+});
+
+test('mobile navigation traps focus, closes with Escape and restores focus', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await useRole(page, 'admin'); await mockApi(page); await page.goto('/');
+  const trigger = page.getByRole('button', { name: 'Open navigation' });
+  await trigger.click();
+  const drawer = page.getByRole('dialog', { name: 'Application navigation' });
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByRole('button', { name: 'Close navigation' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(drawer).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+});
+
+test('skip link reaches the main workspace and unknown routes have a coherent 404', async ({ page }) => {
+  await useRole(page, 'admin'); await mockApi(page); await page.goto('/');
+  const skip = page.getByRole('link', { name: 'Skip to main content' });
+  await skip.focus();
+  await skip.press('Enter');
+  await expect(page.locator('#main-content')).toBeFocused();
+  await page.goto('/this-route-does-not-exist');
+  await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Return to dashboard' })).toBeVisible();
+});
+
 test('regulatory screening sends a valid JSON body from its primary button', async ({ page }) => {
   await useRole(page, 'admin'); await mockApi(page); await page.goto('/regulatory');
   const requestPromise = page.waitForRequest(request => request.url().includes('/regulatory/formulations/') && request.url().endsWith('/check'));

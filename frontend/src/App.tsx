@@ -4,6 +4,9 @@ import { Home, Package, FlaskConical, Sparkles, Target, Shield, DollarSign, Menu
 import { useAuth } from './auth/AuthContext';
 import AuthPage from './pages/AuthPage';
 import { hasRole, WORKSPACE_ROLES, type UserRole } from './auth/permissions';
+import ThemeSelector from './components/ThemeSelector';
+import ErrorState from './components/ErrorState';
+import { LoadingState } from './components/LoadingState';
 
 // Lazy load pages to catch any import errors
 const Dashboard = React.lazy(() => import('./pages/Dashboard'));
@@ -23,11 +26,7 @@ const RagWorkspacePage = React.lazy(() => import('./pages/RagWorkspacePage'));
 const ProjectsPage = React.lazy(() => import('./pages/ProjectsPage'));
 
 function LoadingFallback() {
-  return (
-    <div role="status" aria-live="polite" className="flex items-center justify-center min-h-screen">
-      <div className="surface-card flex items-center gap-3 text-sm font-semibold text-slate-600"><span className="h-3 w-3 animate-pulse rounded-full bg-sky-500"/>Loading workspace…</div>
-    </div>
-  );
+  return <LoadingState label="Loading workspace…"/>;
 }
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -73,16 +72,26 @@ const navSections = [
 
 function Navigation({ collapsed, setCollapsed }: { collapsed: boolean; setCollapsed: (value: boolean) => void }) {
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
+  const mobileTriggerRef = React.useRef<HTMLButtonElement>(null);
+  const mobilePanelRef = React.useRef<HTMLDivElement>(null);
   const location = useLocation();
   const { profile, session, signOut } = useAuth();
   const visibleSections = navSections.map(section => ({ ...section, items: section.items.filter(item => hasRole(profile?.role, item.roles)) }));
 
   React.useEffect(() => setMobileMenuOpen(false), [location.pathname]);
   React.useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setMobileMenuOpen(false); };
-    window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
-  }, []);
+    if (!mobileMenuOpen) return;
+    const previousOverflow = document.body.style.overflow; document.body.style.overflow = 'hidden';
+    const focusable = () => Array.from(mobilePanelRef.current?.querySelectorAll<HTMLElement>('a[href],button:not([disabled]),select:not([disabled])') || []);
+    window.requestAnimationFrame(() => focusable()[0]?.focus());
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); setMobileMenuOpen(false); mobileTriggerRef.current?.focus(); return; }
+      if (event.key !== 'Tab') return; const items=focusable(); if(!items.length)return; const first=items[0];const last=items[items.length-1];
+      if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => { document.body.style.overflow=previousOverflow; window.removeEventListener('keydown',onKeyDown); };
+  }, [mobileMenuOpen]);
 
   const NavLink = ({ item, mobile = false }: { item: typeof visibleSections[number]['items'][number]; mobile?: boolean }) => {
     const Icon = item.icon;
@@ -109,6 +118,7 @@ function Navigation({ collapsed, setCollapsed }: { collapsed: boolean; setCollap
         </section>)}
       </nav>
       <div className="border-t border-slate-200 p-3">
+        {!collapsed && <div className="mb-2"><ThemeSelector/></div>}
         <Link to="/history" className={`flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-semibold text-slate-600 hover:bg-white ${collapsed ? 'justify-center' : ''}`} title={collapsed ? 'History' : undefined}><History className="h-[18px] w-[18px] text-slate-400"/>{!collapsed && 'History'}</Link>
         <Link to="/account" className={`mt-1 flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-semibold text-slate-600 hover:bg-white ${collapsed ? 'justify-center' : ''}`} title={collapsed ? 'Account' : undefined}><UserRound className="h-[18px] w-[18px] text-slate-500"/>{!collapsed && <span className="min-w-0"><span className="block">Account</span><span className="block max-w-40 truncate text-[10px] font-normal text-slate-600">{session?.user.email}</span></span>}</Link>
         <div className={`mt-2 flex gap-1 ${collapsed ? 'flex-col' : ''}`}>
@@ -119,11 +129,13 @@ function Navigation({ collapsed, setCollapsed }: { collapsed: boolean; setCollap
     </aside>
 
     <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur lg:hidden">
-      <div className="flex items-center justify-between"><Link to="/" className="flex items-center gap-2 font-black"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-700"><FlaskConical className="h-5 w-5 text-white"/></span>BeverageAI <span className="text-sky-700">DZ</span></Link><button type="button" onClick={() => setMobileMenuOpen(!mobileMenuOpen)} aria-expanded={mobileMenuOpen} aria-controls="mobile-navigation" className="rounded-xl border border-slate-200 bg-white p-2 text-slate-600">{mobileMenuOpen ? <X className="h-5 w-5"/> : <Menu className="h-5 w-5"/>}</button></div>
-      {mobileMenuOpen && <nav id="mobile-navigation" aria-label="Mobile navigation" className="mt-3 max-h-[75vh] space-y-4 overflow-y-auto border-t border-slate-100 pt-3">{visibleSections.map(section => <section key={section.label}><p className="mb-1 px-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">{section.label}</p>{section.items.map(item => <NavLink key={item.to} item={item} mobile/>)}</section>)}<div className="grid grid-cols-2 gap-2 border-t pt-3"><Link to="/account" onClick={() => setMobileMenuOpen(false)} className="secondary-button justify-center"><UserRound className="h-4 w-4"/>Account</Link><button onClick={() => void signOut()} className="secondary-button justify-center"><LogOut className="h-4 w-4"/>Sign out</button></div></nav>}
+      <div className="flex items-center justify-between gap-3"><Link to="/" className="flex min-w-0 items-center gap-2 font-black"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-700"><FlaskConical className="h-5 w-5 text-white"/></span><span className="truncate">BeverageAI <span className="text-sky-700">DZ</span></span></Link><div className="flex items-center gap-2"><ThemeSelector compact/><button ref={mobileTriggerRef} type="button" aria-label={mobileMenuOpen?'Close navigation':'Open navigation'} onClick={() => setMobileMenuOpen(!mobileMenuOpen)} aria-expanded={mobileMenuOpen} aria-controls="mobile-navigation" className="rounded-xl border border-slate-200 bg-white p-2 text-slate-600">{mobileMenuOpen ? <X className="h-5 w-5"/> : <Menu className="h-5 w-5"/>}</button></div></div>
     </header>
+    {mobileMenuOpen&&<div className="fixed inset-0 z-[70] lg:hidden"><button type="button" aria-label="Close navigation" className="absolute inset-0 rounded-none bg-slate-950/45" onClick={()=>{setMobileMenuOpen(false);mobileTriggerRef.current?.focus();}}/><div ref={mobilePanelRef} role="dialog" aria-modal="true" aria-label="Application navigation" className="absolute inset-y-0 left-0 w-[min(88vw,22rem)] overflow-y-auto border-r border-slate-200 bg-white p-4 shadow-xl"><div className="mb-5 flex items-center justify-between"><strong className="text-lg text-slate-950">BeverageAI DZ</strong><button type="button" aria-label="Close navigation" className="secondary-button !p-2" onClick={()=>{setMobileMenuOpen(false);mobileTriggerRef.current?.focus();}}><X className="h-5 w-5"/></button></div><nav id="mobile-navigation" aria-label="Mobile navigation" className="space-y-4">{visibleSections.map(section => <section key={section.label}><p className="mb-1 px-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">{section.label}</p>{section.items.map(item => <NavLink key={item.to} item={item} mobile/>)}</section>)}<div className="space-y-2 border-t pt-4"><ThemeSelector/><div className="grid grid-cols-2 gap-2"><Link to="/account" onClick={() => setMobileMenuOpen(false)} className="secondary-button justify-center"><UserRound className="h-4 w-4"/>Account</Link><button onClick={() => void signOut()} className="secondary-button justify-center"><LogOut className="h-4 w-4"/>Sign out</button></div></div></nav></div></div>}
   </>;
 }
+
+function WorkspaceHeader(){const location=useLocation();const item=navSections.flatMap(section=>section.items).find(entry=>entry.to==='/'?location.pathname==='/':location.pathname.startsWith(entry.to));return <header className="sticky top-0 z-40 hidden h-[60px] items-center justify-between border-b border-slate-200 bg-white/90 px-7 backdrop-blur lg:flex"><div><p className="text-[10px] font-bold uppercase tracking-[.16em] text-slate-600">Industrial R&amp;D workspace</p><p className="text-sm font-black text-slate-900">{item?.label||'Workspace'}</p></div><ThemeSelector/></header>}
 
 function RouteFocus() {
   const location = useLocation();
@@ -134,11 +146,7 @@ function RouteFocus() {
 function RoleRoute({ roles, children }: { roles: readonly UserRole[]; children: React.ReactNode }) {
   const { profile } = useAuth();
   if (hasRole(profile?.role, roles)) return <>{children}</>;
-  return <section role="alert" className="surface-card mx-auto mt-12 max-w-xl border-amber-200 bg-amber-50">
-    <p className="eyebrow text-amber-700">Permissions</p><h1 className="mt-1 text-2xl font-black text-slate-950">Access restricted</h1>
-    <p className="mt-2 text-slate-700">Your {profile?.role ?? 'current'} role cannot open this workspace.</p>
-    <Link to="/" className="secondary-button mt-5">Return to dashboard</Link>
-  </section>;
+  return <ErrorState kind="403" title="Access restricted" description={`Your ${profile?.role ?? 'current'} role cannot open this workspace.`}/>;
 }
 
 function App() {
@@ -154,7 +162,7 @@ function App() {
         <div className={`min-h-screen bg-app lg:grid ${sidebarCollapsed ? 'lg:grid-cols-[5rem_minmax(0,1fr)]' : 'lg:grid-cols-[17rem_minmax(0,1fr)]'}`}>
           <a href="#main-content" className="skip-link">Skip to main content</a>
           <Navigation collapsed={sidebarCollapsed} setCollapsed={setSidebarCollapsed}/>
-          <div className="min-w-0"><RouteFocus />
+          <div className="min-w-0"><RouteFocus /><WorkspaceHeader/>
           <main id="main-content" tabIndex={-1} className="mx-auto max-w-[100rem] px-4 py-6 outline-none sm:px-7 lg:px-10 lg:py-8">
             <React.Suspense fallback={<LoadingFallback />}>
               <Routes>
@@ -173,7 +181,7 @@ function App() {
                 <Route path="/rag" element={<RoleRoute roles={WORKSPACE_ROLES}><RagWorkspacePage /></RoleRoute>} />
                 <Route path="/history" element={<HistoryPage />} />
                 <Route path="/account" element={<AccountPage />} />
-                <Route path="*" element={<section className="py-16 text-center"><h1 className="text-3xl font-bold">Page not found</h1><Link to="/" className="mt-4 inline-block text-sky-700 underline">Return home</Link></section>} />
+                <Route path="*" element={<ErrorState kind="404" title="Page not found" description="This workspace route does not exist or is no longer available."/>} />
               </Routes>
             </React.Suspense>
           </main></div>

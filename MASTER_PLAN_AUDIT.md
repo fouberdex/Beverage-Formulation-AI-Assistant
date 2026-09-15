@@ -237,6 +237,25 @@ payloads or searches extracted document text.
 - Model registry, datasets, evaluation, applicability boundaries and uncertainty;
   no predictive claim before validation criteria pass.
 
+## UX hardening — master prompt execution
+
+### Tranche A — foundation and application shell
+
+Implemented and verified on `Industrial-R&D-Platform`. The application now has a
+persisted Light / Dark / System theme preference, semantic surface and text tokens,
+a consistent loading skeleton and coherent 403/404/service states. The desktop
+workspace exposes a compact contextual header, while the mobile navigation behaves
+as a modal drawer with body scroll locking, initial focus, keyboard focus trapping,
+Escape dismissal and focus restoration. The existing skip link now has an explicit
+browser acceptance test. Focus indicators and reduced-motion behavior are defined
+globally. Project-list loading uses the shared skeleton rather than an unstructured
+text placeholder.
+
+Acceptance evidence: the frontend production build succeeds and all 19 Playwright
+tests pass, including automated serious/critical accessibility checks across the
+core workspace, theme persistence, mobile navigation keyboard behavior, skip-link
+focus and the unknown-route fallback. Tranches B–F remain intentionally open.
+
 ## 8. Branch strategy
 
 The active work already uses `Industrial-R&D-Platform`, not `main`. Preserve a

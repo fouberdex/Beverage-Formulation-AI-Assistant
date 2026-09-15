@@ -7,6 +7,7 @@ import type { ProjectStage, RDProject } from '../types';
 import Pagination from '../components/Pagination';
 import StatusMessage from '../components/StatusMessage';
 import ProjectExecutionWorkspace from '../components/ProjectExecutionWorkspace';
+import { CardSkeleton } from '../components/LoadingState';
 
 const stages: Array<{ key: ProjectStage; label: string }> = [
   { key: 'brief', label: 'Brief' }, { key: 'concept', label: 'Concept' },
@@ -143,7 +144,7 @@ export default function ProjectsPage() {
 
     <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(24rem,.72fr)]">
       <section className="space-y-3" aria-label="Project list">
-        {loading && <div className="surface-card text-sm font-semibold text-slate-500">Loading projects…</div>}
+        {loading && <CardSkeleton count={3}/>} 
         {!loading && projects.length === 0 && <div className="surface-card py-14 text-center"><FolderKanban className="mx-auto h-10 w-10 text-sky-400"/><h2 className="mt-4 text-xl font-black">No matching project</h2><p className="mt-1 text-slate-500">Create the first R&D brief or change the filters.</p><button onClick={openCreate} className="primary-button mt-5"><Plus className="h-4 w-4"/> New project</button></div>}
         {projects.map(project => <button type="button" key={project.id} onClick={() => void selectProject(project)} className={`surface-card w-full text-left transition hover:-translate-y-0.5 hover:border-sky-300 ${selected?.id === project.id ? 'border-sky-400 ring-2 ring-sky-100' : ''}`}>
           <div className="flex items-start justify-between gap-4"><div><p className="eyebrow">{project.code}</p><h2 className="mt-1 text-lg font-black text-slate-950">{project.name}</h2><p className="mt-1 line-clamp-2 text-sm text-slate-500">{project.business_objective || 'Business objective to complete'}</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${project.priority === 'critical' ? 'bg-rose-100 text-rose-700' : project.priority === 'high' ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-600'}`}>{project.priority}</span></div>
