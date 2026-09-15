@@ -280,7 +280,11 @@ Acceptance evidence: the production build succeeds; the expanded Playwright suit
 covers the responsive brief, deterministic workflow, exact-version context and
 linked formulation creation. The complete pre-existing functional/accessibility
 suite remains green after resolving selector ambiguity introduced by the additional
-readiness and action displays. Tranches C–F remain open.
+readiness and action displays. A follow-up visual regression from the live project
+form led to explicit vertical field layout/width rules, and brief validation now
+reloads the canonical project response after persistence so a stale draft cannot
+keep the experimental-plan warning visible. The suite now contains 21 passing
+browser tests. Tranches C–F remain open.
 
 ## 8. Branch strategy
 

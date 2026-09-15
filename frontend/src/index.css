@@ -213,6 +213,18 @@ input, select, textarea {
 .status-badge.success { border-color: #a7f3d0; background: #ecfdf5; color: #065f46; }
 .status-badge.danger { border-color: #fecdd3; background: #fff1f2; color: #9f1239; }
 
+.project-brief-dialog { width: min(72rem, calc(100vw - 1rem)); }
+[data-project-brief-form] fieldset { min-width: 0; }
+[data-project-brief-form] label { display: flex; min-width: 0; flex-direction: column; gap: .45rem; color: var(--text-secondary); font-size: .82rem; font-weight: 700; }
+[data-project-brief-form] label > span:not(.sr-only) { display: block; line-height: 1.25rem; }
+[data-project-brief-form] input:not([type='checkbox']):not([type='radio']),
+[data-project-brief-form] select { min-height: 2.75rem; width: 100%; padding: .6rem .75rem; }
+[data-project-brief-form] textarea { width: 100%; padding: .65rem .75rem; line-height: 1.45; resize: vertical; }
+
+@media (min-width: 640px) {
+  .project-brief-dialog { width: min(72rem, calc(100vw - 2rem)); }
+}
+
 #main-content .rounded-md { border-radius: .75rem; }
 #main-content .rounded-lg { border-radius: 1rem; }
 #main-content .shadow,

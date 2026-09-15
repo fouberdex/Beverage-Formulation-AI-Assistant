@@ -41,12 +41,12 @@ export default function ProjectsPage() {
   const [saving, setSaving] = useState(false);
   const pageSize = 12;
 
-  async function loadProjects() {
+  async function loadProjects(refreshSelected = true) {
     setLoading(true); setError('');
     try {
       const response = await projectsAPI.getAll({ search, status, limit: pageSize, offset: (page - 1) * pageSize });
       setProjects(response.data.data); setTotal(response.data.pagination.total);
-      if (selected) {
+      if (refreshSelected && selected) {
         const stillListed = response.data.data.find((item: RDProject) => item.id === selected.id);
         if (stillListed) await selectProject(stillListed);
       }
@@ -104,10 +104,10 @@ export default function ProjectsPage() {
     setSaving(true);
     try {
       const response = selected ? await projectsAPI.update(selected.id, payload) : await projectsAPI.create(payload);
-      const saved = validate ? await projectsAPI.updateBrief(response.data.data.id, brief, true) : response;
+      if (validate) await projectsAPI.updateBrief(response.data.data.id, brief, true);
       setEditing(false); setMessage(validate ? 'Structured brief validated.' : selected ? 'Project and draft brief updated.' : 'Project and draft brief created.');
-      await loadProjects(); await selectProject(response.data.data);
-      if (validate) await selectProject(saved.data.data);
+      await loadProjects(false);
+      await selectProject({ id: response.data.data.id } as RDProject);
     } catch (cause) { setError(getErrorMessage(cause, 'Unable to save the project.')); }
     finally { setSaving(false); }
   }
@@ -183,9 +183,9 @@ export default function ProjectsPage() {
       onRefresh={async () => { await loadProjects(); await selectProject(selected); }}
     /></div>}
 
-    {editing && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/40 p-2 backdrop-blur-sm sm:p-4" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) setEditing(false); }}><section role="dialog" aria-modal="true" aria-labelledby="project-form-title" className="surface-card max-h-[96vh] w-full max-w-6xl overflow-y-auto p-0 sm:max-h-[92vh]">
+    {editing && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/40 p-2 backdrop-blur-sm sm:p-4" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) setEditing(false); }}><section role="dialog" aria-modal="true" aria-labelledby="project-form-title" className="project-brief-dialog surface-card max-h-[96vh] overflow-y-auto p-0 sm:max-h-[92vh]">
       <div className="sticky top-0 z-10 flex items-start justify-between border-b border-slate-200 bg-white/95 px-4 py-4 backdrop-blur sm:px-6"><div><p className="eyebrow">Structured project brief</p><h2 id="project-form-title" className="mt-1 text-2xl font-black text-primary">{selected ? 'Edit project' : 'New R&D project'}</h2><p className="mt-1 text-sm text-secondary">Define the constraints and measurable gates that will govern every downstream version and experiment.</p></div><button type="button" aria-label="Close" disabled={saving} onClick={() => setEditing(false)} className="secondary-button !p-2"><X className="h-4 w-4"/></button></div>
-      <form onSubmit={event => void saveProject(event)} aria-busy={saving} className="space-y-5 p-4 sm:p-6">
+      <form data-project-brief-form onSubmit={event => void saveProject(event)} aria-busy={saving} className="space-y-5 p-4 sm:p-6">
         <ProjectFormSection title="Project identity" description="Stable identity, ownership priority and planning date."><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"><label className="md:col-span-2"><span>Project name</span><input required minLength={2} value={form.name} onChange={event => setForm({...form, name: event.target.value})}/></label><label><span>Project code</span><input value={form.code} onChange={event => setForm({...form, code: event.target.value})} placeholder="Generated if empty"/></label><label><span>Priority</span><select value={form.priority} onChange={event => setForm({...form, priority: event.target.value})}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="critical">Critical</option></select></label><label><span>Due date</span><input type="date" value={form.due_date} onChange={event => setForm({...form, due_date: event.target.value})}/></label></div></ProjectFormSection>
         <ProjectFormSection title="Business brief" description="Commercial intent and product positioning that the technical work must support."><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3"><label><span>Target market</span><input value={form.target_market} onChange={event => setForm({...form, target_market: event.target.value})}/></label><label><span>Beverage category</span><input value={form.beverage_category} onChange={event => setForm({...form, beverage_category: event.target.value})}/></label><label><span>Target claims</span><input value={form.target_claims} onChange={event => setForm({...form, target_claims: event.target.value})} placeholder="Low sugar, natural flavour"/></label><label className="md:col-span-2 xl:col-span-3"><span>Business objective</span><textarea rows={3} value={form.business_objective} onChange={event => setForm({...form, business_objective: event.target.value})}/></label></div></ProjectFormSection>
         <div className="grid gap-5 xl:grid-cols-2">
