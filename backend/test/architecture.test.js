@@ -43,5 +43,6 @@ test('the active server imports the current deterministic engines', async () => 
   const server = await readFile(new URL('../src/server.js', import.meta.url), 'utf8');
   assert.match(server, /from ['"]\.\/services\/formulationIntelligence\.js['"]/);
   assert.match(server, /from ['"]\.\/services\/productPassportEngine\.js['"]/);
+  assert.match(server, /from ['"]\.\/services\/projectStateEngine\.js['"]/);
   assert.doesNotMatch(server, /from ['"]\.\/routes\//);
 });

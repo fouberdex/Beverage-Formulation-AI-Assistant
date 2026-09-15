@@ -209,6 +209,20 @@ export interface RDProjectDecision {
   evidence_refs: string[]; formulation_version_id?: string | null; milestone_id?: string | null; decided_at: string;
 }
 
+export interface RDProjectDevelopmentState {
+  engine_version: string;
+  calculated_at: string;
+  project_id: string;
+  target_formulation_version_id: string | null;
+  current_stage: string;
+  next_controlled_action: { key: string; label: string; detail: string };
+  blockers: Array<{ code: string; message: string; entity_type: string; entity_id: string }>;
+  evidence_chain: Record<string, string[]>;
+  readiness: { status: 'blocked' | 'in_progress' | 'evidence_complete'; score_percent: number; passed_gates: number; total_gates: number; gates: Array<{ key: string; label: string; status: 'pass' | 'missing'; entity_ids: string[] }> };
+  reformulation_required: boolean;
+  release_eligible: boolean;
+}
+
 export interface RDProject {
   id: string;
   code: string;
@@ -232,6 +246,7 @@ export interface RDProject {
   stability_available?: boolean;
   supply_chain_available?: boolean;
   industrial_quality_available?: boolean;
+  development_state?: RDProjectDevelopmentState;
   product_passport?: RDProductPassport;
   events?: RDProjectEvent[];
   traceability?: {

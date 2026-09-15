@@ -45,6 +45,7 @@ import { analyzeStabilityProgram } from './services/stabilityEngine.js';
 import { analyzePackagingConfiguration } from './services/packagingEngine.js';
 import { analyzeProductionTrial, evaluateQcRelease } from './services/industrialQualityEngine.js';
 import { buildProductPassport, structuredWorkspaceSearch } from './services/productPassportEngine.js';
+import { buildProjectDevelopmentState } from './services/projectStateEngine.js';
 import { validateRuntimeConfiguration } from './services/runtimeConfiguration.js';
 import {
   createRequestId,
@@ -749,7 +750,7 @@ server.get(`${apiPrefix}/projects/:id`, async (request, reply) => {
     quality_events: qualityEvents.sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at)),
     capa_actions: capaActions.sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at)),
   };
-  return { data: { ...project, events, execution_available: request.store.featureAvailability?.projectExecution !== false, stability_available: request.store.featureAvailability?.stability !== false, supply_chain_available: request.store.featureAvailability?.supplyChain !== false, industrial_quality_available: request.store.featureAvailability?.industrialQuality !== false, traceability, product_passport: buildProductPassport(project, traceability) }, allowed_transitions: projectTransitions[project.stage] || [] };
+  return { data: { ...project, events, execution_available: request.store.featureAvailability?.projectExecution !== false, stability_available: request.store.featureAvailability?.stability !== false, supply_chain_available: request.store.featureAvailability?.supplyChain !== false, industrial_quality_available: request.store.featureAvailability?.industrialQuality !== false, traceability, development_state: buildProjectDevelopmentState(project, traceability), product_passport: buildProductPassport(project, traceability) }, allowed_transitions: projectTransitions[project.stage] || [] };
 });
 
 server.get(`${apiPrefix}/workspace-search`, async (request) => {

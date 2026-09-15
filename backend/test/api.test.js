@@ -406,6 +406,10 @@ test('R&D projects persist a controlled lifecycle and reject skipped gates', asy
   assert.ok(traced.json().data.product_passport.graph.edges.some(event => event.relation === 'evidence_for'));
   assert.equal(typeof traced.json().data.product_passport.readiness.score_percent, 'number');
   assert.notEqual(traced.json().data.product_passport.readiness.status, 'blocked');
+  assert.equal(traced.json().data.development_state.engine_version, '1.0.0');
+  assert.equal(traced.json().data.development_state.project_id, id);
+  assert.ok(traced.json().data.development_state.target_formulation_version_id);
+  assert.equal(typeof traced.json().data.development_state.release_eligible, 'boolean');
   assert.ok(traced.json().data.events.some(event => event.event_type === 'decision_recorded' && event.actor_id));
   const workspaceSearch = await server.inject({ method: 'GET', url: '/api/v1/workspace-search?q=PROD-CITRUS' });
   assert.equal(workspaceSearch.statusCode, 200);

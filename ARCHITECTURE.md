@@ -65,6 +65,10 @@ entrypoints.
   legal certification.
 - `costing`: deterministic manufacturing scenarios, margin, investment,
   break-even and payback calculations.
+- `project state`: selects one target formulation version and calculates the
+  current stage, next controlled action, blockers, exact-version evidence chain,
+  readiness, reformulation requirement and release eligibility from persisted
+  records only.
 - `ai`: explicit per-user opt-in, quotas, strict output schemas and deterministic
   fallback. AI output cannot replace authoritative calculations.
 - `research intelligence`: isolated patent/publication RAG with evidence gates.

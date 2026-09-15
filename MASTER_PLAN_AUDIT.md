@@ -297,6 +297,15 @@ LLM. Project links carry context into formulation creation, laboratory capture a
 sensory design; linked sensory creation persists the project identifier already
 supported by the backend.
 
+The authoritative backend project response now also exposes a deterministic
+`development_state`. It selects one target formulation version, filters every
+evidence family to that exact version, identifies cross-version QC evidence as a
+blocker, and calculates the next action, readiness, explicit rework requirement
+and release eligibility. This uses the existing persisted trace and requires no
+database change. The browser workflow still uses its earlier local derivation in
+this tranche; replacing that duplicate with `development_state` is the next
+coherence unit.
+
 Acceptance evidence: the production build succeeds; the expanded Playwright suite
 covers the responsive brief, deterministic workflow, exact-version context and
 linked formulation creation. The complete pre-existing functional/accessibility
@@ -305,7 +314,9 @@ readiness and action displays. A follow-up visual regression from the live proje
 form led to explicit vertical field layout/width rules, and brief validation now
 reloads the canonical project response after persistence so a stale draft cannot
 keep the experimental-plan warning visible. The suite now contains 21 passing
-browser tests. Tranches C–F remain open.
+browser tests from that tranche; the current repository suite contains 22 after
+the controlled material-approval coverage added in Stage 1. Tranches C–F remain
+open.
 
 ## 8. Branch strategy
 
