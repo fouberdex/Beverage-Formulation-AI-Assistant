@@ -16,6 +16,10 @@ import {
   sensoryResponses,
   rdProjects,
   rdProjectEvents,
+  rdExperimentalPlans,
+  rdPilotBatches,
+  rdProjectMilestones,
+  rdProjectDecisions,
 } from './mockData.js';
 import { isSupabaseConfigured } from '../services/supabaseClient.js';
 
@@ -35,6 +39,10 @@ const collections = {
   sensoryResponses,
   rdProjects,
   rdProjectEvents,
+  rdExperimentalPlans,
+  rdPilotBatches,
+  rdProjectMilestones,
+  rdProjectDecisions,
 };
 
 let dataFile = defaultDataFile;

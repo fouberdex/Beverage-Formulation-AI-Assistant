@@ -6,6 +6,7 @@ import { getErrorMessage } from '../services/errors';
 import type { ProjectStage, RDProject } from '../types';
 import Pagination from '../components/Pagination';
 import StatusMessage from '../components/StatusMessage';
+import ProjectExecutionWorkspace from '../components/ProjectExecutionWorkspace';
 
 const stages: Array<{ key: ProjectStage; label: string }> = [
   { key: 'brief', label: 'Brief' }, { key: 'concept', label: 'Concept' },
@@ -161,6 +162,11 @@ export default function ProjectsPage() {
         </>}
       </aside>
     </div>
+
+    {selected && <ProjectExecutionWorkspace
+      project={selected}
+      onRefresh={async () => { await loadProjects(); await selectProject(selected); }}
+    />}
 
     {editing && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setEditing(false); }}><section role="dialog" aria-modal="true" aria-labelledby="project-form-title" className="surface-card max-h-[90vh] w-full max-w-2xl overflow-y-auto">
       <div className="flex items-start justify-between"><div><p className="eyebrow">Project brief</p><h2 id="project-form-title" className="mt-1 text-2xl font-black">{selected ? 'Edit project' : 'New R&D project'}</h2></div><button type="button" aria-label="Close" onClick={() => setEditing(false)} className="rounded-xl border border-slate-200 p-2 text-slate-500"><X className="h-4 w-4"/></button></div>

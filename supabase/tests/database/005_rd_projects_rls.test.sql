@@ -1,5 +1,5 @@
 begin;
-select plan(10);
+select plan(17);
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -33,6 +33,18 @@ insert into public.sensory_studies (id, owner_id, status, payload) values
   ('trace-study-a', '77777777-7777-4777-8777-777777777777', 'draft', '{"id":"trace-study-a","project_id":"project-a"}');
 insert into public.sensory_study_formulation_versions (owner_id, study_id, project_id, formulation_version_id, sample_id) values
   ('77777777-7777-4777-8777-777777777777', 'trace-study-a', 'project-a', 'trace-form-a', 'sample-a');
+insert into public.rd_experimental_plans (id, owner_id, project_id, formulation_version_id, status, payload) values
+  ('plan-a', '77777777-7777-4777-8777-777777777777', 'project-a', 'trace-form-a', 'ready', '{"id":"plan-a"}'),
+  ('plan-b', '88888888-8888-4888-8888-888888888888', 'project-b', 'trace-form-b', 'ready', '{"id":"plan-b"}');
+insert into public.rd_pilot_batches (id, owner_id, project_id, experimental_plan_id, formulation_version_id, batch_code, status, payload) values
+  ('pilot-a', '77777777-7777-4777-8777-777777777777', 'project-a', 'plan-a', 'trace-form-a', 'PILOT-A', 'planned', '{"id":"pilot-a"}'),
+  ('pilot-b', '88888888-8888-4888-8888-888888888888', 'project-b', 'plan-b', 'trace-form-b', 'PILOT-B', 'planned', '{"id":"pilot-b"}');
+insert into public.rd_project_milestones (id, owner_id, project_id, stage, status, payload) values
+  ('milestone-a', '77777777-7777-4777-8777-777777777777', 'project-a', 'laboratory', 'planned', '{"id":"milestone-a"}'),
+  ('milestone-b', '88888888-8888-4888-8888-888888888888', 'project-b', 'laboratory', 'planned', '{"id":"milestone-b"}');
+insert into public.rd_project_decisions (id, owner_id, actor_id, project_id, formulation_version_id, milestone_id, outcome, payload) values
+  ('decision-a', '77777777-7777-4777-8777-777777777777', '77777777-7777-4777-8777-777777777777', 'project-a', 'trace-form-a', 'milestone-a', 'go', '{"id":"decision-a"}'),
+  ('decision-b', '88888888-8888-4888-8888-888888888888', '88888888-8888-4888-8888-888888888888', 'project-b', 'trace-form-b', 'milestone-b', 'hold', '{"id":"decision-b"}');
 reset role;
 
 set local role authenticated;
@@ -41,10 +53,17 @@ select results_eq($$ select id from public.rd_projects $$, array['project-a']::t
 select results_eq($$ select id from public.rd_project_events $$, array['event-a']::text[], 'tenant A sees only its project event');
 select results_eq($$ select formulation_version_id from public.laboratory_results $$, array['trace-form-a']::text[], 'tenant A lab result exposes its exact formulation version');
 select results_eq($$ select formulation_version_id from public.sensory_study_formulation_versions $$, array['trace-form-a']::text[], 'tenant A sensory link exposes its exact formulation version');
+select results_eq($$ select id from public.rd_experimental_plans $$, array['plan-a']::text[], 'tenant A sees only its experimental plan');
+select results_eq($$ select id from public.rd_pilot_batches $$, array['pilot-a']::text[], 'tenant A sees only its pilot batch');
+select results_eq($$ select id from public.rd_project_milestones $$, array['milestone-a']::text[], 'tenant A sees only its milestone');
+select results_eq($$ select id from public.rd_project_decisions $$, array['decision-a']::text[], 'tenant A sees only its immutable decision');
 select throws_ok($$ insert into public.rd_projects (id, owner_id, code, name) values
   ('client-project', '77777777-7777-4777-8777-777777777777', 'RD-CLIENT', 'Client project') $$,
   'permission denied for table rd_projects', 'authenticated clients cannot bypass the project API');
 select ok(not has_function_privilege('authenticated', 'public.commit_rd_project_data(jsonb)', 'EXECUTE'), 'authenticated cannot execute project commit RPC');
+select ok(not has_function_privilege('authenticated', 'public.commit_rd_execution_loop(jsonb)', 'EXECUTE'), 'authenticated cannot execute R&D execution commit RPC');
+select throws_ok($$ update public.rd_project_decisions set outcome = 'no_go' where id = 'decision-a' $$,
+  'permission denied for table rd_project_decisions', 'authenticated clients cannot mutate recorded decisions');
 reset role;
 
 set local role service_role;
@@ -57,6 +76,9 @@ select throws_ok($$ insert into public.rd_projects (id, owner_id, code, name) va
 select throws_ok($$ insert into public.sensory_study_formulation_versions (owner_id, study_id, project_id, formulation_version_id, sample_id) values
   ('77777777-7777-4777-8777-777777777777', 'trace-study-a', 'project-a', 'trace-form-b', 'cross-version') $$,
   '23503', null, 'sensory study cannot link a formulation version from another project or owner');
+select throws_ok($$ insert into public.rd_experimental_plans (id, owner_id, project_id, formulation_version_id, status) values
+  ('cross-plan', '77777777-7777-4777-8777-777777777777', 'project-a', 'trace-form-b', 'draft') $$,
+  '23503', null, 'experimental plan cannot link a formulation version from another project or owner');
 reset role;
 
 set local role authenticated;

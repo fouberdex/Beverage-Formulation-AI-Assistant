@@ -116,6 +116,13 @@ approved formulation versions, and carries the project plus exact formulation
 version through laboratory and sensory records. Existing standalone records remain
 valid through nullable additive links.
 
+Tranche 3 closes the first operational project loop: a formulator can define a
+controlled experimental plan against an exact formulation version, schedule and
+track pilot batches, manage measurable lifecycle milestones, and record append-only
+Go/No-Go decisions with evidence references. All four registers are owner/project
+scoped, protected by composite foreign keys and RLS, and feed the attributed project
+timeline. Full deterministic DOE generation and statistics remain Phase 3 work.
+
 ### Phase 2 — formulation intelligence
 
 - Build a deterministic constraint schema and feasibility solver.

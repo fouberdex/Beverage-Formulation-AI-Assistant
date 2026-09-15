@@ -26,6 +26,7 @@ test('Supabase migrations form an ordered, complete database workflow', async ()
     '20260825202029_sensory_studies_and_responses.sql',
     '20260914180000_rd_projects_foundation.sql',
     '20260914230000_rd_traceability_spine.sql',
+    '20260914234500_rd_execution_loop.sql',
   ]);
 
   const bootstrap = await readFile(
@@ -94,6 +95,18 @@ test('R&D traceability migration links exact formulation versions to lab and sen
   assert.match(migration, /foreign key \(owner_id, project_id, formulation_version_id\)/);
   assert.match(migration, /deferrable initially deferred/g);
   assert.match(migration, /commit_rd_traceability/);
+});
+
+test('R&D execution migration persists controlled plans, pilot batches, milestones and immutable decisions', async () => {
+  const migration = await readFile(new URL('migrations/20260914234500_rd_execution_loop.sql', supabaseDirectory), 'utf8');
+  assert.match(migration, /create table public\.rd_experimental_plans/);
+  assert.match(migration, /create table public\.rd_pilot_batches/);
+  assert.match(migration, /create table public\.rd_project_milestones/);
+  assert.match(migration, /create table public\.rd_project_decisions/);
+  assert.match(migration, /foreign key \(owner_id, project_id, formulation_version_id\)/g);
+  assert.match(migration, /on conflict \(id\) do nothing/);
+  assert.match(migration, /enable row level security/g);
+  assert.match(migration, /revoke all on function public\.commit_rd_execution_loop\(jsonb\) from public, anon, authenticated/);
 });
 
 test('Supabase seed data contains shared catalog rows only', async () => {

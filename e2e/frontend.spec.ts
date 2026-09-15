@@ -8,7 +8,7 @@ const formulation = (index: number) => ({
   total_sugar_per_100ml: 7, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', ingredients: [],
 });
 
-async function mockApi(page: Page, options: { formulationStatus?: number } = {}) {
+async function mockApi(page: Page, options: { formulationStatus?: number; withProject?: boolean } = {}) {
   await page.route('**/api/v1/**', async (route: Route) => {
     const url = new URL(route.request().url());
     const path = url.pathname.replace('/api/v1', '');
@@ -16,7 +16,9 @@ async function mockApi(page: Page, options: { formulationStatus?: number } = {})
     if (path === '/ingredients/meta/stats') return reply({ data: { total_ingredients: 42 } });
     if (path === '/ingredients/meta/categories') return reply({ data: ['base', 'flavor'] });
     if (path === '/ingredients') return reply({ data: [], pagination: { total: 0, limit: 25, offset: 0, has_more: false } });
-    if (path === '/projects') return reply({ data: [], stages: ['brief', 'concept', 'formulation', 'laboratory', 'sensory', 'validation', 'industrialization', 'launched'], pagination: { total: 0, limit: 12, offset: 0, has_more: false } });
+    const project = { id: 'project-1', code: 'RD-2026-001', name: 'Citrus launch', business_objective: 'Validate a stable citrus beverage for the Algerian market.', target_market: 'Algeria', beverage_category: 'carbonated soft drink', target_claims: ['low sugar'], brief_status: 'validated', ingredient_constraints: { required: ['water'], forbidden: [], notes: '' }, cost_objectives: { currency: 'DZD', max_cost_per_liter: 60 }, nutrition_objectives: {}, regulatory_constraints: { markets: ['Algeria'], certifications: [], forbidden_additives: [] }, success_criteria: ['Overall liking at least 7/10'], priority: 'high', stage: 'laboratory', status: 'active', event_count: 2, created_at: '2026-09-15T00:00:00Z', updated_at: '2026-09-15T00:00:00Z' };
+    if (path === '/projects/project-1') return reply({ data: { ...project, execution_available: true, events: [{ id: 'event-1', project_id: project.id, event_type: 'experimental_plan_created', details: { plan_id: 'plan-1' }, created_at: '2026-09-15T09:00:00Z' }], traceability: { formulations: [{ ...formulation(1), locked_at: null }], laboratory_results: [], sensory_studies: [], experimental_plans: [{ id: 'plan-1', project_id: project.id, formulation_version_id: 'form-1', name: 'Citrus pilot', objective: 'Validate pilot stability.', hypothesis: 'The pilot remains stable.', status: 'ready', planned_runs: 1, protocol: { method: 'Controlled pilot', variables: ['scale'], controls: ['reference'], procedure_steps: ['Mix and fill'], acceptance_criteria: ['pH in target'] }, created_at: '2026-09-15T09:00:00Z', updated_at: '2026-09-15T09:00:00Z' }], pilot_batches: [{ id: 'batch-1', project_id: project.id, experimental_plan_id: 'plan-1', formulation_version_id: 'form-1', batch_code: 'PILOT-001', batch_size_liters: 20, status: 'planned', actual_quantities: [], procedure_notes: '', deviations: [], observations: '', conclusion: '', created_at: '2026-09-15T09:00:00Z', updated_at: '2026-09-15T09:00:00Z' }], milestones: [], decisions: [] } }, allowed_transitions: ['formulation', 'sensory'] });
+    if (path === '/projects') return reply({ data: options.withProject ? [project] : [], stages: ['brief', 'concept', 'formulation', 'laboratory', 'sensory', 'validation', 'industrialization', 'launched'], pagination: { total: options.withProject ? 1 : 0, limit: 12, offset: 0, has_more: false } });
     if (path === '/ai/governance') return reply({ data: {
       provider: { provider: 'google-gemini', model: 'test-model', configured: true },
       privacy: { external_processing_enabled: false, include_formulation_name: false, prompt_or_response_content_stored: false },
@@ -138,6 +140,27 @@ test('new production workspaces are reachable and expose their primary controls'
   await expect(page.getByText('Packaging & conversion')).toBeVisible();
   await page.goto('/rag');
   await expect(page.getByRole('heading', { name: 'Patent & Publication RAG' })).toBeVisible();
+});
+
+test('project execution workspace exposes protocols, pilot batches, gates, decisions and timeline', async ({ page }) => {
+  await useRole(page, 'admin'); await mockApi(page, { withProject: true }); await page.goto('/projects');
+  await page.getByRole('button', { name: /Citrus launch/ }).click();
+  await expect(page.getByRole('heading', { name: 'R&D experimental workspace' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Experimental plans' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('button', { name: 'New plan' })).toBeVisible();
+  await page.getByRole('tab', { name: 'Pilot batches' }).click();
+  await expect(page.getByText('Pilot batch execution')).toBeVisible();
+  await page.getByRole('button', { name: 'Complete record' }).click();
+  await page.getByRole('textbox', { name: 'Actual weights and material lots' }).fill('Water | 18 | l | WATER-2409');
+  const batchRequest = page.waitForRequest(request => request.url().includes('/pilot-batches/batch-1') && request.method() === 'PUT');
+  await page.getByRole('button', { name: 'Save execution record' }).click();
+  expect((await batchRequest).postDataJSON().actual_quantities[0]).toEqual({ material_name: 'Water', quantity: 18, unit: 'l', lot_code: 'WATER-2409' });
+  await page.getByRole('tab', { name: 'Milestones' }).click();
+  await expect(page.getByRole('button', { name: 'New milestone' })).toBeVisible();
+  await page.getByRole('tab', { name: 'Go / No-Go' }).click();
+  await expect(page.getByRole('button', { name: 'Record decision' })).toBeVisible();
+  await page.getByRole('tab', { name: 'Timeline' }).click();
+  await expect(page.getByText('experimental plan created')).toBeVisible();
 });
 
 test('Label Studio tabs expose complete recipe, builder, live and report workflows', async ({ page }) => {

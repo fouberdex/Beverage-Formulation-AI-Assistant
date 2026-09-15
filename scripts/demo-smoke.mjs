@@ -82,6 +82,33 @@ try {
   await api(`/formulations/${formulation.id}/approve`, { method: 'POST', body: { note: 'Automated technical approval before demonstration' } });
   ok('Formulation create, read and update persistence');
 
+  const experimentalPlan = (await api(`/projects/${project.id}/experimental-plans`, { method: 'POST', body: {
+    name: 'Demo controlled pilot', objective: 'Prove the complete project execution loop before demonstration.',
+    hypothesis: 'The approved formulation will meet the documented pH and acceptance limits at pilot scale.',
+    formulation_version_id: formulation.id, planned_runs: 1, status: 'ready',
+    protocol: { method: 'Controlled comparative pilot', variables: ['pilot scale'], controls: ['approved formulation'],
+      procedure_steps: ['Weigh the approved formula', 'Mix, process and fill'],
+      acceptance_criteria: ['pH remains between 2.8 and 3.5', 'Overall acceptance reaches at least 7/10'] },
+  } })).data;
+  const pilotBatch = (await api(`/projects/${project.id}/experimental-plans/${experimentalPlan.id}/pilot-batches`, { method: 'POST', body: {
+    batch_code: `PILOT-${suffix}`.slice(0, 76), formulation_version_id: formulation.id, batch_size_liters: 20,
+    status: 'planned', actual_quantities: [], procedure_notes: 'Automated smoke test protocol', deviations: [], observations: '', conclusion: '',
+  } })).data;
+  await api(`/projects/${project.id}/pilot-batches/${pilotBatch.id}`, { method: 'PUT', body: {
+    status: 'completed', produced_at: new Date().toISOString(),
+    actual_quantities: [{ material_name: water.name, ingredient_id: water.id, quantity: 18, unit: 'l', lot_code: 'SMOKE-WATER-LOT' }],
+    deviations: [], observations: 'Automated pilot execution record completed.', conclusion: 'Ready for laboratory testing.',
+  } });
+  const milestone = (await api(`/projects/${project.id}/milestones`, { method: 'POST', body: {
+    title: 'Demo evidence gate', stage: 'laboratory', status: 'planned', responsible: 'Automated smoke test',
+    success_criteria: ['Protocol, pilot batch, laboratory and sensory evidence are linked'],
+  } })).data;
+  await api(`/projects/${project.id}/decisions`, { method: 'POST', body: {
+    title: 'Demo execution decision', outcome: 'go', rationale: 'The automated workflow created every required traceability object.',
+    evidence_refs: [pilotBatch.batch_code], formulation_version_id: formulation.id, milestone_id: milestone.id,
+  } });
+  ok('Experimental plan, pilot batch, milestone and immutable decision persistence');
+
   const lab = (await api(`/formulations/${formulation.id}/laboratory-results`, { method: 'POST', body: {
     batch_code: 'SMOKE-LAB-1', tested_at: new Date().toISOString(), measurements: { ph: 3.2, brix: 10.1 },
     sensory: { appearance: 8, aroma: 7, taste: 8, mouthfeel: 7, overall_acceptance: 8 }, notes: 'Automated demo readiness check',
@@ -108,7 +135,9 @@ try {
   ok('Sensory study, panel response and analytics persistence');
 
   const traceability = (await api(`/projects/${project.id}`)).data.traceability;
-  if (traceability.formulations.length !== 1 || traceability.laboratory_results.length < 2 || traceability.sensory_studies.length !== 1) {
+  if (traceability.formulations.length !== 1 || traceability.laboratory_results.length < 2 || traceability.sensory_studies.length !== 1
+    || traceability.experimental_plans.length !== 1 || traceability.pilot_batches.length !== 1
+    || traceability.milestones.length !== 1 || traceability.decisions.length !== 1) {
     throw new Error('Cross-workspace project traceability is incomplete');
   }
   ok('Project → formulation version → laboratory → sensory traceability');
@@ -152,7 +181,7 @@ try {
     const removed = await admin.auth.admin.deleteUser(userId);
     if (removed.error) console.error(`Cleanup warning: ${removed.error.message}`);
     else {
-      const tables = ['rd_projects', 'rd_project_events', 'formulations', 'laboratory_results', 'sensory_studies', 'sensory_responses', 'compliance_records', 'batch_cost_calculations', 'target_generation_runs', 'ai_variants'];
+      const tables = ['rd_projects', 'rd_project_events', 'rd_experimental_plans', 'rd_pilot_batches', 'rd_project_milestones', 'rd_project_decisions', 'formulations', 'laboratory_results', 'sensory_studies', 'sensory_responses', 'compliance_records', 'batch_cost_calculations', 'target_generation_runs', 'ai_variants'];
       const leftovers = [];
       for (const table of tables) {
         const { count, error } = await admin.from(table).select('*', { head: true, count: 'exact' }).eq('owner_id', userId);

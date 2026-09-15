@@ -16,6 +16,10 @@ const COLLECTION_NAMES = [
   'sensoryResponses',
   'rdProjects',
   'rdProjectEvents',
+  'rdExperimentalPlans',
+  'rdPilotBatches',
+  'rdProjectMilestones',
+  'rdProjectDecisions',
 ];
 
 function unpackPayload(row, ownershipColumn = 'owner_id') {
@@ -80,12 +84,12 @@ export function buildChangeSet(store, auditEvent = null) {
 export async function loadRequestStore(ownerId, options = {}) {
   const mode = options.mode || getStorageConfiguration().mode;
   if (mode !== 'supabase') {
-    return { ...getLocalCollections(), featureAvailability: { sensory: true, projects: true }, snapshot: null };
+    return { ...getLocalCollections(), featureAvailability: { sensory: true, projects: true, projectExecution: true }, snapshot: null };
   }
   if (!ownerId) throw new Error('An authenticated owner is required for Supabase data access');
 
   const client = options.client || getSupabaseAdmin();
-  const [ingredientRows, formulationRows, variantRows, complianceRows, batchRows, pricingRows, targetRows, laboratoryRows, learningRows, sensoryStudyRows, sensoryResponseRows, projectRows, projectEventRows] = await Promise.all([
+  const [ingredientRows, formulationRows, variantRows, complianceRows, batchRows, pricingRows, targetRows, laboratoryRows, learningRows, sensoryStudyRows, sensoryResponseRows, projectRows, projectEventRows, experimentalPlanRows, pilotBatchRows, milestoneRows, decisionRows] = await Promise.all([
     fetchAll(() => client.from('ingredients').select('id,code,name,category,is_active,payload')),
     fetchAll(() => client.from('formulations').select('payload,owner_id').eq('owner_id', ownerId)),
     fetchAll(() => client.from('ai_variants').select('payload,owner_id').eq('owner_id', ownerId)),
@@ -99,6 +103,10 @@ export async function loadRequestStore(ownerId, options = {}) {
     fetchFeatureCollection(() => client.from('sensory_responses').select('payload,owner_id').eq('owner_id', ownerId)),
     fetchFeatureCollection(() => client.from('rd_projects').select('payload,owner_id').eq('owner_id', ownerId)),
     fetchFeatureCollection(() => client.from('rd_project_events').select('payload,owner_id').eq('owner_id', ownerId)),
+    fetchFeatureCollection(() => client.from('rd_experimental_plans').select('payload,owner_id').eq('owner_id', ownerId)),
+    fetchFeatureCollection(() => client.from('rd_pilot_batches').select('payload,owner_id').eq('owner_id', ownerId)),
+    fetchFeatureCollection(() => client.from('rd_project_milestones').select('payload,owner_id').eq('owner_id', ownerId)),
+    fetchFeatureCollection(() => client.from('rd_project_decisions').select('payload,owner_id').eq('owner_id', ownerId)),
   ]);
 
   // A newly connected Supabase project can have no shared catalog rows until
@@ -134,9 +142,14 @@ export async function loadRequestStore(ownerId, options = {}) {
     sensoryResponses: sensoryResponseRows.rows.map(row => unpackPayload(row)),
     rdProjects: projectRows.rows.map(row => unpackPayload(row)),
     rdProjectEvents: projectEventRows.rows.map(row => unpackPayload(row)),
+    rdExperimentalPlans: experimentalPlanRows.rows.map(row => unpackPayload(row)),
+    rdPilotBatches: pilotBatchRows.rows.map(row => unpackPayload(row)),
+    rdProjectMilestones: milestoneRows.rows.map(row => unpackPayload(row)),
+    rdProjectDecisions: decisionRows.rows.map(row => unpackPayload(row)),
     featureAvailability: {
       sensory: sensoryStudyRows.available && sensoryResponseRows.available,
       projects: projectRows.available && projectEventRows.available,
+      projectExecution: experimentalPlanRows.available && pilotBatchRows.available && milestoneRows.available && decisionRows.available,
     },
   };
   store.using_bundled_ingredient_catalog = storedIngredients.length === 0;

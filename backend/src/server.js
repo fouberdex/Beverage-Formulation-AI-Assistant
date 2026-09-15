@@ -422,6 +422,55 @@ const projectInputSchema = z.object({
   regulatory_constraints: projectBriefFields.regulatory_constraints.optional(),
   success_criteria: z.array(z.string().trim().min(3).max(300)).max(20).optional(),
 });
+const experimentalPlanSchema = z.object({
+  name: z.string().trim().min(3).max(160),
+  objective: z.string().trim().min(10).max(2000),
+  hypothesis: z.string().trim().min(10).max(2000),
+  formulation_version_id: z.string().trim().min(1),
+  status: z.enum(['draft', 'ready', 'running', 'completed', 'cancelled']).default('draft'),
+  planned_runs: z.coerce.number().int().min(1).max(100).default(1),
+  due_date: z.string().date().nullable().optional(),
+  protocol: z.object({
+    method: z.string().trim().min(3).max(200),
+    variables: z.array(z.string().trim().min(1).max(160)).min(1).max(30),
+    controls: z.array(z.string().trim().min(1).max(200)).max(20).default([]),
+    procedure_steps: z.array(z.string().trim().min(3).max(500)).min(1).max(50),
+    acceptance_criteria: z.array(z.string().trim().min(3).max(300)).min(1).max(30),
+  }),
+});
+const pilotBatchSchema = z.object({
+  batch_code: z.string().trim().min(2).max(80),
+  formulation_version_id: z.string().trim().min(1),
+  batch_size_liters: z.coerce.number().finite().positive().max(100000),
+  status: z.enum(['planned', 'in_progress', 'completed', 'rejected']).default('planned'),
+  scheduled_at: z.string().datetime().nullable().optional(),
+  produced_at: z.string().datetime().nullable().optional(),
+  actual_quantities: z.array(z.object({
+    material_name: z.string().trim().min(1).max(160), ingredient_id: z.string().trim().min(1).optional(), quantity: z.coerce.number().finite().nonnegative(),
+    unit: z.enum(['g', 'kg', 'ml', 'l']), lot_code: z.string().trim().max(100).default(''),
+  })).max(80).default([]),
+  procedure_notes: z.string().trim().max(5000).default(''),
+  deviations: z.array(z.string().trim().min(2).max(500)).max(30).default([]),
+  observations: z.string().trim().max(5000).default(''),
+  conclusion: z.string().trim().max(3000).default(''),
+});
+const milestoneSchema = z.object({
+  title: z.string().trim().min(3).max(160),
+  description: z.string().trim().max(1500).default(''),
+  stage: z.enum(projectStages),
+  status: z.enum(['planned', 'in_progress', 'completed', 'blocked']).default('planned'),
+  due_date: z.string().date().nullable().optional(),
+  responsible: z.string().trim().max(120).default(''),
+  success_criteria: z.array(z.string().trim().min(3).max(300)).min(1).max(20),
+});
+const projectDecisionSchema = z.object({
+  title: z.string().trim().min(3).max(160),
+  outcome: z.enum(['go', 'no_go', 'hold', 'rework']),
+  rationale: z.string().trim().min(10).max(3000),
+  evidence_refs: z.array(z.string().trim().min(1).max(200)).min(1).max(30),
+  formulation_version_id: z.string().trim().min(1).nullable().optional(),
+  milestone_id: z.string().trim().min(1).nullable().optional(),
+});
 
 function ensureProjectStorage(request, reply) {
   if (request.store.featureAvailability?.projects !== false) return true;
@@ -429,8 +478,18 @@ function ensureProjectStorage(request, reply) {
   return false;
 }
 
+function ensureProjectExecutionStorage(request, reply) {
+  if (request.store.featureAvailability?.projectExecution !== false) return true;
+  reply.code(503).send({ error: 'Project execution storage is not installed. Apply the pending Supabase R&D execution migration.' });
+  return false;
+}
+
 function ownedProject(request, id) {
   return request.store.rdProjects.find(project => project.id === id && isOwnedByRequest(request, project));
+}
+
+function projectFormulationVersion(request, project, formulationVersionId) {
+  return accessibleFormulations(request).find(item => item.id === formulationVersionId && item.project_id === project.id) || null;
 }
 
 function addProjectEvent(request, project, eventType, details = {}) {
@@ -488,10 +547,18 @@ server.get(`${apiPrefix}/projects/:id`, async (request, reply) => {
   const formulationIds = new Set(formulations.map(item => item.id));
   const laboratoryResults = request.store.laboratoryResults.filter(item => formulationIds.has(item.formulation_id) && !item.deleted_at && isOwnedByRequest(request, item));
   const sensoryStudies = request.store.sensoryStudies.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
-  return { data: { ...project, events, traceability: {
+  const experimentalPlans = request.store.rdExperimentalPlans.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
+  const pilotBatches = request.store.rdPilotBatches.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
+  const milestones = request.store.rdProjectMilestones.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
+  const decisions = request.store.rdProjectDecisions.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
+  return { data: { ...project, events, execution_available: request.store.featureAvailability?.projectExecution !== false, traceability: {
     formulations: formulations.map(item => ({ id: item.id, code: item.code, name: item.name, version: item.version, status: item.status, locked_at: item.locked_at || null })),
     laboratory_results: laboratoryResults.map(item => ({ id: item.id, formulation_version_id: item.formulation_id, batch_code: item.batch_code, tested_at: item.tested_at })),
     sensory_studies: sensoryStudies.map(item => ({ id: item.id, name: item.name, status: item.status, formulation_version_ids: item.samples.map(sample => sample.formulation_id).filter(Boolean) })),
+    experimental_plans: experimentalPlans.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at)),
+    pilot_batches: pilotBatches.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at)),
+    milestones: milestones.sort((a, b) => String(a.due_date || '').localeCompare(String(b.due_date || ''))),
+    decisions: decisions.sort((a, b) => new Date(b.decided_at) - new Date(a.decided_at)),
   } }, allowed_transitions: projectTransitions[project.stage] || [] };
 });
 
@@ -567,6 +634,108 @@ server.post(`${apiPrefix}/projects/:id/transition`, async (request, reply) => {
   project.updated_at = new Date().toISOString();
   addProjectEvent(request, project, 'stage_transition', { from, to: input.stage, note: input.note });
   return { data: project, allowed_transitions: projectTransitions[project.stage] || [] };
+});
+
+server.post(`${apiPrefix}/projects/:id/experimental-plans`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply)) return;
+  if (!ensureProjectExecutionStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  if (project.brief_status !== 'validated') return reply.code(409).send({ error: 'Validate the structured R&D brief before creating an experimental plan' });
+  const input = experimentalPlanSchema.parse(request.body);
+  if (!projectFormulationVersion(request, project, input.formulation_version_id)) return reply.code(400).send({ error: 'The experimental plan must reference an exact formulation version from this project' });
+  const timestamp = new Date().toISOString();
+  const plan = { id: generateId(), owner_id: request.user?.id, project_id: project.id, ...input, created_at: timestamp, updated_at: timestamp };
+  request.store.rdExperimentalPlans.push(plan);
+  addProjectEvent(request, project, 'experimental_plan_created', { plan_id: plan.id, formulation_version_id: plan.formulation_version_id, status: plan.status });
+  return reply.code(201).send({ data: plan });
+});
+
+server.put(`${apiPrefix}/projects/:id/experimental-plans/:planId`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply)) return;
+  if (!ensureProjectExecutionStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const plan = request.store.rdExperimentalPlans.find(item => item.id === request.params.planId && item.project_id === project.id && isOwnedByRequest(request, item));
+  if (!plan) return reply.code(404).send({ error: 'Experimental plan not found' });
+  const updates = experimentalPlanSchema.partial().parse(request.body);
+  const versionId = updates.formulation_version_id || plan.formulation_version_id;
+  if (!projectFormulationVersion(request, project, versionId)) return reply.code(400).send({ error: 'The experimental plan must reference an exact formulation version from this project' });
+  Object.assign(plan, updates, { updated_at: new Date().toISOString() });
+  addProjectEvent(request, project, 'experimental_plan_updated', { plan_id: plan.id, fields: Object.keys(updates), status: plan.status });
+  return { data: plan };
+});
+
+server.post(`${apiPrefix}/projects/:id/experimental-plans/:planId/pilot-batches`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply)) return;
+  if (!ensureProjectExecutionStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const plan = request.store.rdExperimentalPlans.find(item => item.id === request.params.planId && item.project_id === project.id && isOwnedByRequest(request, item));
+  if (!plan) return reply.code(404).send({ error: 'Experimental plan not found' });
+  const input = pilotBatchSchema.parse(request.body);
+  if (input.formulation_version_id !== plan.formulation_version_id || !projectFormulationVersion(request, project, input.formulation_version_id)) {
+    return reply.code(400).send({ error: 'The pilot batch must use the exact formulation version defined by its experimental plan' });
+  }
+  if (request.store.rdPilotBatches.some(item => item.project_id === project.id && item.batch_code.toLowerCase() === input.batch_code.toLowerCase())) return reply.code(409).send({ error: 'Pilot batch code already exists in this project' });
+  const timestamp = new Date().toISOString();
+  const batch = { id: generateId(), owner_id: request.user?.id, project_id: project.id, experimental_plan_id: plan.id, ...input, created_at: timestamp, updated_at: timestamp };
+  request.store.rdPilotBatches.push(batch);
+  addProjectEvent(request, project, 'pilot_batch_created', { plan_id: plan.id, batch_id: batch.id, batch_code: batch.batch_code, formulation_version_id: batch.formulation_version_id });
+  return reply.code(201).send({ data: batch });
+});
+
+server.put(`${apiPrefix}/projects/:id/pilot-batches/:batchId`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply)) return;
+  if (!ensureProjectExecutionStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const batch = request.store.rdPilotBatches.find(item => item.id === request.params.batchId && item.project_id === project.id && isOwnedByRequest(request, item));
+  if (!batch) return reply.code(404).send({ error: 'Pilot batch not found' });
+  const updates = pilotBatchSchema.omit({ formulation_version_id: true, batch_code: true }).partial().parse(request.body);
+  Object.assign(batch, updates, { updated_at: new Date().toISOString() });
+  addProjectEvent(request, project, 'pilot_batch_updated', { batch_id: batch.id, batch_code: batch.batch_code, fields: Object.keys(updates), status: batch.status });
+  return { data: batch };
+});
+
+server.post(`${apiPrefix}/projects/:id/milestones`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply)) return;
+  if (!ensureProjectExecutionStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const input = milestoneSchema.parse(request.body);
+  const timestamp = new Date().toISOString();
+  const milestone = { id: generateId(), owner_id: request.user?.id, project_id: project.id, ...input, created_at: timestamp, updated_at: timestamp };
+  request.store.rdProjectMilestones.push(milestone);
+  addProjectEvent(request, project, 'milestone_created', { milestone_id: milestone.id, title: milestone.title, due_date: milestone.due_date, status: milestone.status });
+  return reply.code(201).send({ data: milestone });
+});
+
+server.put(`${apiPrefix}/projects/:id/milestones/:milestoneId`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply)) return;
+  if (!ensureProjectExecutionStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const milestone = request.store.rdProjectMilestones.find(item => item.id === request.params.milestoneId && item.project_id === project.id && isOwnedByRequest(request, item));
+  if (!milestone) return reply.code(404).send({ error: 'Milestone not found' });
+  const updates = milestoneSchema.partial().parse(request.body);
+  Object.assign(milestone, updates, { updated_at: new Date().toISOString() });
+  addProjectEvent(request, project, 'milestone_updated', { milestone_id: milestone.id, fields: Object.keys(updates), status: milestone.status });
+  return { data: milestone };
+});
+
+server.post(`${apiPrefix}/projects/:id/decisions`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply)) return;
+  if (!ensureProjectExecutionStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const input = projectDecisionSchema.parse(request.body);
+  if (input.formulation_version_id && !projectFormulationVersion(request, project, input.formulation_version_id)) return reply.code(400).send({ error: 'The decision references a formulation version outside this project' });
+  if (input.milestone_id && !request.store.rdProjectMilestones.some(item => item.id === input.milestone_id && item.project_id === project.id && isOwnedByRequest(request, item))) return reply.code(400).send({ error: 'The decision references a milestone outside this project' });
+  const decision = { id: generateId(), owner_id: request.user?.id, actor_id: request.user?.id, project_id: project.id, ...input, decided_at: new Date().toISOString() };
+  request.store.rdProjectDecisions.push(decision);
+  addProjectEvent(request, project, 'decision_recorded', { decision_id: decision.id, title: decision.title, outcome: decision.outcome, formulation_version_id: decision.formulation_version_id || null, milestone_id: decision.milestone_id || null });
+  return reply.code(201).send({ data: decision });
 });
 
 server.put(`${apiPrefix}/auth/profile`, async (request) => {

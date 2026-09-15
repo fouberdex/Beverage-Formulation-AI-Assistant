@@ -158,10 +158,61 @@ test('R&D projects persist a controlled lifecycle and reject skipped gates', asy
   assert.equal(study.statusCode, 201);
   assert.equal(study.json().data.project_id, id);
 
+  const planResponse = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/experimental-plans`, payload: {
+    name: 'Citrus stability pilot', objective: 'Confirm physical and sensory stability before the validation gate.',
+    hypothesis: 'The selected formulation remains within the agreed pH and sensory limits after pilot processing.',
+    formulation_version_id: version.id, planned_runs: 2, status: 'ready', due_date: '2026-10-15',
+    protocol: { method: 'Controlled comparative pilot', variables: ['storage temperature'], controls: ['approved reference'],
+      procedure_steps: ['Prepare the exact formulation version', 'Pasteurize, fill and retain samples'],
+      acceptance_criteria: ['pH remains between 2.8 and 3.5', 'Overall liking remains at least 7/10'] },
+  } });
+  assert.equal(planResponse.statusCode, 201);
+  assert.equal(planResponse.json().data.formulation_version_id, version.id);
+  const plan = planResponse.json().data;
+
+  const batchResponse = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/experimental-plans/${plan.id}/pilot-batches`, payload: {
+    batch_code: 'PILOT-CITRUS-001', formulation_version_id: version.id, batch_size_liters: 25,
+    status: 'planned', actual_quantities: [], procedure_notes: 'Use sanitized 30 L pilot tank.', deviations: [], observations: '', conclusion: '',
+  } });
+  assert.equal(batchResponse.statusCode, 201);
+  assert.equal(batchResponse.json().data.experimental_plan_id, plan.id);
+  const batch = batchResponse.json().data;
+  const completedBatch = await server.inject({ method: 'PUT', url: `/api/v1/projects/${id}/pilot-batches/${batch.id}`, payload: {
+    status: 'completed', produced_at: '2026-09-20T09:00:00.000Z',
+    actual_quantities: [{ material_name: 'Water', ingredient_id: INGREDIENT_IDS.WATER, quantity: 22.5, unit: 'l', lot_code: 'WATER-2409' }],
+    deviations: ['Mixing time exceeded by 2 minutes'], observations: 'No visible haze after filling.', conclusion: 'Batch accepted for laboratory testing.',
+  } });
+  assert.equal(completedBatch.statusCode, 200);
+  assert.equal(completedBatch.json().data.actual_quantities[0].lot_code, 'WATER-2409');
+
+  const wrongVersionBatch = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/experimental-plans/${plan.id}/pilot-batches`, payload: {
+    batch_code: 'PILOT-WRONG', formulation_version_id: formulation.id, batch_size_liters: 25,
+  } });
+  assert.equal(wrongVersionBatch.statusCode, 400);
+
+  const milestoneResponse = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/milestones`, payload: {
+    title: 'Pilot evidence review', stage: 'laboratory', due_date: '2026-10-20', responsible: 'R&D lead',
+    success_criteria: ['All planned pilot runs completed', 'Laboratory and sensory evidence reviewed'], status: 'planned',
+  } });
+  assert.equal(milestoneResponse.statusCode, 201);
+  const milestone = milestoneResponse.json().data;
+
+  const decisionResponse = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/decisions`, payload: {
+    title: 'Proceed to validation', outcome: 'go', rationale: 'Pilot, laboratory and sensory evidence meet the documented acceptance criteria.',
+    evidence_refs: ['PILOT-CITRUS-001', study.json().data.id, lab.json().data.id], formulation_version_id: version.id, milestone_id: milestone.id,
+  } });
+  assert.equal(decisionResponse.statusCode, 201);
+  assert.equal(decisionResponse.json().data.outcome, 'go');
+
   const traced = await server.inject({ method: 'GET', url: `/api/v1/projects/${id}` });
   assert.equal(traced.json().data.traceability.formulations.length, 2);
   assert.equal(traced.json().data.traceability.laboratory_results[0].formulation_version_id, version.id);
   assert.deepEqual(traced.json().data.traceability.sensory_studies[0].formulation_version_ids, [version.id]);
+  assert.equal(traced.json().data.traceability.experimental_plans.length, 1);
+  assert.equal(traced.json().data.traceability.pilot_batches.length, 1);
+  assert.equal(traced.json().data.traceability.milestones.length, 1);
+  assert.equal(traced.json().data.traceability.decisions.length, 1);
+  assert.ok(traced.json().data.events.some(event => event.event_type === 'decision_recorded' && event.actor_id));
 });
 
 test('missing resources return HTTP 404', async () => {

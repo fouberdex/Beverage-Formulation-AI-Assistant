@@ -51,6 +51,13 @@ export const projectsAPI = {
   update: (id: string, data: any) => api.put(`/projects/${id}`, data),
   updateBrief: (id: string, brief: any, validate = false) => api.put(`/projects/${id}/brief`, { brief, validate }),
   transition: (id: string, stage: string, note = '') => api.post(`/projects/${id}/transition`, { stage, note }),
+  createExperimentalPlan: (id: string, data: any) => api.post(`/projects/${id}/experimental-plans`, data),
+  updateExperimentalPlan: (id: string, planId: string, data: any) => api.put(`/projects/${id}/experimental-plans/${planId}`, data),
+  createPilotBatch: (id: string, planId: string, data: any) => api.post(`/projects/${id}/experimental-plans/${planId}/pilot-batches`, data),
+  updatePilotBatch: (id: string, batchId: string, data: any) => api.put(`/projects/${id}/pilot-batches/${batchId}`, data),
+  createMilestone: (id: string, data: any) => api.post(`/projects/${id}/milestones`, data),
+  updateMilestone: (id: string, milestoneId: string, data: any) => api.put(`/projects/${id}/milestones/${milestoneId}`, data),
+  recordDecision: (id: string, data: any) => api.post(`/projects/${id}/decisions`, data),
 };
 
 // Formulations API

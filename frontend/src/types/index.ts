@@ -168,6 +168,31 @@ export interface RDProjectEvent {
   created_at: string;
 }
 
+export interface RDExperimentalPlan {
+  id: string; project_id: string; formulation_version_id: string; name: string; objective: string; hypothesis: string;
+  status: 'draft' | 'ready' | 'running' | 'completed' | 'cancelled'; planned_runs: number; due_date?: string | null;
+  protocol: { method: string; variables: string[]; controls: string[]; procedure_steps: string[]; acceptance_criteria: string[] };
+  created_at: string; updated_at: string;
+}
+
+export interface RDPilotBatch {
+  id: string; project_id: string; experimental_plan_id: string; formulation_version_id: string; batch_code: string; batch_size_liters: number;
+  status: 'planned' | 'in_progress' | 'completed' | 'rejected'; scheduled_at?: string | null; produced_at?: string | null;
+  actual_quantities: Array<{ material_name: string; ingredient_id?: string; quantity: number; unit: 'g' | 'kg' | 'ml' | 'l'; lot_code: string }>;
+  procedure_notes: string; deviations: string[]; observations: string; conclusion: string; created_at: string; updated_at: string;
+}
+
+export interface RDProjectMilestone {
+  id: string; project_id: string; title: string; description: string; stage: ProjectStage;
+  status: 'planned' | 'in_progress' | 'completed' | 'blocked'; due_date?: string | null; responsible: string; success_criteria: string[];
+  created_at: string; updated_at: string;
+}
+
+export interface RDProjectDecision {
+  id: string; project_id: string; actor_id: string; title: string; outcome: 'go' | 'no_go' | 'hold' | 'rework'; rationale: string;
+  evidence_refs: string[]; formulation_version_id?: string | null; milestone_id?: string | null; decided_at: string;
+}
+
 export interface RDProject {
   id: string;
   code: string;
@@ -187,11 +212,16 @@ export interface RDProject {
   stage: ProjectStage;
   status: ProjectStatus;
   event_count?: number;
+  execution_available?: boolean;
   events?: RDProjectEvent[];
   traceability?: {
     formulations: Array<{ id: string; code: string; name: string; version: number; status: string; locked_at?: string | null }>;
     laboratory_results: Array<{ id: string; formulation_version_id: string; batch_code?: string; tested_at: string }>;
     sensory_studies: Array<{ id: string; name: string; status: string; formulation_version_ids: string[] }>;
+    experimental_plans: RDExperimentalPlan[];
+    pilot_batches: RDPilotBatch[];
+    milestones: RDProjectMilestone[];
+    decisions: RDProjectDecision[];
   };
   created_at: string;
   updated_at: string;

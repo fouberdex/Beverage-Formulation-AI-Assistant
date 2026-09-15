@@ -323,6 +323,10 @@ export const sensoryStudies = [];
 export const sensoryResponses = [];
 export const rdProjects = [];
 export const rdProjectEvents = [];
+export const rdExperimentalPlans = [];
+export const rdPilotBatches = [];
+export const rdProjectMilestones = [];
+export const rdProjectDecisions = [];
 
 // Categories
 export const categories = [...new Set(mockIngredients.map(i => i.category))];
