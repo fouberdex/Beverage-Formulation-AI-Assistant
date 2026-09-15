@@ -183,6 +183,19 @@ same tenant-isolated Supabase commit and RLS model as the rest of the R&D projec
 - Supplier qualification, supplier-material facts, document provenance/OCR review
   and packaging configurations linked to cost and stability.
 
+Tranche 1 is now implemented with six tenant-isolated records: supplier
+qualification, supplier-specific material references, versioned material
+specifications, controlled document metadata, packaging components and packaging
+configurations. Documents preserve an immutable SHA-256 identity and controlled
+storage reference; a pending document can be reviewed once, after which a revision
+must be registered rather than silently replacing its audit state. Packaging
+configurations reference an exact project formulation version and are calculated by
+a deterministic server-side engine using component cost, mass, recycled content,
+barrier data and recorded stability coverage. Warnings cannot disappear during
+approval: they must either be resolved or explicitly accepted with rationale and
+evidence references. Approved material specifications and packaging configurations
+are immutable and superseded only through a new version.
+
 ### Phase 6 — industrialization and quality
 
 - Scale-up, production trials, QC release, OOS, deviation and CAPA workflows.

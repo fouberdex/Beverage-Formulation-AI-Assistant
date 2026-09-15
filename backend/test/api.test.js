@@ -184,6 +184,62 @@ test('R&D projects persist a controlled lifecycle and reject skipped gates', asy
   assert.equal(stabilityAnalysis.json().data.specification.id, specification.id);
   assert.equal(stabilityAnalysis.json().data.extrapolation.performed, false);
 
+  const supplierResponse = await server.inject({ method: 'POST', url: '/api/v1/supply-chain/suppliers', payload: {
+    name: 'Atlas Packaging & Ingredients', status: 'qualified', country: 'Algeria', certifications: ['ISO 9001', 'Halal'], qualification_score: 88,
+  } });
+  assert.equal(supplierResponse.statusCode, 201);
+  const supplier = supplierResponse.json().data;
+  const materialResponse = await server.inject({ method: 'POST', url: `/api/v1/supply-chain/suppliers/${supplier.id}/materials`, payload: {
+    material_code: 'CITRIC-ANH-01', name: 'Citric acid anhydrous', ingredient_id: INGREDIENT_IDS.CITRIC_ACID, status: 'approved', currency: 'DZD', price_per_kg: 420, moq_kg: 25, lead_time_days: 10,
+  } });
+  assert.equal(materialResponse.statusCode, 201);
+  const material = materialResponse.json().data;
+  const materialSpecResponse = await server.inject({ method: 'POST', url: `/api/v1/supply-chain/materials/${material.id}/specifications`, payload: {
+    name: 'Citric acid incoming specification', limits: [{ key: 'purity', label: 'Purity', unit: '%', lower: 99.5, upper: 100, method: 'Supplier CoA' }], notes: 'Verify each received lot.',
+  } });
+  assert.equal(materialSpecResponse.statusCode, 201);
+  const materialSpec = materialSpecResponse.json().data;
+  const approvedMaterialSpec = await server.inject({ method: 'POST', url: `/api/v1/supply-chain/material-specifications/${materialSpec.id}/approve`, payload: { rationale: 'Incoming limits match the qualified supplier technical dossier.', evidence_refs: ['TDS-CITRIC-2026'] } });
+  assert.equal(approvedMaterialSpec.statusCode, 200);
+  assert.equal(approvedMaterialSpec.json().data.status, 'approved');
+
+  const bottleResponse = await server.inject({ method: 'POST', url: '/api/v1/supply-chain/packaging-components', payload: {
+    supplier_id: supplier.id, code: 'PET-330-01', name: '330 mL PET bottle', component_type: 'bottle', material: 'PET', status: 'approved', capacity_ml: 330, mass_g: 18, recycled_content_percent: 25, unit_cost: 12, currency: 'DZD', barrier: { oxygen_transmission_rate_cc_m2_day: 0.8, light_transmission_percent: 90 }, food_contact_compliant: true, markets: ['Algeria'],
+  } });
+  assert.equal(bottleResponse.statusCode, 201);
+  const closureResponse = await server.inject({ method: 'POST', url: '/api/v1/supply-chain/packaging-components', payload: {
+    supplier_id: supplier.id, code: 'CAP-28-01', name: '28 mm closure', component_type: 'closure', material: 'HDPE', status: 'approved', mass_g: 2, recycled_content_percent: 0, unit_cost: 2, currency: 'DZD', barrier: {}, food_contact_compliant: true, markets: ['Algeria'],
+  } });
+  assert.equal(closureResponse.statusCode, 201);
+
+  const documentResponse = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/documents`, payload: {
+    supplier_id: supplier.id, supplier_material_id: material.id, formulation_version_id: version.id, document_type: 'technical_data_sheet', title: 'Citric acid technical data sheet', file_name: 'citric-acid-tds.pdf', mime_type: 'application/pdf', size_bytes: 24500, sha256: 'a'.repeat(64), storage_reference: 'supabase://controlled-documents/citric-acid-tds.pdf', source: 'Qualified supplier portal', extraction_status: 'extracted', extracted_text: 'Purity specification and storage instructions.',
+  } });
+  assert.equal(documentResponse.statusCode, 201);
+  const document = documentResponse.json().data;
+  const reviewedDocument = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/documents/${document.id}/review`, payload: { outcome: 'accepted', review_notes: 'Checksum, supplier provenance and technical limits verified.' } });
+  assert.equal(reviewedDocument.statusCode, 200);
+  assert.equal(reviewedDocument.json().data.review_status, 'accepted');
+  const lockedDocument = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/documents/${document.id}/review`, payload: { outcome: 'rejected', review_notes: 'Attempted second review must not replace the audit state.' } });
+  assert.equal(lockedDocument.statusCode, 409);
+
+  const packagingResponse = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/packaging-configurations`, payload: {
+    formulation_version_id: version.id, name: '330 mL PET retail pack', currency: 'DZD', intended_shelf_life_days: 180, filling_process: 'Cold fill', components: [
+      { component_id: bottleResponse.json().data.id, role: 'primary_container', quantity: 1 }, { component_id: closureResponse.json().data.id, role: 'closure', quantity: 1 },
+    ], transport_conditions: 'Ambient distribution', notes: 'Initial controlled configuration.',
+  } });
+  assert.equal(packagingResponse.statusCode, 201);
+  const packaging = packagingResponse.json().data;
+  assert.equal(packaging.analysis.economics.cost_per_sale_unit, 14);
+  assert.equal(packaging.analysis.stability_link.recorded_coverage_days, 0);
+  const blockedPackagingApproval = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/packaging-configurations/${packaging.id}/approve`, payload: { rationale: 'Attempt approval without accepting the evidence warning.', evidence_refs: [document.id] } });
+  assert.equal(blockedPackagingApproval.statusCode, 409);
+  const packagingApproval = await server.inject({ method: 'POST', url: `/api/v1/projects/${id}/packaging-configurations/${packaging.id}/approve`, payload: { rationale: 'The limited stability coverage is explicitly accepted for this controlled pilot decision.', evidence_refs: [document.id, stabilityProgram.id], accept_warnings: true } });
+  assert.equal(packagingApproval.statusCode, 200);
+  assert.equal(packagingApproval.json().data.status, 'approved');
+  const lockedPackaging = await server.inject({ method: 'PUT', url: `/api/v1/projects/${id}/packaging-configurations/${packaging.id}`, payload: { name: 'Silent mutation' } });
+  assert.equal(lockedPackaging.statusCode, 409);
+
   const study = await server.inject({ method: 'POST', url: '/api/v1/sensory/studies', payload: {
     name: 'Traceable project study', objective: 'Validate preference for the exact linked formulation version.',
     test_type: 'hedonic', panel_type: 'internal', planned_panelists: 5, status: 'draft',
@@ -286,6 +342,10 @@ test('R&D projects persist a controlled lifecycle and reject skipped gates', asy
   assert.equal(traced.json().data.traceability.stability_observations.length, 1);
   assert.equal(traced.json().data.traceability.product_specifications.length, 1);
   assert.equal(traced.json().data.traceability.specification_approvals.length, 1);
+  assert.equal(traced.json().data.traceability.documents.length, 1);
+  assert.equal(traced.json().data.traceability.documents[0].review_status, 'accepted');
+  assert.equal(traced.json().data.traceability.packaging_configurations.length, 1);
+  assert.equal(traced.json().data.traceability.packaging_configurations[0].analysis.economics.cost_per_sale_unit, 14);
   assert.ok(traced.json().data.events.some(event => event.event_type === 'decision_recorded' && event.actor_id));
 });
 

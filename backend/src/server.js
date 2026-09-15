@@ -42,6 +42,7 @@ import { analyzeSensoryStudy } from './services/sensoryStudyAnalytics.js';
 import { FORMULATION_ENGINE_VERSION, generateFormulationCandidates } from './services/formulationIntelligence.js';
 import { DOE_ENGINE_VERSION, analyzeDoeDesign, buildDoeReportCsv, generateDoeDesign } from './services/doeEngine.js';
 import { analyzeStabilityProgram } from './services/stabilityEngine.js';
+import { analyzePackagingConfiguration } from './services/packagingEngine.js';
 import { validateRuntimeConfiguration } from './services/runtimeConfiguration.js';
 import {
   createRequestId,
@@ -519,6 +520,61 @@ const productSpecificationSchema = z.object({
   notes: z.string().trim().max(3000).default(''),
   limits: z.array(stabilityLimitSchema).min(1).max(40).refine(items => new Set(items.map(item => item.key)).size === items.length, { message: 'Specification keys must be unique' }),
 });
+const supplierSchema = z.object({
+  name: z.string().trim().min(2).max(180),
+  status: z.enum(['prospect', 'qualified', 'conditionally_qualified', 'suspended', 'rejected']).default('prospect'),
+  country: z.string().trim().max(100).default(''), contact_name: z.string().trim().max(120).default(''),
+  contact_email: z.string().trim().email().or(z.literal('')).default(''), phone: z.string().trim().max(60).default(''),
+  certifications: z.array(z.string().trim().min(1).max(120)).max(30).default([]),
+  qualification_score: z.coerce.number().finite().min(0).max(100).default(0),
+  last_audit_date: z.string().date().nullable().optional(), qualification_expiry_date: z.string().date().nullable().optional(),
+  notes: z.string().trim().max(3000).default(''),
+});
+const supplierMaterialSchema = z.object({
+  material_code: z.string().trim().min(1).max(100), name: z.string().trim().min(2).max(180),
+  ingredient_id: z.string().trim().max(100).nullable().optional(), status: z.enum(['candidate', 'approved', 'restricted', 'discontinued']).default('candidate'),
+  manufacturing_site: z.string().trim().max(200).default(''), currency: z.string().trim().min(3).max(3).default('DZD'),
+  price_per_kg: z.coerce.number().finite().nonnegative().default(0), moq_kg: z.coerce.number().finite().nonnegative().default(0),
+  lead_time_days: z.coerce.number().int().min(0).max(730).default(0), allergens: z.array(z.string().trim().min(1).max(100)).max(30).default([]),
+  certifications: z.array(z.string().trim().min(1).max(120)).max(30).default([]), notes: z.string().trim().max(3000).default(''),
+});
+const specificationLimitSchema = z.object({
+  key: z.string().trim().regex(/^[a-z][a-z0-9_]*$/).max(50), label: z.string().trim().min(2).max(120), unit: z.string().trim().max(30).default(''),
+  lower: z.coerce.number().finite().optional(), upper: z.coerce.number().finite().optional(), method: z.string().trim().max(160).default(''),
+}).superRefine((value, context) => {
+  if (value.lower === undefined && value.upper === undefined) context.addIssue({ code: z.ZodIssueCode.custom, message: 'At least one material limit is required' });
+  if (value.lower !== undefined && value.upper !== undefined && value.lower > value.upper) context.addIssue({ code: z.ZodIssueCode.custom, path: ['upper'], message: 'Upper limit must be greater than or equal to lower limit' });
+});
+const materialSpecificationSchema = z.object({
+  name: z.string().trim().min(3).max(180), effective_date: z.string().date().nullable().optional(),
+  limits: z.array(specificationLimitSchema).min(1).max(50).refine(items => new Set(items.map(item => item.key)).size === items.length, { message: 'Material specification keys must be unique' }),
+  notes: z.string().trim().max(3000).default(''),
+});
+const documentSchema = z.object({
+  supplier_id: z.string().trim().min(1).nullable().optional(), supplier_material_id: z.string().trim().min(1).nullable().optional(),
+  formulation_version_id: z.string().trim().min(1).nullable().optional(),
+  document_type: z.enum(['certificate_of_analysis', 'technical_data_sheet', 'safety_data_sheet', 'certificate', 'audit_report', 'packaging_drawing', 'test_report', 'other']),
+  title: z.string().trim().min(3).max(200), file_name: z.string().trim().min(1).max(255), mime_type: z.string().trim().min(3).max(120),
+  size_bytes: z.coerce.number().int().min(0).max(100000000), sha256: z.string().trim().toLowerCase().regex(/^[a-f0-9]{64}$/),
+  storage_reference: z.string().trim().min(1).max(1000), source: z.string().trim().max(500).default(''),
+  issued_date: z.string().date().nullable().optional(), expires_date: z.string().date().nullable().optional(),
+  extraction_status: z.enum(['not_requested', 'pending', 'extracted', 'failed']).default('not_requested'), extracted_text: z.string().max(50000).default(''),
+});
+const packagingComponentSchema = z.object({
+  supplier_id: z.string().trim().min(1).nullable().optional(), code: z.string().trim().min(1).max(100), name: z.string().trim().min(2).max(180),
+  component_type: z.enum(['bottle', 'can', 'carton', 'pouch', 'closure', 'label', 'sleeve', 'tray', 'case', 'film', 'other']),
+  material: z.string().trim().min(1).max(120), status: z.enum(['candidate', 'approved', 'restricted', 'discontinued']).default('candidate'),
+  capacity_ml: z.coerce.number().finite().positive().max(100000).nullable().optional(), mass_g: z.coerce.number().finite().nonnegative(),
+  recycled_content_percent: z.coerce.number().finite().min(0).max(100).default(0), unit_cost: z.coerce.number().finite().nonnegative(), currency: z.string().trim().min(3).max(3).default('DZD'),
+  barrier: z.object({ oxygen_transmission_rate_cc_m2_day: z.coerce.number().finite().nonnegative().nullable().optional(), water_vapor_transmission_rate_g_m2_day: z.coerce.number().finite().nonnegative().nullable().optional(), light_transmission_percent: z.coerce.number().finite().min(0).max(100).nullable().optional() }).default({}),
+  food_contact_compliant: z.boolean().default(false), markets: z.array(z.string().trim().min(1).max(80)).max(30).default([]), notes: z.string().trim().max(3000).default(''),
+});
+const packagingConfigurationSchema = z.object({
+  formulation_version_id: z.string().trim().min(1), name: z.string().trim().min(3).max(180), currency: z.string().trim().min(3).max(3).default('DZD'),
+  intended_shelf_life_days: z.coerce.number().int().min(1).max(3650), filling_process: z.string().trim().max(200).default(''),
+  components: z.array(z.object({ component_id: z.string().trim().min(1), role: z.enum(['primary_container', 'closure', 'label', 'secondary', 'tertiary', 'other']), quantity: z.coerce.number().finite().positive().max(1000) })).min(1).max(30),
+  transport_conditions: z.string().trim().max(1000).default(''), notes: z.string().trim().max(3000).default(''),
+});
 const milestoneSchema = z.object({
   title: z.string().trim().min(3).max(160),
   description: z.string().trim().max(1500).default(''),
@@ -552,6 +608,12 @@ function ensureProjectExecutionStorage(request, reply) {
 function ensureStabilityStorage(request, reply) {
   if (request.store.featureAvailability?.stability !== false) return true;
   reply.code(503).send({ error: 'Stability and specification storage is not installed. Apply the pending Supabase stability migration.', code: 'STABILITY_MIGRATION_REQUIRED' });
+  return false;
+}
+
+function ensureSupplyChainStorage(request, reply) {
+  if (request.store.featureAvailability?.supplyChain !== false) return true;
+  reply.code(503).send({ error: 'Supplier, document and packaging storage is not installed. Apply the pending Supabase supply-chain migration.', code: 'SUPPLY_CHAIN_MIGRATION_REQUIRED' });
   return false;
 }
 
@@ -626,7 +688,9 @@ server.get(`${apiPrefix}/projects/:id`, async (request, reply) => {
   const stabilityObservations = request.store.rdStabilityObservations.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
   const specifications = request.store.rdProductSpecifications.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
   const specificationApprovals = request.store.rdSpecificationApprovals.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
-  return { data: { ...project, events, execution_available: request.store.featureAvailability?.projectExecution !== false, stability_available: request.store.featureAvailability?.stability !== false, traceability: {
+  const documents = request.store.rdDocuments.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
+  const packagingConfigurations = request.store.rdPackagingConfigurations.filter(item => item.project_id === project.id && isOwnedByRequest(request, item));
+  return { data: { ...project, events, execution_available: request.store.featureAvailability?.projectExecution !== false, stability_available: request.store.featureAvailability?.stability !== false, supply_chain_available: request.store.featureAvailability?.supplyChain !== false, traceability: {
     formulations: formulations.map(item => ({ id: item.id, code: item.code, name: item.name, version: item.version, status: item.status, locked_at: item.locked_at || null })),
     laboratory_results: laboratoryResults.map(item => ({ id: item.id, formulation_version_id: item.formulation_id, batch_code: item.batch_code, tested_at: item.tested_at, measurements: item.measurements, sensory: item.sensory })),
     sensory_studies: sensoryStudies.map(item => ({ id: item.id, name: item.name, status: item.status, formulation_version_ids: item.samples.map(sample => sample.formulation_id).filter(Boolean) })),
@@ -638,6 +702,8 @@ server.get(`${apiPrefix}/projects/:id`, async (request, reply) => {
     stability_observations: stabilityObservations.sort((a, b) => a.timepoint_days - b.timepoint_days),
     product_specifications: specifications.sort((a, b) => b.version - a.version),
     specification_approvals: specificationApprovals.sort((a, b) => new Date(b.decided_at) - new Date(a.decided_at)),
+    documents: documents.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at)),
+    packaging_configurations: packagingConfigurations.sort((a, b) => b.version - a.version),
   } }, allowed_transitions: projectTransitions[project.stage] || [] };
 });
 
@@ -898,6 +964,208 @@ server.post(`${apiPrefix}/projects/:id/specifications/:specificationId/approve`,
   request.store.rdSpecificationApprovals.push(approval);
   addProjectEvent(request, project, 'product_specification_approved', { specification_id: specification.id, formulation_version_id: specification.formulation_version_id, version: specification.version, approval_id: approval.id, evidence_refs: input.evidence_refs });
   return reply.code(201).send({ data: specification, approval });
+});
+
+// ============================================================================
+// SUPPLIERS, CONTROLLED DOCUMENTS AND PACKAGING
+// ============================================================================
+
+server.get(`${apiPrefix}/supply-chain`, async (request, reply) => {
+  if (!ensureSupplyChainStorage(request, reply)) return;
+  const owned = items => items.filter(item => isOwnedByRequest(request, item));
+  return { data: {
+    suppliers: owned(request.store.rdSuppliers).sort((a, b) => a.name.localeCompare(b.name)),
+    supplier_materials: owned(request.store.rdSupplierMaterials).sort((a, b) => a.name.localeCompare(b.name)),
+    material_specifications: owned(request.store.rdMaterialSpecifications).sort((a, b) => b.version - a.version),
+    packaging_components: owned(request.store.rdPackagingComponents).sort((a, b) => a.name.localeCompare(b.name)),
+  } };
+});
+
+server.post(`${apiPrefix}/supply-chain/suppliers`, async (request, reply) => {
+  if (!ensureSupplyChainStorage(request, reply)) return;
+  const input = supplierSchema.parse(request.body);
+  if (request.store.rdSuppliers.some(item => isOwnedByRequest(request, item) && item.name.toLowerCase() === input.name.toLowerCase())) return reply.code(409).send({ error: 'Supplier name already exists in this workspace' });
+  const timestamp = new Date().toISOString();
+  const supplier = { id: generateId(), owner_id: request.user?.id, ...input, created_at: timestamp, updated_at: timestamp };
+  request.store.rdSuppliers.push(supplier);
+  return reply.code(201).send({ data: supplier });
+});
+
+server.put(`${apiPrefix}/supply-chain/suppliers/:supplierId`, async (request, reply) => {
+  if (!ensureSupplyChainStorage(request, reply)) return;
+  const supplier = request.store.rdSuppliers.find(item => item.id === request.params.supplierId && isOwnedByRequest(request, item));
+  if (!supplier) return reply.code(404).send({ error: 'Supplier not found' });
+  const updates = supplierSchema.partial().parse(request.body);
+  if (updates.name && request.store.rdSuppliers.some(item => item.id !== supplier.id && isOwnedByRequest(request, item) && item.name.toLowerCase() === updates.name.toLowerCase())) return reply.code(409).send({ error: 'Supplier name already exists in this workspace' });
+  Object.assign(supplier, updates, { updated_at: new Date().toISOString() });
+  return { data: supplier };
+});
+
+server.post(`${apiPrefix}/supply-chain/suppliers/:supplierId/materials`, async (request, reply) => {
+  if (!ensureSupplyChainStorage(request, reply)) return;
+  const supplier = request.store.rdSuppliers.find(item => item.id === request.params.supplierId && isOwnedByRequest(request, item));
+  if (!supplier) return reply.code(404).send({ error: 'Supplier not found' });
+  const input = supplierMaterialSchema.parse(request.body);
+  if (input.ingredient_id && !request.store.ingredients.some(item => item.id === input.ingredient_id)) return reply.code(400).send({ error: 'Catalog ingredient not found' });
+  if (request.store.rdSupplierMaterials.some(item => item.supplier_id === supplier.id && item.material_code.toLowerCase() === input.material_code.toLowerCase() && isOwnedByRequest(request, item))) return reply.code(409).send({ error: 'Material code already exists for this supplier' });
+  const timestamp = new Date().toISOString();
+  const material = { id: generateId(), owner_id: request.user?.id, supplier_id: supplier.id, ...input, created_at: timestamp, updated_at: timestamp };
+  request.store.rdSupplierMaterials.push(material);
+  return reply.code(201).send({ data: material });
+});
+
+server.put(`${apiPrefix}/supply-chain/materials/:materialId`, async (request, reply) => {
+  if (!ensureSupplyChainStorage(request, reply)) return;
+  const material = request.store.rdSupplierMaterials.find(item => item.id === request.params.materialId && isOwnedByRequest(request, item));
+  if (!material) return reply.code(404).send({ error: 'Supplier material not found' });
+  const updates = supplierMaterialSchema.partial().parse(request.body);
+  if (updates.ingredient_id && !request.store.ingredients.some(item => item.id === updates.ingredient_id)) return reply.code(400).send({ error: 'Catalog ingredient not found' });
+  Object.assign(material, updates, { updated_at: new Date().toISOString() });
+  return { data: material };
+});
+
+server.post(`${apiPrefix}/supply-chain/materials/:materialId/specifications`, async (request, reply) => {
+  if (!ensureSupplyChainStorage(request, reply)) return;
+  const material = request.store.rdSupplierMaterials.find(item => item.id === request.params.materialId && isOwnedByRequest(request, item));
+  if (!material) return reply.code(404).send({ error: 'Supplier material not found' });
+  const input = materialSpecificationSchema.parse(request.body);
+  const version = Math.max(0, ...request.store.rdMaterialSpecifications.filter(item => item.supplier_material_id === material.id && isOwnedByRequest(request, item)).map(item => item.version)) + 1;
+  const timestamp = new Date().toISOString();
+  const specification = { id: generateId(), owner_id: request.user?.id, supplier_material_id: material.id, ...input, version, status: 'draft', created_at: timestamp, updated_at: timestamp };
+  request.store.rdMaterialSpecifications.push(specification);
+  return reply.code(201).send({ data: specification });
+});
+
+server.post(`${apiPrefix}/supply-chain/material-specifications/:specificationId/approve`, async (request, reply) => {
+  if (!ensureSupplyChainStorage(request, reply)) return;
+  const specification = request.store.rdMaterialSpecifications.find(item => item.id === request.params.specificationId && isOwnedByRequest(request, item));
+  if (!specification) return reply.code(404).send({ error: 'Material specification not found' });
+  if (specification.status !== 'draft') return reply.code(409).send({ error: 'Only a draft material specification can be approved', code: 'MATERIAL_SPECIFICATION_LOCKED' });
+  const input = z.object({ rationale: z.string().trim().min(10).max(3000), evidence_refs: z.array(z.string().trim().min(1).max(200)).min(1).max(30) }).parse(request.body);
+  const timestamp = new Date().toISOString();
+  request.store.rdMaterialSpecifications.filter(item => item.supplier_material_id === specification.supplier_material_id && item.status === 'approved' && isOwnedByRequest(request, item)).forEach(item => { item.status = 'superseded'; item.updated_at = timestamp; });
+  Object.assign(specification, { status: 'approved', approved_at: timestamp, approved_by: request.user?.id, approval_rationale: input.rationale, evidence_refs: input.evidence_refs, updated_at: timestamp });
+  return { data: specification };
+});
+
+server.post(`${apiPrefix}/supply-chain/packaging-components`, async (request, reply) => {
+  if (!ensureSupplyChainStorage(request, reply)) return;
+  const input = packagingComponentSchema.parse(request.body);
+  if (input.supplier_id && !request.store.rdSuppliers.some(item => item.id === input.supplier_id && isOwnedByRequest(request, item))) return reply.code(400).send({ error: 'Supplier not found in this workspace' });
+  if (request.store.rdPackagingComponents.some(item => item.code.toLowerCase() === input.code.toLowerCase() && isOwnedByRequest(request, item))) return reply.code(409).send({ error: 'Packaging component code already exists' });
+  const timestamp = new Date().toISOString();
+  const component = { id: generateId(), owner_id: request.user?.id, ...input, created_at: timestamp, updated_at: timestamp };
+  request.store.rdPackagingComponents.push(component);
+  return reply.code(201).send({ data: component });
+});
+
+server.put(`${apiPrefix}/supply-chain/packaging-components/:componentId`, async (request, reply) => {
+  if (!ensureSupplyChainStorage(request, reply)) return;
+  const component = request.store.rdPackagingComponents.find(item => item.id === request.params.componentId && isOwnedByRequest(request, item));
+  if (!component) return reply.code(404).send({ error: 'Packaging component not found' });
+  const updates = packagingComponentSchema.partial().parse(request.body);
+  if (updates.supplier_id && !request.store.rdSuppliers.some(item => item.id === updates.supplier_id && isOwnedByRequest(request, item))) return reply.code(400).send({ error: 'Supplier not found in this workspace' });
+  Object.assign(component, updates, { updated_at: new Date().toISOString() });
+  return { data: component };
+});
+
+server.post(`${apiPrefix}/projects/:id/documents`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply) || !ensureSupplyChainStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const input = documentSchema.parse(request.body);
+  const supplier = input.supplier_id ? request.store.rdSuppliers.find(item => item.id === input.supplier_id && isOwnedByRequest(request, item)) : null;
+  const material = input.supplier_material_id ? request.store.rdSupplierMaterials.find(item => item.id === input.supplier_material_id && isOwnedByRequest(request, item)) : null;
+  if (input.supplier_id && !supplier) return reply.code(400).send({ error: 'Supplier not found in this workspace' });
+  if (input.supplier_material_id && (!material || (input.supplier_id && material.supplier_id !== input.supplier_id))) return reply.code(400).send({ error: 'Supplier material does not match the selected supplier' });
+  if (input.formulation_version_id && !projectFormulationVersion(request, project, input.formulation_version_id)) return reply.code(400).send({ error: 'Document formulation version does not belong to this project' });
+  if (request.store.rdDocuments.some(item => item.sha256 === input.sha256 && isOwnedByRequest(request, item))) return reply.code(409).send({ error: 'This exact document is already registered', code: 'DOCUMENT_DUPLICATE_CHECKSUM' });
+  const timestamp = new Date().toISOString();
+  const document = { id: generateId(), owner_id: request.user?.id, project_id: project.id, ...input, review_status: 'pending', created_at: timestamp, updated_at: timestamp };
+  request.store.rdDocuments.push(document);
+  addProjectEvent(request, project, 'document_registered', { document_id: document.id, document_type: document.document_type, sha256: document.sha256, supplier_id: document.supplier_id || null, supplier_material_id: document.supplier_material_id || null });
+  return reply.code(201).send({ data: document });
+});
+
+server.post(`${apiPrefix}/projects/:id/documents/:documentId/review`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply) || !ensureSupplyChainStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const document = request.store.rdDocuments.find(item => item.id === request.params.documentId && item.project_id === project.id && isOwnedByRequest(request, item));
+  if (!document) return reply.code(404).send({ error: 'Document not found' });
+  if (document.review_status !== 'pending') return reply.code(409).send({ error: 'Reviewed documents are immutable; register a revision instead', code: 'DOCUMENT_REVIEW_LOCKED' });
+  const input = z.object({ outcome: z.enum(['accepted', 'rejected']), review_notes: z.string().trim().min(10).max(3000) }).parse(request.body);
+  Object.assign(document, { review_status: input.outcome, review_notes: input.review_notes, reviewed_by: request.user?.id, reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+  addProjectEvent(request, project, 'document_reviewed', { document_id: document.id, outcome: input.outcome, sha256: document.sha256 });
+  return { data: document };
+});
+
+function packagingContext(request, formulationVersionId) {
+  const observations = request.store.rdStabilityObservations.filter(item => item.formulation_version_id === formulationVersionId && isOwnedByRequest(request, item));
+  return { stability_coverage_days: Math.max(0, ...observations.map(item => Number(item.timepoint_days) || 0)) };
+}
+
+server.post(`${apiPrefix}/projects/:id/packaging-configurations`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply) || !ensureSupplyChainStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const input = packagingConfigurationSchema.parse(request.body);
+  if (!projectFormulationVersion(request, project, input.formulation_version_id)) return reply.code(400).send({ error: 'Packaging configuration must reference an exact formulation version from this project' });
+  const componentIds = new Set(input.components.map(item => item.component_id));
+  if (componentIds.size !== input.components.length) return reply.code(400).send({ error: 'Each packaging component can appear only once in a configuration' });
+  if ([...componentIds].some(id => !request.store.rdPackagingComponents.some(item => item.id === id && isOwnedByRequest(request, item)))) return reply.code(400).send({ error: 'A packaging component is missing or belongs to another workspace' });
+  const version = Math.max(0, ...request.store.rdPackagingConfigurations.filter(item => item.formulation_version_id === input.formulation_version_id && isOwnedByRequest(request, item)).map(item => item.version)) + 1;
+  const timestamp = new Date().toISOString();
+  const configuration = { id: generateId(), owner_id: request.user?.id, project_id: project.id, ...input, version, status: 'draft', created_at: timestamp, updated_at: timestamp };
+  configuration.analysis = analyzePackagingConfiguration(configuration, request.store.rdPackagingComponents.filter(item => isOwnedByRequest(request, item)), packagingContext(request, configuration.formulation_version_id));
+  request.store.rdPackagingConfigurations.push(configuration);
+  addProjectEvent(request, project, 'packaging_configuration_created', { configuration_id: configuration.id, formulation_version_id: configuration.formulation_version_id, version, cost_per_sale_unit: configuration.analysis.economics.cost_per_sale_unit });
+  return reply.code(201).send({ data: configuration });
+});
+
+server.put(`${apiPrefix}/projects/:id/packaging-configurations/:configurationId`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply) || !ensureSupplyChainStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const configuration = request.store.rdPackagingConfigurations.find(item => item.id === request.params.configurationId && item.project_id === project.id && isOwnedByRequest(request, item));
+  if (!configuration) return reply.code(404).send({ error: 'Packaging configuration not found' });
+  if (configuration.status !== 'draft') return reply.code(409).send({ error: 'Approved packaging configurations are immutable; create a new revision', code: 'PACKAGING_CONFIGURATION_LOCKED' });
+  const updates = packagingConfigurationSchema.partial().parse(request.body);
+  const versionId = updates.formulation_version_id || configuration.formulation_version_id;
+  if (!projectFormulationVersion(request, project, versionId)) return reply.code(400).send({ error: 'Packaging configuration must reference an exact formulation version from this project' });
+  const lines = updates.components || configuration.components;
+  if (new Set(lines.map(item => item.component_id)).size !== lines.length || lines.some(line => !request.store.rdPackagingComponents.some(item => item.id === line.component_id && isOwnedByRequest(request, item)))) return reply.code(400).send({ error: 'Packaging components must be unique and belong to this workspace' });
+  Object.assign(configuration, updates, { updated_at: new Date().toISOString() });
+  configuration.analysis = analyzePackagingConfiguration(configuration, request.store.rdPackagingComponents.filter(item => isOwnedByRequest(request, item)), packagingContext(request, versionId));
+  addProjectEvent(request, project, 'packaging_configuration_updated', { configuration_id: configuration.id, fields: Object.keys(updates) });
+  return { data: configuration };
+});
+
+server.get(`${apiPrefix}/projects/:id/packaging-configurations/:configurationId/analysis`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply) || !ensureSupplyChainStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const configuration = request.store.rdPackagingConfigurations.find(item => item.id === request.params.configurationId && item.project_id === project.id && isOwnedByRequest(request, item));
+  if (!configuration) return reply.code(404).send({ error: 'Packaging configuration not found' });
+  const analysis = analyzePackagingConfiguration(configuration, request.store.rdPackagingComponents.filter(item => isOwnedByRequest(request, item)), packagingContext(request, configuration.formulation_version_id));
+  return { data: analysis };
+});
+
+server.post(`${apiPrefix}/projects/:id/packaging-configurations/:configurationId/approve`, async (request, reply) => {
+  if (!ensureProjectStorage(request, reply) || !ensureSupplyChainStorage(request, reply)) return;
+  const project = ownedProject(request, request.params.id);
+  if (!project) return reply.code(404).send({ error: 'Project not found' });
+  const configuration = request.store.rdPackagingConfigurations.find(item => item.id === request.params.configurationId && item.project_id === project.id && isOwnedByRequest(request, item));
+  if (!configuration) return reply.code(404).send({ error: 'Packaging configuration not found' });
+  if (configuration.status !== 'draft') return reply.code(409).send({ error: 'Only a draft packaging configuration can be approved', code: 'PACKAGING_CONFIGURATION_LOCKED' });
+  const input = z.object({ rationale: z.string().trim().min(10).max(3000), evidence_refs: z.array(z.string().trim().min(1).max(200)).min(1).max(30), accept_warnings: z.boolean().default(false) }).parse(request.body);
+  const analysis = analyzePackagingConfiguration(configuration, request.store.rdPackagingComponents.filter(item => isOwnedByRequest(request, item)), packagingContext(request, configuration.formulation_version_id));
+  if (analysis.warnings.length && !input.accept_warnings) return reply.code(409).send({ error: 'Resolve packaging warnings or explicitly accept them with documented rationale', code: 'PACKAGING_WARNINGS_REQUIRE_ACCEPTANCE', analysis });
+  const timestamp = new Date().toISOString();
+  request.store.rdPackagingConfigurations.filter(item => item.formulation_version_id === configuration.formulation_version_id && item.status === 'approved' && isOwnedByRequest(request, item)).forEach(item => { item.status = 'superseded'; item.updated_at = timestamp; });
+  Object.assign(configuration, { status: 'approved', analysis, approved_at: timestamp, approved_by: request.user?.id, approval_rationale: input.rationale, evidence_refs: input.evidence_refs, warnings_accepted: Boolean(input.accept_warnings), updated_at: timestamp });
+  addProjectEvent(request, project, 'packaging_configuration_approved', { configuration_id: configuration.id, formulation_version_id: configuration.formulation_version_id, version: configuration.version, warnings_accepted: configuration.warnings_accepted, evidence_refs: input.evidence_refs });
+  return { data: configuration };
 });
 
 server.post(`${apiPrefix}/projects/:id/experimental-plans/:planId/pilot-batches`, async (request, reply) => {

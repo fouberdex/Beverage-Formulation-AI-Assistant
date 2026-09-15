@@ -28,6 +28,7 @@ test('Supabase migrations form an ordered, complete database workflow', async ()
     '20260914230000_rd_traceability_spine.sql',
     '20260914234500_rd_execution_loop.sql',
     '20260915113000_rd_stability_and_specifications.sql',
+    '20260915170000_rd_suppliers_documents_packaging.sql',
   ]);
 
   const bootstrap = await readFile(
@@ -129,6 +130,30 @@ test('stability database test covers tenant isolation, API-only writes and cross
   assert.match(suite, /authenticated cannot execute the stability commit RPC/);
   assert.match(suite, /a stability observation cannot link another tenant laboratory result/);
   assert.match(suite, /tenant B sees only its product specification/);
+});
+
+test('supply-chain migration isolates suppliers and documents and links packaging to exact product versions', async () => {
+  const migration = await readFile(new URL('migrations/20260915170000_rd_suppliers_documents_packaging.sql', supabaseDirectory), 'utf8');
+  assert.match(migration, /create table public\.rd_suppliers/);
+  assert.match(migration, /create table public\.rd_supplier_materials/);
+  assert.match(migration, /create table public\.rd_material_specifications/);
+  assert.match(migration, /create table public\.rd_documents/);
+  assert.match(migration, /sha256 text not null/);
+  assert.match(migration, /create table public\.rd_packaging_components/);
+  assert.match(migration, /create table public\.rd_packaging_configurations/);
+  assert.match(migration, /foreign key \(owner_id, project_id, formulation_version_id\)/);
+  assert.match(migration, /enable row level security/g);
+  assert.match(migration, /revoke all on function public\.commit_rd_suppliers_documents_packaging\(jsonb\) from public, anon, authenticated/);
+});
+
+test('supply-chain RLS suite covers tenant reads, server-only writes and relational isolation', async () => {
+  const suite = await readFile(new URL('tests/database/007_supply_chain_rls.test.sql', supabaseDirectory), 'utf8');
+  assert.match(suite, /tenant A sees only its suppliers/);
+  assert.match(suite, /authenticated clients cannot mutate reviewed documents/);
+  assert.match(suite, /authenticated cannot execute supply-chain commit RPC/);
+  assert.match(suite, /supplier material cannot cross tenant ownership/);
+  assert.match(suite, /packaging configuration cannot link another tenant formulation/);
+  assert.match(suite, /tenant B sees only its suppliers/);
 });
 
 test('Supabase seed data contains shared catalog rows only', async () => {

@@ -230,6 +230,7 @@ export interface RDProject {
   event_count?: number;
   execution_available?: boolean;
   stability_available?: boolean;
+  supply_chain_available?: boolean;
   events?: RDProjectEvent[];
   traceability?: {
     formulations: Array<{ id: string; code: string; name: string; version: number; status: string; locked_at?: string | null }>;
@@ -243,6 +244,8 @@ export interface RDProject {
     stability_observations: RDStabilityObservation[];
     product_specifications: RDProductSpecification[];
     specification_approvals: RDSpecificationApproval[];
+    documents: RDDocument[];
+    packaging_configurations: RDPackagingConfiguration[];
   };
   created_at: string;
   updated_at: string;
@@ -254,6 +257,14 @@ export interface RDStabilityObservation { id: string; project_id: string; progra
 export interface RDProductSpecification { id: string; project_id: string; formulation_version_id: string; name: string; version: number; status: 'draft' | 'approved' | 'superseded' | 'withdrawn'; markets: string[]; effective_date?: string | null; notes: string; limits: RDStabilityLimit[]; approved_at?: string; created_at: string; updated_at: string }
 export interface RDSpecificationApproval { id: string; project_id: string; specification_id: string; outcome: 'approved' | 'withdrawn'; rationale: string; evidence_refs: string[]; decided_at: string }
 export interface RDStabilityAnalysis { engine_version: string; program_id: string; formulation_version_id: string; observation_count: number; overall_status: string; conclusion: string; extrapolation: { performed: false; reason: string }; conditions: Array<{ id: string; label: string; temperature_c: number; expected_observations: number; recorded_observations: number; completion_percent: number; status: string; parameters: Array<{ key: string; label: string; unit: string; baseline: number | null; first_observed_failure_day: number | null; status: string; trend: { status: string; slope_per_day: number | null; slope_per_30_days?: number | null; r_squared: number | null }; points: Array<{ day: number; value: number; status: string; absolute_change_from_baseline: number | null }> }> }>; specification: null | { id: string; version: number; status: string; limits: Array<{ key: string; label: string; evaluated_observations: number; failed_observations: number; status: string }> } }
+
+export interface RDSupplier { id: string; name: string; status: 'prospect' | 'qualified' | 'conditionally_qualified' | 'suspended' | 'rejected'; country: string; contact_name: string; contact_email: string; phone: string; certifications: string[]; qualification_score: number; last_audit_date?: string | null; qualification_expiry_date?: string | null; notes: string; created_at: string; updated_at: string }
+export interface RDSupplierMaterial { id: string; supplier_id: string; material_code: string; name: string; ingredient_id?: string | null; status: 'candidate' | 'approved' | 'restricted' | 'discontinued'; manufacturing_site: string; currency: string; price_per_kg: number; moq_kg: number; lead_time_days: number; allergens: string[]; certifications: string[]; notes: string; created_at: string; updated_at: string }
+export interface RDMaterialSpecification { id: string; supplier_material_id: string; name: string; version: number; status: 'draft' | 'approved' | 'superseded' | 'withdrawn'; effective_date?: string | null; limits: Array<{ key: string; label: string; unit: string; lower?: number; upper?: number; method: string }>; notes: string; evidence_refs?: string[]; created_at: string; updated_at: string }
+export interface RDDocument { id: string; project_id: string; supplier_id?: string | null; supplier_material_id?: string | null; formulation_version_id?: string | null; document_type: string; title: string; file_name: string; mime_type: string; size_bytes: number; sha256: string; storage_reference: string; source: string; issued_date?: string | null; expires_date?: string | null; extraction_status: string; extracted_text: string; review_status: 'pending' | 'accepted' | 'rejected' | 'expired'; review_notes?: string; reviewed_at?: string; created_at: string; updated_at: string }
+export interface RDPackagingComponent { id: string; supplier_id?: string | null; code: string; name: string; component_type: string; material: string; status: 'candidate' | 'approved' | 'restricted' | 'discontinued'; capacity_ml?: number | null; mass_g: number; recycled_content_percent: number; unit_cost: number; currency: string; barrier: { oxygen_transmission_rate_cc_m2_day?: number | null; water_vapor_transmission_rate_g_m2_day?: number | null; light_transmission_percent?: number | null }; food_contact_compliant: boolean; markets: string[]; notes: string; created_at: string; updated_at: string }
+export interface RDPackagingAnalysis { engine_version: string; configuration_id: string; component_count: number; economics: { currency: string; cost_per_sale_unit: number }; sustainability: { total_packaging_mass_g: number; recycled_content_percent_by_mass: number }; barrier_screen: { maximum_oxygen_transmission_rate_cc_m2_day: number | null; maximum_water_vapor_transmission_rate_g_m2_day: number | null; maximum_light_transmission_percent: number | null; note: string }; stability_link: { intended_shelf_life_days: number; recorded_coverage_days: number; coverage_sufficient: boolean }; readiness: 'ready' | 'review_required'; warnings: string[] }
+export interface RDPackagingConfiguration { id: string; project_id: string; formulation_version_id: string; name: string; version: number; status: 'draft' | 'approved' | 'superseded' | 'withdrawn'; currency: string; intended_shelf_life_days: number; filling_process: string; components: Array<{ component_id: string; role: 'primary_container' | 'closure' | 'label' | 'secondary' | 'tertiary' | 'other'; quantity: number }>; transport_conditions: string; notes: string; analysis: RDPackagingAnalysis; evidence_refs?: string[]; created_at: string; updated_at: string }
 
 export interface LaboratoryResult {
   id: string;

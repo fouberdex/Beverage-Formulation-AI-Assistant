@@ -166,6 +166,13 @@ input, select, textarea {
   border-radius: .75rem;
 }
 
+.form-panel {
+  border: 1px solid #bae6fd;
+  border-radius: 1rem;
+  background: rgb(240 249 255 / .55);
+  padding: 1rem;
+}
+
 #main-content .rounded-md { border-radius: .75rem; }
 #main-content .rounded-lg { border-radius: 1rem; }
 #main-content .shadow,

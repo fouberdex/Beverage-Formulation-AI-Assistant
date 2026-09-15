@@ -331,6 +331,12 @@ export const rdStabilityPrograms = [];
 export const rdStabilityObservations = [];
 export const rdProductSpecifications = [];
 export const rdSpecificationApprovals = [];
+export const rdSuppliers = [];
+export const rdSupplierMaterials = [];
+export const rdMaterialSpecifications = [];
+export const rdDocuments = [];
+export const rdPackagingComponents = [];
+export const rdPackagingConfigurations = [];
 
 // Categories
 export const categories = [...new Set(mockIngredients.map(i => i.category))];

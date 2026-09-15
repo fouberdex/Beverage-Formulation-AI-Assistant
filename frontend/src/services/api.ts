@@ -68,6 +68,24 @@ export const projectsAPI = {
   createSpecification: (id: string, data: any) => api.post(`/projects/${id}/specifications`, data),
   updateSpecification: (id: string, specificationId: string, data: any) => api.put(`/projects/${id}/specifications/${specificationId}`, data),
   approveSpecification: (id: string, specificationId: string, data: any) => api.post(`/projects/${id}/specifications/${specificationId}/approve`, data),
+  registerDocument: (id: string, data: any) => api.post(`/projects/${id}/documents`, data),
+  reviewDocument: (id: string, documentId: string, data: any) => api.post(`/projects/${id}/documents/${documentId}/review`, data),
+  createPackagingConfiguration: (id: string, data: any) => api.post(`/projects/${id}/packaging-configurations`, data),
+  updatePackagingConfiguration: (id: string, configurationId: string, data: any) => api.put(`/projects/${id}/packaging-configurations/${configurationId}`, data),
+  getPackagingAnalysis: (id: string, configurationId: string) => api.get(`/projects/${id}/packaging-configurations/${configurationId}/analysis`),
+  approvePackagingConfiguration: (id: string, configurationId: string, data: any) => api.post(`/projects/${id}/packaging-configurations/${configurationId}/approve`, data),
+};
+
+export const supplyChainAPI = {
+  getWorkspace: () => api.get('/supply-chain'),
+  createSupplier: (data: any) => api.post('/supply-chain/suppliers', data),
+  updateSupplier: (id: string, data: any) => api.put(`/supply-chain/suppliers/${id}`, data),
+  createMaterial: (supplierId: string, data: any) => api.post(`/supply-chain/suppliers/${supplierId}/materials`, data),
+  updateMaterial: (id: string, data: any) => api.put(`/supply-chain/materials/${id}`, data),
+  createMaterialSpecification: (materialId: string, data: any) => api.post(`/supply-chain/materials/${materialId}/specifications`, data),
+  approveMaterialSpecification: (id: string, data: any) => api.post(`/supply-chain/material-specifications/${id}/approve`, data),
+  createPackagingComponent: (data: any) => api.post('/supply-chain/packaging-components', data),
+  updatePackagingComponent: (id: string, data: any) => api.put(`/supply-chain/packaging-components/${id}`, data),
 };
 
 // Formulations API

@@ -144,6 +144,36 @@ try {
   if (stabilityAnalysis.observation_count !== 1 || stabilityAnalysis.specification?.id !== specification.id || stabilityAnalysis.extrapolation.performed) throw new Error('Stability or approved specification persistence is incomplete');
   ok('Stability timepoint, deterministic trend and immutable specification persistence');
 
+  const supplier = (await api('/supply-chain/suppliers', { method: 'POST', body: {
+    name: `Demo supplier ${suffix}`.slice(0, 170), status: 'qualified', country: 'Algeria', certifications: ['ISO 9001', 'Halal'], qualification_score: 90,
+  } })).data;
+  const supplierMaterial = (await api(`/supply-chain/suppliers/${supplier.id}/materials`, { method: 'POST', body: {
+    material_code: `CITRIC-${suffix}`.slice(0, 95), name: 'Demo citric acid', status: 'approved', currency: 'DZD', price_per_kg: 420, moq_kg: 25, lead_time_days: 10,
+  } })).data;
+  const materialSpecification = (await api(`/supply-chain/materials/${supplierMaterial.id}/specifications`, { method: 'POST', body: {
+    name: 'Demo incoming material specification', limits: [{ key: 'purity', label: 'Purity', unit: '%', lower: 99.5, upper: 100, method: 'Supplier CoA' }],
+  } })).data;
+  await api(`/supply-chain/material-specifications/${materialSpecification.id}/approve`, { method: 'POST', body: { rationale: 'Supplier dossier and quantitative incoming limits reviewed.', evidence_refs: ['DEMO-TDS'] } });
+  const bottle = (await api('/supply-chain/packaging-components', { method: 'POST', body: {
+    supplier_id: supplier.id, code: `PET-${suffix}`.slice(0, 95), name: 'Demo 330 mL PET bottle', component_type: 'bottle', material: 'PET', status: 'approved', capacity_ml: 330, mass_g: 18, recycled_content_percent: 25, unit_cost: 12, currency: 'DZD', barrier: { oxygen_transmission_rate_cc_m2_day: 0.8 }, food_contact_compliant: true, markets: ['Algeria'],
+  } })).data;
+  const closure = (await api('/supply-chain/packaging-components', { method: 'POST', body: {
+    supplier_id: supplier.id, code: `CAP-${suffix}`.slice(0, 95), name: 'Demo 28 mm closure', component_type: 'closure', material: 'HDPE', status: 'approved', mass_g: 2, recycled_content_percent: 0, unit_cost: 2, currency: 'DZD', barrier: {}, food_contact_compliant: true, markets: ['Algeria'],
+  } })).data;
+  const controlledDocument = (await api(`/projects/${project.id}/documents`, { method: 'POST', body: {
+    supplier_id: supplier.id, supplier_material_id: supplierMaterial.id, formulation_version_id: formulation.id,
+    document_type: 'technical_data_sheet', title: 'Demo supplier technical data sheet', file_name: 'demo-tds.pdf', mime_type: 'application/pdf', size_bytes: 1000,
+    sha256: Buffer.from(`demo-${suffix}`).toString('hex').padEnd(64, '0').slice(0, 64), storage_reference: `supabase://controlled-documents/${suffix}/demo-tds.pdf`, source: 'Automated smoke test', extraction_status: 'extracted', extracted_text: 'Purity and storage limits.',
+  } })).data;
+  await api(`/projects/${project.id}/documents/${controlledDocument.id}/review`, { method: 'POST', body: { outcome: 'accepted', review_notes: 'Automated provenance, checksum and technical-content review completed.' } });
+  const packagingConfiguration = (await api(`/projects/${project.id}/packaging-configurations`, { method: 'POST', body: {
+    formulation_version_id: formulation.id, name: 'Demo 330 mL PET configuration', currency: 'DZD', intended_shelf_life_days: 180, filling_process: 'Cold fill',
+    components: [{ component_id: bottle.id, role: 'primary_container', quantity: 1 }, { component_id: closure.id, role: 'closure', quantity: 1 }], transport_conditions: 'Ambient distribution',
+  } })).data;
+  if (packagingConfiguration.analysis.economics.cost_per_sale_unit !== 14) throw new Error('Packaging server-owned cost calculation is incorrect');
+  await api(`/projects/${project.id}/packaging-configurations/${packagingConfiguration.id}/approve`, { method: 'POST', body: { rationale: 'Packaging warnings and available stability evidence reviewed for this pilot.', evidence_refs: [controlledDocument.id, stabilityProgram.id], accept_warnings: true } });
+  ok('Supplier qualification, controlled documents and packaging persistence');
+
   const study = (await api('/sensory/studies', { method: 'POST', body: {
     name: 'Demo sensory persistence check', objective: 'Verify the complete sensory workflow before the live demonstration.',
     test_type: 'hedonic', panel_type: 'internal', planned_panelists: 5, scale_min: 0, scale_max: 10, status: 'active',
@@ -164,7 +194,8 @@ try {
     || traceability.experimental_plans.length !== 1 || traceability.pilot_batches.length !== 1
     || traceability.milestones.length !== 1 || traceability.decisions.length !== 1
     || traceability.stability_programs.length !== 1 || traceability.stability_observations.length !== 1
-    || traceability.product_specifications.length !== 1 || traceability.specification_approvals.length !== 1) {
+    || traceability.product_specifications.length !== 1 || traceability.specification_approvals.length !== 1
+    || traceability.documents.length !== 1 || traceability.packaging_configurations.length !== 1) {
     throw new Error('Cross-workspace project traceability is incomplete');
   }
   ok('Project → formulation version → laboratory → sensory traceability');
@@ -222,7 +253,7 @@ try {
     const removed = await admin.auth.admin.deleteUser(userId);
     if (removed.error) console.error(`Cleanup warning: ${removed.error.message}`);
     else {
-      const tables = ['rd_projects', 'rd_project_events', 'rd_experimental_plans', 'rd_pilot_batches', 'rd_project_milestones', 'rd_project_decisions', 'rd_stability_programs', 'rd_stability_observations', 'rd_product_specifications', 'rd_specification_approvals', 'formulations', 'laboratory_results', 'sensory_studies', 'sensory_responses', 'compliance_records', 'batch_cost_calculations', 'target_generation_runs', 'ai_variants'];
+      const tables = ['rd_projects', 'rd_project_events', 'rd_experimental_plans', 'rd_pilot_batches', 'rd_project_milestones', 'rd_project_decisions', 'rd_stability_programs', 'rd_stability_observations', 'rd_product_specifications', 'rd_specification_approvals', 'rd_suppliers', 'rd_supplier_materials', 'rd_material_specifications', 'rd_documents', 'rd_packaging_components', 'rd_packaging_configurations', 'formulations', 'laboratory_results', 'sensory_studies', 'sensory_responses', 'compliance_records', 'batch_cost_calculations', 'target_generation_runs', 'ai_variants'];
       const leftovers = [];
       for (const table of tables) {
         const { count, error } = await admin.from(table).select('*', { head: true, count: 'exact' }).eq('owner_id', userId);
